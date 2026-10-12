@@ -5,7 +5,7 @@ import type { ConversationProvider } from './providers/conversations';
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => {
   const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (className) el.className = className; return el;
 };
-/** Keep editable fields stable while history sync and CLI checks update the dock. */
+/** Keep editable fields stable while history sync and CLI checks update the panel. */
 export class CLIManagerView {
   private state?: ViewState;
   private signature = '';

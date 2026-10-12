@@ -4,7 +4,7 @@ import os from 'node:os';
 import { it, expect } from 'vitest';
 import { providerTestHomes } from '../scripts/provider-test-homes.mjs';
 it('isolates histories, seeds only login/config and keeps test writes independent from real homes', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-isolation-')), home = path.join(root, 'user'), runtime = path.join(root, '.test-runtime', 'models-live-123');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-isolation-')), home = path.join(root, 'user'), runtime = path.join(root, '.test-runtime', 'models-live-123');
   await mkdir(path.join(home, '.codex', 'sessions'), { recursive: true }); await mkdir(path.join(home, '.claude', 'projects'), { recursive: true });
   await writeFile(path.join(home, '.codex/auth.json'), 'fake-codex-token');
   await writeFile(path.join(home, '.claude/.credentials.json'), 'fake-claude-token');
@@ -19,7 +19,7 @@ it('isolates histories, seeds only login/config and keeps test writes independen
   expect(await readFile(path.join(env.CODEX_HOME, 'auth.json'), 'utf8')).toBe('refreshed-test-token');
 });
 it('refuses legacy shared-home reopen and paths outside the test runtime', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-isolation-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-isolation-'));
   await expect(providerTestHomes(path.join(root, '.test-runtime', 'models-live-123'), { root, reopen: true })).rejects.toThrow('old test runtime');
   await expect(providerTestHomes(path.join(root, 'user'), { root })).rejects.toThrow('dedicated .test-runtime');
 });

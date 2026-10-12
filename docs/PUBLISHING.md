@@ -1,4 +1,4 @@
-# Publish AgentDock on VS Code Marketplace
+# Publish AgentTandem on VS Code Marketplace
 
 ## 1. Create a publisher
 
@@ -29,7 +29,7 @@ The workflow derives content URLs from the GitHub repository and the branch or t
 1. Open **Actions → Build Marketplace VSIX → Run workflow**.
 2. Select the branch and keep **publisher** set to `coolbirdv`.
 3. Run the workflow. It installs locked dependencies, typechecks, runs the unit suite, builds and packages the stable extension, then tests it in a separate VS Code profile.
-4. Open the completed run and download **agent-dock-vsix-…** from **Artifacts**.
+4. Open the completed run and download **agent-tandem-vsix-…** from **Artifacts**.
 5. Extract the downloaded ZIP. The `.vsix` inside is the extension package; keep its `.sha256` file for verification.
 
 Pushes to `main` and pull requests targeting `main` create **preview** artifacts. A manual run on `main` builds an upload package without creating a GitHub Release. The configured publisher is `coolbirdv`; the repository variable can override it.
@@ -61,7 +61,7 @@ The GitHub Release includes the VSIX and its SHA-256 checksum. The same git-hist
 
 Only the release job receives `contents: write`; test/build jobs remain read-only. GitHub Release creation uses the workflow's `GITHUB_TOKEN`, without a separate PAT. Marketplace submission is still manual.
 
-Failed unit or host tests leave a downloadable **agent-dock-test-diagnostics** artifact. It contains the unit JSON report and available VS Code logs/restart reports, so failures can be diagnosed even when packaging or release is skipped.
+Failed unit or host tests leave a downloadable **agent-tandem-test-diagnostics** artifact. It contains the unit JSON report and available VS Code logs/restart reports, so failures can be diagnosed even when packaging or release is skipped.
 
 ### Local PowerShell
 
@@ -72,7 +72,7 @@ npm test -- --maxWorkers=2 --testTimeout=15000
 npm run package:marketplace -- --publisher coolbirdv --repository-url https://github.com/YOUR_ACCOUNT/YOUR_REPO
 ```
 
-Output: `artifacts/agent-dock-VERSION.vsix`, its checksum, and `artifacts/marketplace-build.json`. The metadata records the actual publisher and staging folder. The source manifest remains unchanged.
+Output: `artifacts/agent-tandem-VERSION.vsix`, its checksum, and `artifacts/marketplace-build.json`. The metadata records the actual publisher and staging folder. The source manifest remains unchanged.
 
 Before creating a publisher, validate the build with:
 
@@ -80,7 +80,7 @@ Before creating a publisher, validate the build with:
 npm run package:marketplace -- --preview
 ```
 
-This creates `agent-dock-VERSION-preview.vsix` with the local publisher. Rebuild with your real ID and repository URL before uploading. Renaming the file cannot change its embedded publisher.
+This creates `agent-tandem-VERSION-preview.vsix` with the local publisher. Rebuild with your real ID and repository URL before uploading. Renaming the file cannot change its embedded publisher.
 
 ## 4. Test and submit
 

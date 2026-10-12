@@ -17,8 +17,8 @@ const providerHomes = await providerTestHomes(runtime, { reopen: reopenIndex >= 
 const options = {
   vscodeExecutablePath: process.env.VSCODE_EXECUTABLE_PATH || path.join(process.env.LOCALAPPDATA, 'Programs/Microsoft VS Code/Code.exe'),
   extensionDevelopmentPath: root, extensionTestsPath: path.join(root, 'dist/models-live-tests.js'),
-  extensionTestsEnv: { ...providerHomes, AGENT_DOCK_MODEL_REPORT_DIR: path.join(root, 'artifacts'), ...(process.env.AGENT_DOCK_MODEL_CODEX ? { AGENT_DOCK_MODEL_CODEX: process.env.AGENT_DOCK_MODEL_CODEX } : {}) },
+  extensionTestsEnv: { ...providerHomes, AGENT_TANDEM_MODEL_REPORT_DIR: path.join(root, 'artifacts'), ...(process.env.AGENT_TANDEM_MODEL_CODEX ? { AGENT_TANDEM_MODEL_CODEX: process.env.AGENT_TANDEM_MODEL_CODEX } : {}) },
   launchArgs: [workspace, '--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'],
 };
 if (reopenIndex < 0) await runTests(options);
-await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_DOCK_MODEL_PHASE: 'reopen' } });
+await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_TANDEM_MODEL_PHASE: 'reopen' } });

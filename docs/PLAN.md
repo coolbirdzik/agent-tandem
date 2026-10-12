@@ -1,8 +1,8 @@
-# AgentDock implementation plan
+# AgentTandem implementation plan
 
 Created: 2026-10-07. Update: synchronizing existing project conversations is a core feature, implemented before new chat and checkpoints.
 
-AgentDock brings Claude Code and Codex workflows into VS Code: users assign work in chat, follow agents, review code and return to earlier turns when needed. The MVP targets a complete workflow for both providers; checkpoints and diffs are designed alongside chat from the start.
+AgentTandem brings Claude Code and Codex workflows into VS Code: users assign work in chat, follow agents, review code and return to earlier turns when needed. The MVP targets a complete workflow for both providers; checkpoints and diffs are designed alongside chat from the start.
 
 ## Product goals
 
@@ -47,9 +47,9 @@ macOS/Linux are prepared through abstractions but excluded from initial acceptan
 
 ### Chat and sessions
 
-The default workflow stays in one AgentDock sidebar panel: conversations, history, changes and diagnostics. Sessions, tool output and steps/files do not automatically create editor tabs. Open in tab/Open diff in editor are separate actions. Provider icons and names identify sessions, headers, replies/tools, beyond color alone.
+The default workflow stays in one AgentTandem sidebar panel: conversations, history, changes and diagnostics. Sessions, tool output and steps/files do not automatically create editor tabs. Open in tab/Open diff in editor are separate actions. Provider icons and names identify sessions, headers, replies/tools, beyond color alone.
 
-The initial screen uses current-project Codex/Claude conversations. Filter cwd within the root/subdirectories, excluding similarly prefixed siblings. Use the current root without a picker; multi-root workspaces follow the active file. History has its own button; the latest session opens unless a saved selection exists. Keys are `(provider, providerSessionId)`; reading history does not create AgentDock sessions. One provider's list/read failure leaves the other available. Revision-based sync rejects stale reads after switching projects/sessions. History is readable without model execution permissions; transcripts without snapshots must not pretend to offer code diffs/reverts.
+The initial screen uses current-project Codex/Claude conversations. Filter cwd within the root/subdirectories, excluding similarly prefixed siblings. Use the current root without a picker; multi-root workspaces follow the active file. History has its own button; the latest session opens unless a saved selection exists. Keys are `(provider, providerSessionId)`; reading history does not create AgentTandem sessions. One provider's list/read failure leaves the other available. Revision-based sync rejects stale reads after switching projects/sessions. History is readable without model execution permissions; transcripts without snapshots must not pretend to offer code diffs/reverts.
 
 The sidebar contains sessions, provider/model, messages and composer. Enter sends, Shift+Enter adds a newline, Stop interrupts, and context chips can be removed before sending. Long content/tool output collapses. Auto-scroll occurs only when the reader is at the bottom.
 
@@ -84,7 +84,7 @@ The default boundary is **before the selected user message**, explicitly labeled
 | Mode | Conversation | Code |
 | --- | --- | --- |
 | Conversation Only | Active branch excludes selected/later turns from future context | Retain code and disclose that it was not restored |
-| Code Only | Retain chat history | Restore AgentDock-managed changes and disclose restoration to the next turn |
+| Code Only | Retain chat history | Restore AgentTandem-managed changes and disclose restoration to the next turn |
 | Conversation and Code | Branch before the selected turn | Restore code to the same boundary |
 
 Revert never physically deletes old branch history. Edit & Resend uses Conversation and Code, then loads the old request for editing.
@@ -112,7 +112,7 @@ Codex app-server provides stdio and thread/turn APIs; `thread/rollback` is depre
 
 Claude Agent SDK provides agent loops, tools, sessions and permissions. Current third-party guidance uses API keys and restricts offering claude.ai login without approval. Use supported provider authentication; do not assume reusable Claude Code subscriptions. [Claude Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)
 
-Claude file checkpoints restore neither conversation context nor Bash edits. AgentDock checkpoints must independently track file state. [Claude file checkpointing](https://code.claude.com/docs/en/agent-sdk/file-checkpointing)
+Claude file checkpoints restore neither conversation context nor Bash edits. AgentTandem checkpoints must independently track file state. [Claude file checkpointing](https://code.claude.com/docs/en/agent-sdk/file-checkpointing)
 
 ## Implementation phases
 

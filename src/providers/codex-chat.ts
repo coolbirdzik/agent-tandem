@@ -104,7 +104,7 @@ export async function runCodexChat(request: ProviderChatRequest, callbacks: Chat
         if (prompts.signal.aborted || signal.aborted) return;
         const answers = questionAnswers(questions, answer);
         write({ id: message.id, result: { answers: Object.fromEntries(questions.map(q => [q.id, { answers: answers[q.id] }])) } });
-      } else write({ id: message.id, error: { code: -32601, message: 'This agent request is not supported by AgentDock.' } });
+      } else write({ id: message.id, error: { code: -32601, message: 'This agent request is not supported by AgentTandem.' } });
       return;
     }
     if (message.id !== undefined) {
@@ -140,7 +140,7 @@ export async function runCodexChat(request: ProviderChatRequest, callbacks: Chat
   });
   try {
     if (signal.aborted) { stop(); return await done; }
-    await call('initialize', { clientInfo: { name: 'agent_dock', title: 'AgentDock', version: '0.1.0' }, capabilities: { experimentalApi: true } });
+    await call('initialize', { clientInfo: { name: 'agent_tandem', title: 'AgentTandem', version: '0.1.0' }, capabilities: { experimentalApi: true } });
     write({ method: 'initialized', params: {} });
     const existing = request.conversationKey?.slice('Codex:'.length);
     let method = existing ? 'thread/resume' : 'thread/start';

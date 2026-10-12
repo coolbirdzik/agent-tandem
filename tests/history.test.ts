@@ -10,7 +10,7 @@ import type { Session } from '../src/core/types';
 
 const directories: string[] = [];
 async function fixture(maxBytes?: number) {
-  const parent = await mkdtemp(path.join(tmpdir(), 'agent-dock-test-')); directories.push(parent);
+  const parent = await mkdtemp(path.join(tmpdir(), 'agent-tandem-test-')); directories.push(parent);
   const root = path.join(parent, 'work'); await mkdir(root);
   const history = new HistoryStore(path.join(parent, 'history'), maxBytes);
   await writeFile(path.join(root, 'login.ts'), 'return value.length > 0;\r\n');

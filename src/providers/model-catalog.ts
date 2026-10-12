@@ -50,7 +50,7 @@ export async function codexModels(project: string, configured = '', signal?: Abo
   });
   try {
     if (signal?.aborted) abort();
-    await call('initialize', { clientInfo: { name: 'agent_dock', title: 'AgentDock', version: '0.1.0' } });
+    await call('initialize', { clientInfo: { name: 'agent_tandem', title: 'AgentTandem', version: '0.1.0' } });
     child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
     const rows: ModelChoice[] = [], seen = new Set<string>();
     let cursor: string | null = null;

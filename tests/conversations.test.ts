@@ -9,10 +9,10 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, {
 const empty: ClaudeHistoryAPI = { listSessions: async () => [], getSessionMessages: async () => [] };
 const line = (type: string, payload: unknown) => JSON.stringify({ type, payload }) + '\n';
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-history-')); roots.push(root);
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-history-')); roots.push(root);
   const dir = path.join(root, 'sessions', '2026', '10', '07'); await mkdir(dir, { recursive: true });
   const file = path.join(dir, 'rollout.jsonl');
-  await writeFile(file, line('session_meta', { id: 'session-1', cwd: 'L:\\Code\\agent-dock' }) + line('event_msg', { type: 'user_message', message: 'Fix login', client_id: 'u1' }) + line('response_item', { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done' }], id: 'a1' }));
+  await writeFile(file, line('session_meta', { id: 'session-1', cwd: 'L:\\Code\\agent-tandem' }) + line('event_msg', { type: 'user_message', message: 'Fix login', client_id: 'u1' }) + line('response_item', { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done' }], id: 'a1' }));
   return { root, file };
 }
 describe('Project conversation sync', () => {
@@ -23,7 +23,7 @@ describe('Project conversation sync', () => {
       database.exec('CREATE TABLE threads (id TEXT, cwd TEXT, title TEXT, archived INTEGER)');
       database.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)').run('session-1', 'L:\\Code\\moved', 'Native renamed chat', 0);
       const reader = new ProjectConversations(async () => empty, root);
-      expect((await reader.list('L:\\Code\\agent-dock')).conversations).toEqual([]);
+      expect((await reader.list('L:\\Code\\agent-tandem')).conversations).toEqual([]);
       const original = (await reader.list('L:\\Code\\moved')).conversations[0]!;
       expect(original.title).toBe('Native renamed chat'); expect(original.cwd).toBe('L:\\Code\\moved');
       expect((await reader.read(original, original.cwd)).messages[0]!.text).toBe('Fix login');
@@ -38,16 +38,16 @@ describe('Project conversation sync', () => {
     const { root, file } = await fixture();
     await writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id: 'session-1', thread_name: 'Old name' }) + '\n' + JSON.stringify({ id: 'session-1', thread_name: 'Latest native name' }) + '\n{partial');
     await truncate(file, 129 * 1024 * 1024);
-    const reader = new ProjectConversations(async () => empty, root), index = await reader.list('L:\\Code\\agent-dock');
+    const reader = new ProjectConversations(async () => empty, root), index = await reader.list('L:\\Code\\agent-tandem');
     expect(index.errors).toEqual([]); expect(index.conversations[0]!.title).toBe('Latest native name');
-    await expect(reader.read(index.conversations[0]!, 'L:\\Code\\agent-dock')).rejects.toThrow('128 MiB');
+    await expect(reader.read(index.conversations[0]!, 'L:\\Code\\agent-tandem')).rejects.toThrow('128 MiB');
   });
   it('finds Claude sessions with missing cwd via scoped discovery, merges nested sessions and tolerates a failed global index', async () => {
     const sdk: ClaudeHistoryAPI = {
       listSessions: async options => options.dir ? [{ sessionId: 'missing', summary: 'Native Claude chat', lastModified: 2 }] : [{ sessionId: 'nested', cwd: '/repo/src', summary: 'Nested', lastModified: 1 }, { sessionId: 'other', cwd: '/private', summary: 'Elsewhere', lastModified: 3 }],
       getSessionMessages: async (_id, options) => [{ uuid: 'u', type: 'user', message: { content: options.dir } }],
     };
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-scope-')); roots.push(root);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-scope-')); roots.push(root);
     const reader = new ProjectConversations(async () => sdk, root);
     const index = await reader.list('/repo'); expect(index.conversations.map(row => row.id)).toEqual(['missing', 'nested']);
     expect((await reader.read(index.conversations[0]!, '/repo')).messages[0]!.text).toBe('/repo');
@@ -55,7 +55,7 @@ describe('Project conversation sync', () => {
     expect((await reader.list('/repo')).conversations[0]!.title).toBe('Still available');
   });
   it('matches canonical directory aliases for both providers and can read those sessions', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-alias-')); roots.push(root);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-alias-')); roots.push(root);
     const canonical = path.join(root, 'canonical'), alias = path.join(root, 'alias'), home = path.join(root, 'codex');
     await mkdir(canonical); await symlink(canonical, alias, process.platform === 'win32' ? 'junction' : 'dir'); await mkdir(path.join(home, 'sessions'), { recursive: true });
     await writeFile(path.join(home, 'sessions/a.jsonl'), line('session_meta', { id: 'c', cwd: canonical }) + line('event_msg', { type: 'user_message', message: 'Alias session' }));
@@ -65,7 +65,7 @@ describe('Project conversation sync', () => {
     for (const conversation of index.conversations) await expect(reader.read(conversation, alias)).resolves.toBeDefined();
   });
   it('retains the scoped transcript directory when global metadata reports a changed cwd', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-claude-cwd-')); roots.push(root);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-claude-cwd-')); roots.push(root);
     const sdk: ClaudeHistoryAPI = {
       listSessions: async options => [{ sessionId: 'changed-cwd', cwd: '/repo/src', summary: 'Claude workspace conversation', lastModified: 1 }],
       getSessionMessages: async (_id, options) => options.dir === '/repo' ? [{ uuid: 'u1', type: 'user', message: { content: 'Original workspace conversation' } }] : [],
@@ -76,7 +76,7 @@ describe('Project conversation sync', () => {
     expect((await reader.read(index.conversations[0]!, '/repo')).messages[0]?.text).toBe('Original workspace conversation');
   });
   it('matches different native and workspace junctions without including another project', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-native-alias-')); roots.push(root);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-native-alias-')); roots.push(root);
     const canonical = path.join(root, 'canonical'), nativeAlias = path.join(root, 'native'), workspaceAlias = path.join(root, 'workspace');
     const other = path.join(root, 'other'), home = path.join(root, 'codex');
     await mkdir(canonical); await mkdir(other); await mkdir(path.join(home, 'sessions'), { recursive: true });
@@ -121,9 +121,9 @@ describe('Project conversation sync', () => {
   });
   it('uses the first real request as the title and keeps filtering after history refresh', async () => {
     const { root, file } = await fixture();
-    await writeFile(file, line('session_meta', { id: 'session-1', cwd: 'L:\\Code\\agent-dock' }) + [response(`${plugins}\n${environment}`, 'context'), response('Fix login', 'u1')].map(record => JSON.stringify(record) + '\n').join(''));
+    await writeFile(file, line('session_meta', { id: 'session-1', cwd: 'L:\\Code\\agent-tandem' }) + [response(`${plugins}\n${environment}`, 'context'), response('Fix login', 'u1')].map(record => JSON.stringify(record) + '\n').join(''));
     const reader = new ProjectConversations(async () => empty, root);
-    let conversation = (await reader.list('L:\\Code\\agent-dock')).conversations[0]!;
+    let conversation = (await reader.list('L:\\Code\\agent-tandem')).conversations[0]!;
     expect(conversation.title).toBe('Fix login');
     expect((await reader.read(conversation, conversation.cwd)).messages.map(message => message.text)).toEqual(['Fix login']);
     await appendFile(file, JSON.stringify(response(environment, 'context-later')) + '\n' + JSON.stringify(response('Add tests', 'u2')) + '\n');
@@ -131,16 +131,16 @@ describe('Project conversation sync', () => {
     expect((await reader.read(conversation, conversation.cwd)).messages.map(message => message.text)).toEqual(['Fix login', 'Add tests']);
   });
   it('matches Windows case, subdirectories and extended paths, excludes sibling projects', () => {
-    expect(belongsToProject('l:\\code\\AGENT-DOCK\\src', 'L:\\Code\\agent-dock\\')).toBe(true);
-    expect(belongsToProject('\\\\?\\L:\\Code\\agent-dock', 'L:\\Code\\agent-dock')).toBe(true);
+    expect(belongsToProject('l:\\code\\AGENT-TANDEM\\src', 'L:\\Code\\agent-tandem\\')).toBe(true);
+    expect(belongsToProject('\\\\?\\L:\\Code\\agent-tandem', 'L:\\Code\\agent-tandem')).toBe(true);
     expect(belongsToProject('\\\\?\\UNC\\server\\share\\repo', '\\\\server\\share\\repo')).toBe(true);
-    expect(belongsToProject('L:\\Code\\agent-dock-other', 'L:\\Code\\agent-dock')).toBe(false);
+    expect(belongsToProject('L:\\Code\\agent-tandem-other', 'L:\\Code\\agent-tandem')).toBe(false);
     expect(belongsToProject('/repo/child', '/repo')).toBe(true);
     expect(belongsToProject('/repo-other', '/repo')).toBe(false);
   });
   it('reads existing Codex history, then syncs appended messages with stable keys', async () => {
     const { root, file } = await fixture(), reader = new ProjectConversations(async () => empty, root);
-    const initial = await reader.list('L:\\Code\\agent-dock');
+    const initial = await reader.list('L:\\Code\\agent-tandem');
     expect(initial.errors).toEqual([]); expect(initial.conversations).toHaveLength(1);
     const original = initial.conversations[0]!;
     expect(original.title).toBe('Fix login');
@@ -154,7 +154,7 @@ describe('Project conversation sync', () => {
   it('skips incomplete records while a writer appends, and picks up completed records', async () => {
     const { root, file } = await fixture(), reader = new ProjectConversations(async () => empty, root);
     await appendFile(file, '{"type":"event_msg","payload":');
-    let session = (await reader.list('L:\\Code\\agent-dock')).conversations[0]!;
+    let session = (await reader.list('L:\\Code\\agent-tandem')).conversations[0]!;
     expect((await reader.read(session, session.cwd)).notice).toMatch(/incomplete/i);
     await appendFile(file, '{"type":"user_message","message":"Finished write"}}\n');
     session = (await reader.list(session.cwd)).conversations[0]!;
@@ -162,15 +162,15 @@ describe('Project conversation sync', () => {
     expect(content.notice).toBeUndefined(); expect(content.messages.at(-1)?.text).toBe('Finished write');
   });
   it('keeps Claude available when Codex history fails, and filters Claude by project boundary', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-history-')); roots.push(root);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-history-')); roots.push(root);
     await writeFile(path.join(root, 'sessions'), 'not a directory');
     const sdk: ClaudeHistoryAPI = {
-      listSessions: async () => [{ sessionId: 'c1', cwd: 'L:\\Code\\agent-dock\\nested', summary: 'Claude chat', lastModified: 1 }, { sessionId: 'c2', cwd: 'L:\\Code\\else', summary: 'Private other project', lastModified: 2 }],
+      listSessions: async () => [{ sessionId: 'c1', cwd: 'L:\\Code\\agent-tandem\\nested', summary: 'Claude chat', lastModified: 1 }, { sessionId: 'c2', cwd: 'L:\\Code\\else', summary: 'Private other project', lastModified: 2 }],
       getSessionMessages: async () => [{ uuid: 'm1', type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } }],
     };
-    const reader = new ProjectConversations(async () => sdk, root), index = await reader.list('L:\\Code\\agent-dock');
+    const reader = new ProjectConversations(async () => sdk, root), index = await reader.list('L:\\Code\\agent-tandem');
     expect(index.errors).toHaveLength(1); expect(index.conversations.map(item => item.id)).toEqual(['c1']);
-    expect((await reader.read(index.conversations[0]!, 'L:\\Code\\agent-dock')).messages[0]?.text).toBe('Hello');
+    expect((await reader.read(index.conversations[0]!, 'L:\\Code\\agent-tandem')).messages[0]?.text).toBe('Hello');
     await expect(reader.read(index.conversations[0]!, 'L:\\Code\\else')).rejects.toThrow(/does not belong/);
   });
   it('does not duplicate Codex event and response messages or show internal instructions/reasoning', () => {
@@ -200,8 +200,8 @@ describe('Project conversation sync', () => {
 });
 
 
-it('excludes only known AgentDock test run folders from a parent project, keeps normal nested chats and direct test workspaces', () => {
-  const project = 'L:\\Code\\agent-dock';
+it('excludes only known AgentTandem test run folders from a parent project, keeps normal nested chats and direct test workspaces', () => {
+  const project = 'L:\\Code\\agent-tandem';
   const fixture = project + '\\.test-runtime\\models-live-123\\workspace';
   expect(projectHistoryAllowed(fixture, project)).toBe(false);
   expect(projectHistoryAllowed(fixture, fixture)).toBe(true);
@@ -210,7 +210,7 @@ it('excludes only known AgentDock test run folders from a parent project, keeps 
   expect(projectHistoryAllowed('/repo/.test-runtime/my-real-project', '/repo')).toBe(true);
 });
 it('filters old test histories for both providers without hiding a user who pasted MODEL_OK', async () => {
-  const store = await mkdtemp(path.join(os.tmpdir(), 'agentdock-test-history-')); roots.push(store);
+  const store = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-test-history-')); roots.push(store);
   await mkdir(path.join(store, 'sessions'));
   const fixture = '/repo/.test-runtime/models-live-123/workspace';
   await writeFile(path.join(store, 'sessions/test.jsonl'), line('session_meta', { id: 'code-test', cwd: fixture }) + line('event_msg', { type: 'user_message', message: 'MODEL_OK' }));

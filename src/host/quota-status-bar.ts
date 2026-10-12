@@ -3,10 +3,10 @@ import type { ViewState } from '../core/types';
 import { quotaStatus } from '../core/quota-status';
 
 export class QuotaStatusBar implements vscode.Disposable {
-  private item = vscode.window.createStatusBarItem('agentDock.quota', vscode.StatusBarAlignment.Right, 25);
-  constructor() { this.item.name = 'AgentDock quota'; this.item.command = 'agentDock.openSettings'; }
+  private item = vscode.window.createStatusBarItem('agentTandem.quota', vscode.StatusBarAlignment.Right, 25);
+  constructor() { this.item.name = 'AgentTandem quota'; this.item.command = 'agentTandem.openSettings'; }
   update(state: ViewState) {
-    if (!vscode.workspace.getConfiguration('agentDock').get('showQuotaInStatusBar', true)) { this.item.hide(); return; }
+    if (!vscode.workspace.getConfiguration('agentTandem').get('showQuotaInStatusBar', true)) { this.item.hide(); return; }
     const value = quotaStatus(state); this.item.text = value.text; this.item.tooltip = value.tooltip;
     const alert = value.tone === 'exhausted' ? 'error' : value.tone === 'warning' ? 'warning' : undefined;
     this.item.backgroundColor = alert ? new vscode.ThemeColor(`statusBarItem.${alert}Background`) : undefined;

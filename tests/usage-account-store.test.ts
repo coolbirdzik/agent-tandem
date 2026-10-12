@@ -17,7 +17,7 @@ describe('Native usage account evidence', () => {
     expect(usageAccount('Claude', { ...identity, signedIn: false })).toBeUndefined();
   });
   it('persists individual IDs across reload, drops credentials and quarantines conflicting evidence', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-accounts-'));
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-accounts-'));
     try {
       const one = usageAccount('Claude', { signedIn: true, email: 'one@test.invalid', method: 'Claude account' })!;
       const two = usageAccount('Claude', { signedIn: true, email: 'two@test.invalid', method: 'Claude account' })!;

@@ -9,7 +9,7 @@ import type { ConversationContent, ConversationProvider } from '../src/providers
 const directories: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(directories.splice(0).map(folder => rm(folder, { recursive: true, force: true }))); });
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-checkpoints-')); directories.push(root);
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-checkpoints-')); directories.push(root);
   const project = path.join(root, 'project'); await mkdir(project);
   const reviews = new ReviewStore(path.join(root, 'reviews')), checkpoints = new CheckpointStore(path.join(root, 'checkpoints'));
   const set = (name: string, bytes: string | Buffer) => writeFile(path.join(project, name), bytes);

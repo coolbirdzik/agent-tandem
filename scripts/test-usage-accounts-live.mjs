@@ -39,7 +39,7 @@ for (const provider of ['Codex', 'Claude']) {
     assert.ok(!data.days.some(row => row.provider === provider && !row.account), 'New main-thread usage is attributed');
     check.status = 'completed'; check.attributionPersisted = true; check.nativeTokenCountsScoped = true;
   } catch (error) { check.status = 'failed'; check.error = error.message; }
-  finally { console.log(`AGENT_DOCK_USAGE_ACCOUNTS_LIVE ${JSON.stringify(check)}`); }
+  finally { console.log(`AGENT_TANDEM_USAGE_ACCOUNTS_LIVE ${JSON.stringify(check)}`); }
 }
 const success = checks.every(check => check.status === 'completed');
 await mkdir(path.join(root, 'artifacts'), { recursive: true });

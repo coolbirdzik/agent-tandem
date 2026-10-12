@@ -10,7 +10,7 @@ export interface HunkLensTarget { project: string; revision: string; file: strin
 export class ReviewHunkLenses implements vscode.CodeLensProvider, vscode.Disposable {
   private changes = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this.changes.event;
-  private registration = vscode.languages.registerCodeLensProvider({ scheme: 'agentdock-review' }, this);
+  private registration = vscode.languages.registerCodeLensProvider({ scheme: 'agenttandem-review' }, this);
   constructor(private resolve: (document: vscode.TextDocument) => Promise<HunkLensTarget | undefined>) {}
 
   refresh() { this.changes.fire(); }
@@ -27,11 +27,11 @@ export class ReviewHunkLenses implements vscode.CodeLensProvider, vscode.Disposa
       const request = { project, revision, file, hunk: hunk.id, line };
       const place = `block ${index + 1} of ${hunks.length} in ${file}`;
       const lenses = [
-        new vscode.CodeLens(range, { title: '$(check) Accept', tooltip: `Keep ${place} and mark it reviewed`, command: 'agentDock.acceptHunk', arguments: [request] }),
-        new vscode.CodeLens(range, { title: '$(discard) Reject', tooltip: `Reject ${place} and restore its previous content`, command: 'agentDock.rejectHunk', arguments: [request] }),
+        new vscode.CodeLens(range, { title: '$(check) Accept', tooltip: `Keep ${place} and mark it reviewed`, command: 'agentTandem.acceptHunk', arguments: [request] }),
+        new vscode.CodeLens(range, { title: '$(discard) Reject', tooltip: `Reject ${place} and restore its previous content`, command: 'agentTandem.rejectHunk', arguments: [request] }),
       ];
       if (hunks.length > 1 || target.files > 1) lenses.push(new vscode.CodeLens(range,
-        { title: '$(arrow-down) Next change', tooltip: 'Go to the next change, continuing into the next changed file', command: 'agentDock.nextChange' }));
+        { title: '$(arrow-down) Next change', tooltip: 'Go to the next change, continuing into the next changed file', command: 'agentTandem.nextChange' }));
       lenses.push(new vscode.CodeLens(range, { title: `Block ${index + 1}/${hunks.length}`, command: '' }));
       return lenses;
     });

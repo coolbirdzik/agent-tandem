@@ -8,22 +8,22 @@ import type { ExtensionAPI } from '../../src/extension';
 import type { CLIRequest } from '../../src/providers/cli-registry';
 
 export async function run() {
-  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-dock-local.agent-dock')!.activate();
+  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-tandem-local.agent-tandem')!.activate();
   const project = vscode.workspace.workspaceFolders![0]!.uri.fsPath;
-  const reportPath = path.join(process.env.AGENT_DOCK_CLI_REPORT_DIR!, 'cli-manager-live-test.json');
+  const reportPath = path.join(process.env.AGENT_TANDEM_CLI_REPORT_DIR!, 'cli-manager-live-test.json');
   const deadline = Date.now() + 30_000;
   while (!api.viewState().cliManager?.registry.initialized || api.viewState().cliManager?.busy) {
     assert.ok(Date.now() < deadline, api.viewState().cliManager?.error ?? 'CLI initialization timed out');
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   const action = async (provider: 'Codex' | 'Claude', operation: CLIRequest['action'], details: Partial<CLIRequest> = {}) => {
-    await vscode.commands.executeCommand('agentDock.cliAction', { project, provider, action: operation, revision: api.viewState().cliManager!.registry.revision, ...details });
+    await vscode.commands.executeCommand('agentTandem.cliAction', { project, provider, action: operation, revision: api.viewState().cliManager!.registry.revision, ...details });
   };
   const refreshModels = async (provider: 'Codex' | 'Claude') => {
-    await vscode.commands.executeCommand('agentDock.refreshModels', { project, provider, model: '' });
+    await vscode.commands.executeCommand('agentTandem.refreshModels', { project, provider, model: '' });
     return api.viewState().modelCatalogs?.[provider];
   };
-  if (process.env.AGENT_DOCK_CLI_PHASE === 'reopen') {
+  if (process.env.AGENT_TANDEM_CLI_PHASE === 'reopen') {
     const report = JSON.parse(await readFile(reportPath, 'utf8'));
     process.env.PATH = [report.terminalDirectory, process.env.PATH].join(path.delimiter);
     for (const row of report.checks) {
@@ -45,10 +45,10 @@ export async function run() {
       await unlink(row.executable);
     }
     for (const name of ['codex', 'claude']) await unlink(path.join(report.terminalDirectory, `${name}.exe`));
-    await writeFile(path.join(process.env.AGENT_DOCK_CLI_REPORT_DIR!, 'cli-manager-reopen-test.json'), JSON.stringify({ success: true, vscode: vscode.version, persistedSelection: true, removalKeptExecutable: true, removedDefaultBlocked: true, recoveredTerminalCLI: true }, null, 2));
+    await writeFile(path.join(process.env.AGENT_TANDEM_CLI_REPORT_DIR!, 'cli-manager-reopen-test.json'), JSON.stringify({ success: true, vscode: vscode.version, persistedSelection: true, removalKeptExecutable: true, removedDefaultBlocked: true, recoveredTerminalCLI: true }, null, 2));
     return;
   }
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-cli-manager-'));
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-cli-manager-'));
   // Use real native CLIs on an isolated terminal PATH, even if the machine's
   // npm launcher is broken. Persist these fixtures for the reopen checks.
   const terminalDirectory = path.join(directory, 'terminal'); await mkdir(terminalDirectory);
@@ -63,8 +63,8 @@ export async function run() {
   process.env.PATH = [terminalDirectory, process.env.PATH].join(path.delimiter);
   const checks = [];
   for (const provider of ['Codex', 'Claude'] as const) {
-    await vscode.commands.executeCommand('agentDock.newChat', provider);
-    await vscode.commands.executeCommand('agentDock.refreshCLIs');
+    await vscode.commands.executeCommand('agentTandem.newChat', provider);
+    await vscode.commands.executeCommand('agentTandem.refreshCLIs');
     const manager = api.viewState().cliManager!;
     const original = manager.registry.entries.find(row => row.id === manager.active[provider]?.id) ?? manager.registry.entries.find(row => row.provider === provider && row.enabled && !row.error)!;
     assert.ok(original, `${provider} is installed`);
@@ -98,17 +98,17 @@ export async function run() {
     const movedExecutable = path.join(directory, `${provider.toLowerCase()}-moved.exe`);
     await link(original.executable, movedExecutable);
     await action(provider, 'edit', { id: entry.id, name: `Renamed ${provider}`, executable: movedExecutable });
-    await vscode.workspace.getConfiguration('agentDock', vscode.Uri.file(project)).update(provider === 'Codex' ? 'codexExecutable' : 'claudeExecutable', executable, vscode.ConfigurationTarget.WorkspaceFolder);
+    await vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(project)).update(provider === 'Codex' ? 'codexExecutable' : 'claudeExecutable', executable, vscode.ConfigurationTarget.WorkspaceFolder);
     assert.equal((await refreshModels(provider))?.cli?.executable, movedExecutable, 'Managed selection follows its ID despite old path settings');
     await unlink(executable);
     await action(provider, 'toggle', { id: entry.id, enabled: false });
     assert.match(api.viewState().modelCatalogs?.[provider]?.error ?? '', /disabled/i);
     assert.match(api.viewState().cliManager!.active[provider]?.error ?? '', /disabled/i);
-    await vscode.commands.executeCommand('agentDock.sendChat', { requestId: randomUUID(), project, provider, model: '', text: 'This disabled CLI must never run an agent.' });
+    await vscode.commands.executeCommand('agentTandem.sendChat', { requestId: randomUUID(), project, provider, model: '', text: 'This disabled CLI must never run an agent.' });
     assert.equal(api.viewState().chat?.status, 'failed');
     assert.match(api.viewState().error ?? '', /disabled/i);
     assert.equal(api.conversation()?.conversation.id, '', 'Blocked before native session creation');
-    await vscode.commands.executeCommand('agentDock.newChat', provider);
+    await vscode.commands.executeCommand('agentTandem.newChat', provider);
     await action(provider, 'toggle', { id: entry.id, enabled: true });
     await action(provider, 'refresh', { id: entry.id });
     assert.equal((await refreshModels(provider))?.status, 'ready');
@@ -116,5 +116,5 @@ export async function run() {
     checks.push({ provider, id: entry.id, executable: movedExecutable, version: entry.version, registered: true, renamed: true, pathEditPreservedSelection: true, disabledCatalogAndChat: true, enabledCatalog: true, ...(provider === 'Codex' ? { scanDiscoveredNewRelease: true, rescanDidNotDuplicate: true } : {}) });
   }
   await writeFile(reportPath, JSON.stringify({ success: true, vscode: vscode.version, terminalDirectory, checks }, null, 2));
-  console.log('AGENT_DOCK_CLI_MANAGER_LIVE success');
+  console.log('AGENT_TANDEM_CLI_MANAGER_LIVE success');
 }

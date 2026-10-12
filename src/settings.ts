@@ -347,7 +347,7 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
   el('storage-selection').textContent = selected.length ? `${selected.length} selected · ${selected.reduce((sum, group) => sum + group.count, 0)} restore points` : 'No history selected';
   const list = el('storage-histories'); list.replaceChildren();
   if (busy && !storage?.histories) loadingRows(list, 3);
-  else if (!visible.length) list.append(node('p', groups.length ? 'No restore history matches these filters.' : blocked ? 'Restore history could not be read. Refresh to try again.' : 'No saved restore history yet. New messages in AgentDock create checkpoints.', 'storage-empty'));
+  else if (!visible.length) list.append(node('p', groups.length ? 'No restore history matches these filters.' : blocked ? 'Restore history could not be read. Refresh to try again.' : 'No saved restore history yet. New messages in AgentTandem create checkpoints.', 'storage-empty'));
   for (const group of visible) {
     const row = node('label', undefined, 'storage-history-row'), checkbox = node('input');
     checkbox.type = 'checkbox'; checkbox.checked = selectedHistory.has(group.id); checkbox.disabled = locked;
@@ -392,7 +392,7 @@ function renderStorage(storage: UsageDashboardState['storage']) {
   const busy = !storage || ['idle', 'loading', 'cleaning'].includes(storage.status);
   el('storage').setAttribute('aria-busy', String(busy));
   el('storage-path').textContent = storage?.root ?? 'Available when connected to the extension';
-  el('storage-status').textContent = storage?.status === 'cleaning' ? 'Removing selected storage data…' : busy ? 'Reading AgentDock storage…' : 'Stored locally on this machine. Select restore history below to review deletion.';
+  el('storage-status').textContent = storage?.status === 'cleaning' ? 'Removing selected storage data…' : busy ? 'Reading AgentTandem storage…' : 'Stored locally on this machine. Select restore history below to review deletion.';
   const error = storage?.error ?? storage?.cleanupBlocked;
   el('storage-error').hidden = !error; el('storage-error').textContent = error ?? '';
   el<HTMLButtonElement>('storage-refresh').disabled = !!storage && ['loading', 'cleaning'].includes(storage.status);
@@ -400,7 +400,7 @@ function renderStorage(storage: UsageDashboardState['storage']) {
   el<HTMLButtonElement>('storage-clean').disabled = busy || !storage?.plan?.files.length;
   el<HTMLButtonElement>('storage-cancel').disabled = busy;
   const totals = el('storage-totals'); totals.replaceChildren();
-  for (const [label, bytes, detail] of [['Total stored', storage?.total, 'AgentDock extension data only'], ['Safe to clean', storage?.cleanable?.bytes, `${storage?.cleanable?.files ?? 0} unused files · older than 24h`]] as const) {
+  for (const [label, bytes, detail] of [['Total stored', storage?.total, 'AgentTandem extension data only'], ['Safe to clean', storage?.cleanable?.bytes, `${storage?.cleanable?.files ?? 0} unused files · older than 24h`]] as const) {
     const item = node('div', undefined, 'usage-total'); item.append(node('span', label), node('strong', bytes === undefined ? '—' : fileSize(bytes)), node('small', detail)); totals.append(item);
   }
   if (storage?.categories) table(el('storage-categories'), ['Data', 'Size', 'Files'], storage.categories.map(row => [row.label, fileSize(row.bytes), row.files]));
@@ -438,7 +438,7 @@ function render(value: UsageDashboardState) {
     grouping: el<HTMLSelectElement>('filter-group').value as UsageGrouping });
   const root = el('usage-coverage'); root.replaceChildren(node('div', 'Includes recorded Codex and Claude Code usage across all local projects, archived sessions and subagents. Other devices and deleted history are not included.'));
   root.append(node('div', 'Input includes cache read/write. Output includes reasoning when reported. These token totals do not represent your subscription quota or a billing statement.'));
-  root.append(node('div', 'Account attribution starts with native responses observed by AgentDock. Older history, external CLI runs and unidentified API keys stay under Unknown account; they are never assigned to the current login or used in quota estimates. Identity uses the native email and organization when reported.'));
+  root.append(node('div', 'Account attribution starts with native responses observed by AgentTandem. Older history, external CLI runs and unidentified API keys stay under Unknown account; they are never assigned to the current login or used in quota estimates. Identity uses the native email and organization when reported.'));
   const pricing = node('div', `API equivalent uses published standard global token rates checked ${PRICING_CHECKED_AT}, not historical invoices. Prompt-length premiums are estimated per response; older session-wide billing cannot be reconstructed. Fast modes, tool fees, taxes and regional premiums are excluded. Unspecified Claude cache writes use the 5-minute rate. Sources: `);
   for (const provider of ['Codex', 'Claude'] as const) { const link = node('a', provider === 'Codex' ? 'OpenAI API pricing' : 'Claude API pricing'); link.href = PRICING_SOURCES[provider]; pricing.append(link, document.createTextNode(' ')); }
   root.append(pricing);

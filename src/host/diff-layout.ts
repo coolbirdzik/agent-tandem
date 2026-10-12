@@ -4,7 +4,7 @@ export type BlockActionsStyle = 'auto' | 'lens' | 'off';
 
 /** Cards need the editor-inset API; the lens row is the released-API fallback. */
 export function blockActionsStyle(): BlockActionsStyle {
-  const value = vscode.workspace.getConfiguration('agentDock').get<string>('blockActionsStyle', 'auto');
+  const value = vscode.workspace.getConfiguration('agentTandem').get<string>('blockActionsStyle', 'auto');
   return value === 'lens' || value === 'off' ? value : 'auto';
 }
 

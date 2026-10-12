@@ -9,7 +9,7 @@ import { reviewGroup } from '../src/core/review-groups';
 const dirs: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-undo-')); dirs.push(root);
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-undo-')); dirs.push(root);
   const project = path.join(root, 'project'); await mkdir(project);
   const store = new ReviewStore(path.join(root, 'reviews'));
   const set = (name: string, text: string | Buffer) => writeFile(path.join(project, name), text);

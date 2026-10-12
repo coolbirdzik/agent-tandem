@@ -6,7 +6,7 @@ import { CLIStore } from '../src/core/cli-store';
 import { allowedCLI, defaultCLI, cliRequest } from '../src/providers/cli-registry';
 
 async function fixture() {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-cli-registry-'));
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-cli-registry-'));
   const store = new CLIStore(directory);
   const codex = { provider: 'Codex' as const, name: 'Terminal Codex', executable: path.join(directory, 'codex.exe'), version: 'codex-cli 1.0' };
   const claude = { provider: 'Claude' as const, name: 'Claude native', executable: path.join(directory, 'claude.exe'), version: '1.0 (Claude Code)' };

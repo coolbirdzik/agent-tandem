@@ -159,7 +159,7 @@ export async function probeCodex(configured = ''): Promise<ProviderStatus> {
     child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
   });
   try {
-    await call('initialize', { clientInfo: { name: 'agent_dock', title: 'AgentDock', version: '0.1.0' } });
+    await call('initialize', { clientInfo: { name: 'agent_tandem', title: 'AgentTandem', version: '0.1.0' } });
     child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
     const models = await call('model/list', {}) as { data?: unknown[] };
     return { provider: 'Codex', available: true, executable, version, protocol: 'stdio JSON-RPC',

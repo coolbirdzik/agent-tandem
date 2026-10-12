@@ -7,13 +7,13 @@ import type { ExtensionAPI } from '../../src/extension';
 import type { ChatEdit } from '../../src/providers/chat';
 
 export async function run() {
-  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-dock-local.agent-dock')!.activate();
+  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-tandem-local.agent-tandem')!.activate();
   const project = vscode.workspace.workspaceFolders![0]!.uri.fsPath;
   const checks: string[] = [];
   const send = async (provider: string, text: string, edit?: ChatEdit) => {
-    const timer = setTimeout(() => void vscode.commands.executeCommand('agentDock.stopChat'), 90_000);
+    const timer = setTimeout(() => void vscode.commands.executeCommand('agentTandem.stopChat'), 90_000);
     try {
-      await vscode.commands.executeCommand('agentDock.sendChat', { requestId: randomUUID(), project, provider, text,
+      await vscode.commands.executeCommand('agentTandem.sendChat', { requestId: randomUUID(), project, provider, text,
         conversationKey: api.conversation()?.conversation.id ? api.conversation()!.conversation.key : undefined, ...(edit ? { edit } : {}) });
       assert.equal(api.viewState().chat?.status, 'completed', api.viewState().error);
       assert.equal(api.viewState().chat?.phase, undefined);
@@ -24,7 +24,7 @@ export async function run() {
     const baseline = `BASE_${randomUUID().replaceAll('-', '')}`;
     const discarded = `OLD_${randomUUID().replaceAll('-', '')}`;
     const future = `FUTURE_${randomUUID().replaceAll('-', '')}`;
-    await vscode.commands.executeCommand('agentDock.newChat', provider);
+    await vscode.commands.executeCommand('agentTandem.newChat', provider);
     await send(provider, `Remember my baseline token: ${baseline}. Reply only READY. Do not use tools or change files.`);
     await send(provider, `Replace my baseline token with ${discarded}. Reply only READY. Do not use tools or change files.`);
     await send(provider, `Replace my baseline token with ${future}. Reply only READY. Do not use tools or change files.`);
@@ -52,5 +52,5 @@ export async function run() {
     checks.push(`${provider}: edited middle message branches before the target, keeps prior context, excludes target/later turns, preserves original history and current files; editing the first message starts fresh context.`);
   }
   const report = { success: true, vscode: vscode.version, checks };
-  await writeFile(process.env.AGENT_DOCK_EDIT_REPORT!, JSON.stringify(report, null, 2)); console.log(`AGENT_DOCK_EDIT_LIVE ${JSON.stringify(report)}`);
+  await writeFile(process.env.AGENT_TANDEM_EDIT_REPORT!, JSON.stringify(report, null, 2)); console.log(`AGENT_TANDEM_EDIT_LIVE ${JSON.stringify(report)}`);
 }

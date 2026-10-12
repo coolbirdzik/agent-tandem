@@ -10,7 +10,7 @@ if (manifest.enabledApiProposals || manifest.enableProposedApi || manifest.contr
 await new Promise((resolve, reject) => {
   const child = spawn(process.execPath, ['scripts/test-extension.mjs'], {
     cwd: process.cwd(), stdio: 'inherit', windowsHide: true,
-    env: { ...process.env, AGENT_DOCK_EXTENSION_PATH: report.stage },
+    env: { ...process.env, AGENT_TANDEM_EXTENSION_PATH: report.stage },
   });
   child.once('error', reject);
   child.once('exit', code => code === 0 ? resolve() : reject(new Error(`Marketplace host tests failed (${code}).`)));

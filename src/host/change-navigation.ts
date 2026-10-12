@@ -8,13 +8,13 @@ export interface ChangeComparison { file: string; original: vscode.Uri; modified
 interface Scope { files: ChangeComparison[]; title: string; index: number }
 interface SavedScope { files: { file: string; original: string; modified: string; review?: { project: string; revision: string; group?: string } }[]; title: string; index: number }
 export interface ChangeNavigationState { file: string; index: number; total: number }
-const owns = (uri: vscode.Uri) => uri.scheme === 'agentdock-review' || uri.scheme === 'agentdock-snapshot';
+const owns = (uri: vscode.Uri) => uri.scheme === 'agenttandem-review' || uri.scheme === 'agenttandem-snapshot';
 const activeTab = () => vscode.window.tabGroups.activeTabGroup.activeTab;
 const same = (left: vscode.Uri, right: vscode.Uri) => left.toString() === right.toString();
 function kind(tab: vscode.Tab | undefined): 'single' | 'multi' | undefined {
   if (tab?.input instanceof vscode.TabInputTextDiff) return owns(tab.input.original) && owns(tab.input.modified) ? 'single' : undefined;
   const input = tab?.input as { textDiffs?: unknown } | undefined;
-  if (tab?.label.startsWith('AgentDock · ') && (input === undefined || Array.isArray(input?.textDiffs))) return 'multi';
+  if (tab?.label.startsWith('AgentTandem · ') && (input === undefined || Array.isArray(input?.textDiffs))) return 'multi';
   return undefined;
 }
 
@@ -28,19 +28,19 @@ export class ChangeNavigation {
   private queue: Promise<unknown> = Promise.resolve();
   private saves: Promise<unknown> = Promise.resolve();
   private storageFile: string;
-  private counter = vscode.window.createStatusBarItem('agentDock.changeCount', vscode.StatusBarAlignment.Right, 110);
+  private counter = vscode.window.createStatusBarItem('agentTandem.changeCount', vscode.StatusBarAlignment.Right, 110);
   private badge = new ChangeFileBadge(() => this.chooseFile());
   constructor(private context: vscode.ExtensionContext) {
     this.storageFile = path.join((context.storageUri ?? context.globalStorageUri).fsPath, 'change-navigation.json');
-    this.counter.name = 'AgentDock change file count';
+    this.counter.name = 'AgentTandem change file count';
     context.subscriptions.push(this.counter, this.badge, this.changes, this.opening,
       vscode.window.tabGroups.onDidChangeTabs(event => { this.update(); if (event.closed.length) void this.persist(); }),
       vscode.window.tabGroups.onDidChangeTabGroups(() => this.update()),
       vscode.window.onDidChangeActiveTextEditor(() => this.update()),
       vscode.window.onDidChangeVisibleTextEditors(() => this.update()),
-      vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('agentDock.showFileCounterInEditor')) this.update(); }),
+      vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('agentTandem.showFileCounterInEditor')) this.update(); }),
       vscode.window.onDidChangeTextEditorSelection(() => this.update()));
-    for (const direction of ['previous', 'next'] as const) context.subscriptions.push(vscode.commands.registerCommand(`agentDock.${direction}Change`, () => {
+    for (const direction of ['previous', 'next'] as const) context.subscriptions.push(vscode.commands.registerCommand(`agentTandem.${direction}Change`, () => {
       const job = this.queue.then(() => this.navigate(direction));
       this.queue = job.catch(() => undefined);
       return job;
@@ -68,7 +68,7 @@ export class ChangeNavigation {
       : tab.label === scope.title || tab.label.startsWith(`${scope.title} (`));
     if (restored) { this.scopes.set(tab, restored); return restored; }
     if (input instanceof vscode.TabInputTextDiff) {
-      const fallback = { files: [{ file: path.basename(input.modified.path), original: input.original, modified: input.modified }], title: 'AgentDock changes', index: 0 };
+      const fallback = { files: [{ file: path.basename(input.modified.path), original: input.original, modified: input.modified }], title: 'AgentTandem changes', index: 0 };
       this.scopes.set(tab, fallback); return fallback;
     }
   }
@@ -113,17 +113,17 @@ export class ChangeNavigation {
   private update() {
     const modified = vscode.window.tabGroups.all.flatMap(group => group.tabs.flatMap(tab =>
       tab.input instanceof vscode.TabInputTextDiff && kind(tab) === 'single' ? [tab.input.modified.toString()] : []));
-    void vscode.commands.executeCommand('setContext', 'agentDock.changeModifiedResources', modified);
+    void vscode.commands.executeCommand('setContext', 'agentTandem.changeModifiedResources', modified);
     const state = this.state();
     const editor = vscode.window.activeTextEditor;
-    const showBadge = vscode.workspace.getConfiguration('agentDock').get<boolean>('showFileCounterInEditor', true);
+    const showBadge = vscode.workspace.getConfiguration('agentTandem').get<boolean>('showFileCounterInEditor', true);
     this.badge.update(showBadge && editor && owns(editor.document.uri) && state ? editor : undefined, state);
-    void vscode.commands.executeCommand('setContext', 'agentDock.changeNavigation', !!state);
+    void vscode.commands.executeCommand('setContext', 'agentTandem.changeNavigation', !!state);
     this.changes.fire();
     if (!state) { this.counter.hide(); return; }
     this.counter.text = `$(diff) File ${state.index}/${state.total}`;
     this.counter.tooltip = `${state.file}\nPrevious/Next change continues through all ${state.total} changed files.`;
-    this.counter.accessibilityInformation = { label: `AgentDock changed file ${state.index} of ${state.total}: ${state.file}` };
+    this.counter.accessibilityInformation = { label: `AgentTandem changed file ${state.index} of ${state.total}: ${state.file}` };
     this.counter.show();
   }
   private async chooseFile() {
@@ -132,7 +132,7 @@ export class ChangeNavigation {
     const current = this.index(scope, tab);
     const picked = await vscode.window.showQuickPick(scope.files.map((file, index) => ({
       label: file.file, description: `File ${index + 1}/${scope.files.length}${index === current ? ' · current' : ''}`, index,
-    })), { title: 'AgentDock · Changed files', placeHolder: 'Choose a file to review' });
+    })), { title: 'AgentTandem · Changed files', placeHolder: 'Choose a file to review' });
     if (!picked || activeTab() !== tab) return;
     const job = this.queue.then(() => this.showFile(scope, picked.index));
     this.queue = job.catch(() => undefined); await job;

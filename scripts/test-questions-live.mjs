@@ -37,7 +37,7 @@ for (const provider of ['Claude', 'Codex']) {
     const final = messages.filter(m => m.role === 'assistant').map(m => m.text).join('\n');
     for (const q of prompts[0].questions) assert.ok(final.includes(q.options[0].label), 'Agent receives and repeats the selected answer');
     const check = { provider, success: true, questions: prompts[0].questions.length, durationMs: Date.now() - started };
-    checks.push(check); console.log(`AGENT_DOCK_QUESTIONS_LIVE ${JSON.stringify(check)}`);
+    checks.push(check); console.log(`AGENT_TANDEM_QUESTIONS_LIVE ${JSON.stringify(check)}`);
   } finally { clearTimeout(timer); }
 }
 await mkdir(path.join(root, 'artifacts'), { recursive: true });

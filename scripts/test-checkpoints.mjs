@@ -23,8 +23,8 @@ await writeFile(path.join(profile, 'User/settings.json'), JSON.stringify({ 'wind
 const options = {
   vscodeExecutablePath: process.env.VSCODE_EXECUTABLE_PATH || path.join(process.env.LOCALAPPDATA, 'Programs/Microsoft VS Code/Code.exe'),
   extensionDevelopmentPath: root, extensionTestsPath: path.join(root, 'dist/checkpoint-tests.js'),
-  extensionTestsEnv: { CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, AGENT_DOCK_CHECKPOINT_STORAGE: path.join(profile, 'User/globalStorage/agent-dock-local.agent-dock'), AGENT_DOCK_CHECKPOINT_REPORT: path.join(root, 'artifacts/checkpoint-extension-test.json') },
+  extensionTestsEnv: { CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, AGENT_TANDEM_CHECKPOINT_STORAGE: path.join(profile, 'User/globalStorage/agent-tandem-local.agent-tandem'), AGENT_TANDEM_CHECKPOINT_REPORT: path.join(root, 'artifacts/checkpoint-extension-test.json') },
   launchArgs: [workspace, '--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'],
 };
 await runTests(options);
-await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_DOCK_CHECKPOINT_REOPEN: 'true', AGENT_DOCK_CHECKPOINT_REPORT: path.join(root, 'artifacts/checkpoint-extension-reopen-test.json') } });
+await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_TANDEM_CHECKPOINT_REOPEN: 'true', AGENT_TANDEM_CHECKPOINT_REPORT: path.join(root, 'artifacts/checkpoint-extension-reopen-test.json') } });

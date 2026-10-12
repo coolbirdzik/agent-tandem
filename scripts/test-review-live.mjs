@@ -21,13 +21,13 @@ if (large) {
   await Promise.all(Array.from({ length: 16 }, async () => { while (next < 20_001) { const index = next++; await writeFile(path.join(sources, `${index}.txt`), 'unchanged source fixture\n'); } }));
   console.log('Prepared 20,001 source files for the large workspace chat regression.');
 }
-await writeFile(path.join(profile, 'User/settings.json'), JSON.stringify({ 'window.restoreWindows': 'none', 'files.hotExit': 'off', ...(process.env.AGENT_DOCK_REVIEW_CODEX_EXECUTABLE ? { 'agentDock.codexExecutable': process.env.AGENT_DOCK_REVIEW_CODEX_EXECUTABLE } : {}) }));
+await writeFile(path.join(profile, 'User/settings.json'), JSON.stringify({ 'window.restoreWindows': 'none', 'files.hotExit': 'off', ...(process.env.AGENT_TANDEM_REVIEW_CODEX_EXECUTABLE ? { 'agentTandem.codexExecutable': process.env.AGENT_TANDEM_REVIEW_CODEX_EXECUTABLE } : {}) }));
 const providerHomes = await providerTestHomes(runtime);
 const options = {
   vscodeExecutablePath: process.env.VSCODE_EXECUTABLE_PATH || path.join(process.env.LOCALAPPDATA, 'Programs/Microsoft VS Code/Code.exe'),
   extensionDevelopmentPath: root, extensionTestsPath: path.join(root, 'dist/review-live-tests.js'),
-  extensionTestsEnv: { ...providerHomes, AGENT_DOCK_REVIEW_REPORT: path.join(root, `artifacts/${largeFile ? 'review-large-file-test' : large ? 'review-large-test' : 'review-live-test'}.json`), AGENT_DOCK_REVIEW_LARGE: large ? '1' : '0', AGENT_DOCK_REVIEW_LARGE_FILE: largeFile ? '1' : '0' },
+  extensionTestsEnv: { ...providerHomes, AGENT_TANDEM_REVIEW_REPORT: path.join(root, `artifacts/${largeFile ? 'review-large-file-test' : large ? 'review-large-test' : 'review-live-test'}.json`), AGENT_TANDEM_REVIEW_LARGE: large ? '1' : '0', AGENT_TANDEM_REVIEW_LARGE_FILE: largeFile ? '1' : '0' },
   launchArgs: [workspace, '--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'],
 };
 await runTests(options);
-await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_DOCK_TEST_PHASE: 'reopen' } });
+await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_TANDEM_TEST_PHASE: 'reopen' } });

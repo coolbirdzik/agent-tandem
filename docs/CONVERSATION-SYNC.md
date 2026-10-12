@@ -1,10 +1,10 @@
 # Project conversation synchronization
 
-AgentDock must open existing repository conversations from Claude Code and Codex. This history is the primary UI data source; the snapshot demo only verifies native diffs.
+AgentTandem must open existing repository conversations from Claude Code and Codex. This history is the primary UI data source; the snapshot demo only verifies native diffs.
 
 ## Implemented
 
-- One **AgentDock** WebviewView in the Activity Bar/sidebar, with conversations first. Conversation history opens from its button, changes from Review changes, and diagnostics from More actions. Conversations, tools and steps open in the same panel; only Open in tab/Open diff in editor create editor tabs.
+- One **AgentTandem** WebviewView in the Activity Bar/sidebar, with conversations first. Conversation history opens from its button, changes from Review changes, and diagnostics from More actions. Conversations, tools and steps open in the same panel; only Open in tab/Open diff in editor create editor tabs.
 - Provider icons and names on each conversation, header, reply and tool: Claude Code (orange starburst), Codex (blue terminal). The list can be filtered by provider.
 - Uses the current workspace root automatically, without a picker. Multi-root workspaces follow the active file's root; closing it or switching to a file outside the workspace retains the current root. Opens the saved selection or most recent session automatically.
 - Safe Markdown replies, code blocks and collapsible tool activity; history search and provider filters in the panel.
@@ -24,7 +24,7 @@ Codex app-server provides `thread/list` and `thread/read` for official integrati
 
 ## Verification evidence
 
-- `npm run sync:conversations`: reads real Codex history for `L:\Code\agent-dock`; writes provider/role counts to `artifacts/conversation-sync.json` without chat content. At this verification point, the project had no saved real Claude session.
+- `npm run sync:conversations`: reads real Codex history for `L:\Code\agent-tandem`; writes provider/role counts to `artifacts/conversation-sync.json` without chat content. At this verification point, the project had no saved real Claude session.
 - `npm test`: checks project boundaries, appended/incomplete records, message deduplication, rollback and independent provider failures.
 - `npm run test:extension`: real VS Code 1.140.0, with separate history fixtures through `CODEX_HOME`/`CLAUDE_CONFIG_DIR`. Reads Codex and Claude through the bundled SDK, appends records externally and checks auto-sync/refresh. A second Extension Host restores the selected session. Real provider homes are unchanged.
 

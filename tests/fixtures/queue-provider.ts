@@ -5,7 +5,7 @@ import type { ProviderChatRequest, ChatCallbacks } from '../../src/providers/cha
 import { claudeContent } from '../../src/providers/chat-input';
 let active = 0;
 export async function run(request: ProviderChatRequest, callbacks: ChatCallbacks, signal: AbortSignal) {
-  const control = process.env.AGENT_DOCK_QUEUE_CONTROL!, provider = request.provider;
+  const control = process.env.AGENT_TANDEM_QUEUE_CONTROL!, provider = request.provider;
   const id = request.conversationKey?.split(':').slice(1).join(':') || randomUUID();
   const transcript = provider === 'Codex' ? path.join(process.env.CODEX_HOME!, 'sessions', `${id}.jsonl`) : path.join(process.env.CLAUDE_CONFIG_DIR!, 'projects', request.project.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
   await mkdir(path.dirname(transcript), { recursive: true });

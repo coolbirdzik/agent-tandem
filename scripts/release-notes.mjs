@@ -32,6 +32,6 @@ export async function releaseInfo({ cwd, tag, version, mainRef = 'origin/main', 
   const base = repositoryUrl?.replace(/\.git\/?$/, '').replace(/\/$/, '');
   const changes = commits.map(({ hash, subject }) => `- ${escapeMarkdown(subject)} (${base ? `[${hash.slice(0, 7)}](${base}/commit/${hash})` : hash.slice(0, 7)})`).join('\n');
   const comparison = base && previousTag ? `\n\n[Full changelog](${base}/compare/${previousTag}...${tag})` : '';
-  const notes = `# AgentDock ${version}\n\n${previousTag ? `Changes from \`${previousTag}\` to \`${tag}\`.` : 'Initial release.'}\n\n## What changed\n\n${changes || '- No user-facing commits in this range.'}${comparison}\n\n## Install\n\nDownload \`agent-dock-${version}.vsix\` and use **Extensions → … → Install from VSIX…** in VS Code. A SHA-256 checksum is included with the download.\n`;
+  const notes = `# AgentTandem ${version}\n\n${previousTag ? `Changes from \`${previousTag}\` to \`${tag}\`.` : 'Initial release.'}\n\n## What changed\n\n${changes || '- No user-facing commits in this range.'}${comparison}\n\n## Install\n\nDownload \`agent-tandem-${version}.vsix\` and use **Extensions → … → Install from VSIX…** in VS Code. A SHA-256 checksum is included with the download.\n`;
   return { tag, version, commit, previousTag: previousTag ?? null, notes };
 }

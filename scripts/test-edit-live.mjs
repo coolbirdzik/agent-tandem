@@ -13,6 +13,6 @@ const providerHomes = await providerTestHomes(runtime);
 await runTests({
   vscodeExecutablePath: process.env.VSCODE_EXECUTABLE_PATH || path.join(process.env.LOCALAPPDATA, 'Programs/Microsoft VS Code/Code.exe'),
   extensionDevelopmentPath: root, extensionTestsPath: path.join(root, 'dist/edit-live-tests.js'),
-  extensionTestsEnv: { ...providerHomes, AGENT_DOCK_EDIT_REPORT: path.join(root, 'artifacts/edit-live-test.json') },
+  extensionTestsEnv: { ...providerHomes, AGENT_TANDEM_EDIT_REPORT: path.join(root, 'artifacts/edit-live-test.json') },
   launchArgs: [workspace, '--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'],
 });

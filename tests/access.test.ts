@@ -26,7 +26,7 @@ describe('Native access modes', () => {
     expect(() => chatRequest({ ...request, accessMode: 'read-only' })).toThrow();
   });
   it('persists choices by project/provider, including simultaneous writes and switching back to default', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-access-')); roots.push(root);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-access-')); roots.push(root);
     const store = new AccessModeStore(root), project = path.join(root, 'project');
     expect(await store.read(project)).toEqual({ Codex: 'default', Claude: 'default' });
     await Promise.all([store.save(project, 'Codex', 'full-access'), store.save(project, 'Claude', 'plan')]);
@@ -36,7 +36,7 @@ describe('Native access modes', () => {
     expect(await store.read(project)).toEqual({ Codex: 'default', Claude: 'plan' });
   });
   it('invalid saved values fall back to default and failed validation never changes a stored choice', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-access-')); roots.push(root);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-access-')); roots.push(root);
     const store = new AccessModeStore(root), project = path.join(root, 'project');
     await store.save(project, 'Codex', 'full-access');
     const file = path.join(root, (await readdir(root))[0]!);

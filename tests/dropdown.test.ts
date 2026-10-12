@@ -31,7 +31,7 @@ describe('common dropdown', () => {
     dropdowns.sync(); expect(menu.hidden).toBe(false); expect(menu.firstElementChild).toBe(row); expect(document.activeElement).toBe(menu);
     document.querySelector<HTMLButtonElement>('#outside')!.focus(); expect(menu.hidden).toBe(true);
     trigger.click(); select.disabled = true; dropdowns.sync(); expect(menu.hidden).toBe(true); expect(trigger.disabled).toBe(true);
-    select.remove(); dropdowns.sync(); expect(document.querySelector('.dock-dropdown')).toBeNull();
+    select.remove(); dropdowns.sync(); expect(document.querySelector('.tandem-dropdown')).toBeNull();
   });
   it('renders untrusted labels as text and never chooses a disabled row', () => {
     const { select, trigger, menu } = picker(); select.options[0]!.text = '<img onerror="bad()">';

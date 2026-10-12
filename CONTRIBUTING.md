@@ -1,6 +1,6 @@
-# Contributing to AgentDock
+# Contributing to AgentTandem
 
-AgentDock brings native agent conversations, code review and usage information into VS Code. Contributions can improve provider compatibility, review reliability, accessibility, interface behavior, documentation and tests.
+AgentTandem brings native agent conversations, code review and usage information into VS Code. Contributions can improve provider compatibility, review reliability, accessibility, interface behavior, documentation and tests.
 
 ## Set up the project
 
@@ -11,11 +11,11 @@ npm ci
 npm run build
 ```
 
-Open the repository in VS Code and press **F5** using **Run AgentDock**. The launch configuration builds the project and opens an Extension Development Host. Open a separate test project there, then run **AgentDock: Open Conversations**.
+Open the repository in VS Code and press **F5** using **Run AgentTandem**. The launch configuration builds the project and opens an Extension Development Host. Open a separate test project there, then run **AgentTandem: Open Conversations**.
 
 Install and authenticate a native Codex or Claude CLI only when working on live provider behavior. Review fixtures and local history tests can run without inference. Live provider tests require the appropriate CLI/account and can consume provider allowance.
 
-For changes you want to test in your existing VS Code installation, `npm run dev` builds, packages and force-installs the local extension. It uses the default profile and enables AgentDock's proposed APIs in runtime arguments, with a backup. Use **Developer: Reload Window** after updates; fully restart VS Code when enabling proposals for the first time. `npm run dev:watch` repeats the process on source changes.
+For changes you want to test in your existing VS Code installation, `npm run dev` builds, packages and force-installs the local extension. It uses the default profile and enables AgentTandem's proposed APIs in runtime arguments, with a backup. Use **Developer: Reload Window** after updates; fully restart VS Code when enabling proposals for the first time. `npm run dev:watch` repeats the process on source changes.
 
 ## Find the relevant code
 

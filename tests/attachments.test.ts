@@ -22,7 +22,7 @@ describe('Chat attachment transport and persistence', () => {
     expect(() => chatRequest({ ...request, attachments: [] })).toThrow();
   });
   it('stages immutable bytes outside the workspace, contains names and uses native image/audio/mention variants', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-attachments-'));
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-attachments-'));
     try {
       const store = new AttachmentStore(directory), preparedAttachments = await store.prepare(request.attachments);
       for (const item of preparedAttachments) { expect(path.dirname(item.path)).toBe(store.directory); expect(await readFile(item.path)).toEqual(Buffer.from(item.data, 'base64')); }

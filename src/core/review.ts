@@ -352,7 +352,7 @@ export class ReviewStore {
         if (!saved) await unlink(full);
         else {
           await mkdir(path.dirname(full), { recursive: true });
-          const temporary = `${full}.${randomUUID()}.agent-dock-restore`;
+          const temporary = `${full}.${randomUUID()}.agent-tandem-restore`;
           try {
             await this.history.copyBlob(saved, temporary);
             if (await this.fingerprint(project, name) !== before.files[name]) throw new Error(`Cannot restore ${name}: it changed during restore. Your edits were kept.`);
@@ -410,7 +410,7 @@ export class ReviewStore {
     const full = await this.safePath(project, name);
     if (target === undefined) { await unlink(full); return; }
     await mkdir(path.dirname(full), { recursive: true });
-    const temporary = `${full}.${randomUUID()}.agent-dock-revert`;
+    const temporary = `${full}.${randomUUID()}.agent-tandem-revert`;
     try {
       await this.history.copyBlob(target, temporary);
       if (await this.fingerprint(project, name) !== expected) throw new Error(`Cannot update ${name}: it changed during review. Your edits were kept.`);

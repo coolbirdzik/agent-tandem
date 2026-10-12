@@ -1,4 +1,4 @@
-# AgentDock acceptance plan
+# AgentTandem acceptance plan
 
 These cases define verification requirements for the [MVP](PLAN.md), not completed test results. Fixtures must use real files/Git repositories. Fake providers support controlled failures, followed by core workflows with real Codex and Claude.
 
@@ -205,4 +205,4 @@ During implementation, assign each ID a test/checklist with status `not run`, `p
 
 - Regression tests cover both provider home overrides on every live launcher, independent credential/config copies, omission of transcripts/project state, fail-closed legacy reopen and filtering old test workspaces from parent-project lists for both providers. Matching uses known runtime directories; human prompts containing MODEL_OK stay visible. Opening a test workspace directly still shows its own history.
 - `artifacts/provider-test-isolation.json`: real Codex/Claude model discovery succeeded in dedicated test homes, with zero new JSONL conversations and no prompt/inference submission. This check does not claim the paid live chat suites were rerun.
-- Existing native transcripts remain on disk. Old test entries are filtered in AgentDock; other CLI apps can still show those old entries.
+- Existing native transcripts remain on disk. Old test entries are filtered in AgentTandem; other CLI apps can still show those old entries.

@@ -22,9 +22,9 @@ describe('Settings host updates', () => {
     const invoke = vi.fn(), report = vi.fn(), state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } };
     const view = new SettingsView({} as any, () => state, invoke, report); view.open();
     await host.receive({ type: 'previewHistoryDeletion', value: { ids: ['selected'] } });
-    expect(invoke).toHaveBeenLastCalledWith('agentDock.previewHistoryDeletion', { ids: ['selected'] });
+    expect(invoke).toHaveBeenLastCalledWith('agentTandem.previewHistoryDeletion', { ids: ['selected'] });
     await host.receive({ type: 'deleteHistory', value: { token: 'approved' } });
-    expect(invoke).toHaveBeenLastCalledWith('agentDock.deleteHistory', { token: 'approved' });
+    expect(invoke).toHaveBeenLastCalledWith('agentTandem.deleteHistory', { token: 'approved' });
     await host.receive({ type: 'deleteArbitraryPath', value: { path: 'outside' } });
     expect(report).toHaveBeenCalled(); view.dispose();
   });

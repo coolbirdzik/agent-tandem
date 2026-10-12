@@ -19,7 +19,7 @@ describe('Codex Fast mode', () => {
     expect(() => fastModeSelection({ project: '/one', provider: 'Claude', enabled: true })).toThrow();
   });
   it('survives restart, isolates projects and persists switching Off', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-fast-')), store = new FastModeStore(directory);
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-fast-')), store = new FastModeStore(directory);
     expect(await store.read('/one')).toBe(false);
     await store.save('/one', true);
     expect(await new FastModeStore(directory).read('/one')).toBe(true);

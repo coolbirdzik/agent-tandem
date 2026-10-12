@@ -61,29 +61,29 @@ function run(executable, args, env = process.env, capture = false) {
 
 async function main() {
   const code = await findCode();
-  console.log(`[AgentDock dev] VS Code: ${code.executable}`);
+  console.log(`[AgentTandem dev] VS Code: ${code.executable}`);
   async function install() {
     const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
     const extensionId = `${manifest.publisher}.${manifest.name}`;
     const vsix = path.join(root, 'artifacts', `${manifest.name}-${manifest.version}.vsix`);
     await mkdir(path.dirname(vsix), { recursive: true });
-    console.log('[AgentDock dev] Building and packaging…');
+    console.log('[AgentTandem dev] Building and packaging…');
     // vsce runs vscode:prepublish, which builds both the extension and webview.
     await run(process.execPath, [path.join(root, 'node_modules', '@vscode', 'vsce', 'vsce'), 'package', '--no-dependencies', '--allow-missing-repository', '--no-rewrite-relative-links', '--skip-license', '--out', vsix]);
-    console.log('[AgentDock dev] Installing into the existing VS Code installation…');
+    console.log('[AgentTandem dev] Installing into the existing VS Code installation…');
     await run(code.executable, [...code.prefix, '--install-extension', vsix, '--force'], code.env);
     const installed = await run(code.executable, [...code.prefix, '--list-extensions', '--show-versions'], code.env, true);
     const expected = `${extensionId}@${manifest.version}`;
     if (!installed.split(/\r?\n/).some(line => line.trim().toLowerCase() === expected.toLowerCase())) throw new Error(`Could not verify the installed extension: ${expected}`);
-    console.log(`[AgentDock dev] Installed ${expected}.`);
+    console.log(`[AgentTandem dev] Installed ${expected}.`);
     if (manifest.enabledApiProposals?.length) {
       const argv = process.env.VSCODE_PORTABLE
         ? path.join(process.env.VSCODE_PORTABLE, 'argv.json')
         : path.join(os.homedir(), /insiders/i.test(code.executable) ? '.vscode-insiders' : '.vscode', 'argv.json');
       const changed = await enableLocalProposals(argv, extensionId);
-      console.log(`[AgentDock dev] Floating change toolbar: ${argv}${changed ? ' (enabled for AgentDock; the original file was backed up)' : ' (enabled)'}.`);
-      console.log('[AgentDock dev] When enabling the toolbar for the first time, fully close and reopen VS Code. For later updates, use Developer: Reload Window.');
-    } else console.log('[AgentDock dev] In VS Code: Developer: Reload Window → AgentDock: Open Conversations.');
+      console.log(`[AgentTandem dev] Floating change toolbar: ${argv}${changed ? ' (enabled for AgentTandem; the original file was backed up)' : ' (enabled)'}.`);
+      console.log('[AgentTandem dev] When enabling the toolbar for the first time, fully close and reopen VS Code. For later updates, use Developer: Reload Window.');
+    } else console.log('[AgentTandem dev] In VS Code: Developer: Reload Window → AgentTandem: Open Conversations.');
   }
   if (!watching) { await install(); return; }
 
@@ -95,7 +95,7 @@ async function main() {
     try {
       while (dirty) {
         dirty = false;
-        try { await install(); } catch (error) { console.error(`[AgentDock dev] ${error.message}\nFix the error and save the file to retry.`); }
+        try { await install(); } catch (error) { console.error(`[AgentTandem dev] ${error.message}\nFix the error and save the file to retry.`); }
       }
     } finally { busy = false; }
   }
@@ -109,6 +109,6 @@ async function main() {
   const stop = () => { clearTimeout(timer); for (const watcher of watchers) watcher.close(); process.exit(0); };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   await rebuild();
-  console.log('[AgentDock dev] Watching source files. Save a file to rebuild and reinstall; press Ctrl+C to stop.');
+  console.log('[AgentTandem dev] Watching source files. Save a file to rebuild and reinstall; press Ctrl+C to stop.');
 }
-main().catch(error => { console.error(`[AgentDock dev] ${error.message}`); process.exitCode = 1; });
+main().catch(error => { console.error(`[AgentTandem dev] ${error.message}`); process.exitCode = 1; });

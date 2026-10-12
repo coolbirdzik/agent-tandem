@@ -14,4 +14,4 @@ const providers = Object.fromEntries(['Codex', 'Claude'].map(provider => [provid
 const report = { success: true, durationMs: Date.now() - started, ...value, totals, providers };
 await mkdir(path.join(root, 'artifacts'), { recursive: true });
 await writeFile(path.join(root, 'artifacts/usage-local.json'), JSON.stringify(report, null, 2));
-console.log(`AGENT_DOCK_USAGE_LOCAL ${JSON.stringify({ ...report, days: value.days.length, recent: value.recent?.length })}`);
+console.log(`AGENT_TANDEM_USAGE_LOCAL ${JSON.stringify({ ...report, days: value.days.length, recent: value.recent?.length })}`);

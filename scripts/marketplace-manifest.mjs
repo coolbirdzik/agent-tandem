@@ -14,15 +14,15 @@ export function marketplaceManifest(source, { publisher = source.publisher, repo
   manifest.contributes.menus['editor/title'] = [
     ...manifest.contributes.menus['editor/title'] ?? [],
     ...['previous', 'next'].map((direction, index) => ({
-      command: `agentDock.${direction}Change`, when: 'agentDock.changeNavigation', group: `navigation@${index + 1}`,
+      command: `agentTandem.${direction}Change`, when: 'agentTandem.changeNavigation', group: `navigation@${index + 1}`,
     })),
   ];
   const settings = manifest.contributes.configuration.properties;
-  settings['agentDock.blockActionsStyle'].default = 'lens';
-  settings['agentDock.blockActionsStyle'].enumDescriptions[0] = 'Use the available review controls; the Marketplace build uses CodeLens.';
-  settings['agentDock.blockActionsStyle'].description = 'Show Accept, Reject and Next change actions above pending diff blocks using CodeLens.';
-  settings['agentDock.showFileCounterInEditor'].default = false;
-  settings['agentDock.showFileCounterInEditor'].description = 'Experimental local-build option. In the Marketplace build, use the file counter in the status bar to choose a changed file.';
+  settings['agentTandem.blockActionsStyle'].default = 'lens';
+  settings['agentTandem.blockActionsStyle'].enumDescriptions[0] = 'Use the available review controls; the Marketplace build uses CodeLens.';
+  settings['agentTandem.blockActionsStyle'].description = 'Show Accept, Reject and Next change actions above pending diff blocks using CodeLens.';
+  settings['agentTandem.showFileCounterInEditor'].default = false;
+  settings['agentTandem.showFileCounterInEditor'].description = 'Experimental local-build option. In the Marketplace build, use the file counter in the status bar to choose a changed file.';
   if (repositoryUrl) {
     const url = new URL(repositoryUrl);
     if (url.protocol !== 'https:' || url.hostname !== 'github.com' || !/^\/[\w.-]+\/[\w.-]+\/?$/.test(url.pathname)) {

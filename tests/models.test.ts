@@ -29,7 +29,7 @@ describe('model selection', () => {
     expect(() => validateModel('new', { status: 'loading', choices: [{ id: 'new', label: 'New' }] })).toThrow('unavailable');
   });
   it('persists separately per project/provider, supports default reset and ignores corrupt preferences', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-models-')), store = new ModelStore(directory);
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-models-')), store = new ModelStore(directory);
     await Promise.all([store.save('/one', 'Codex', 'codex-a'), store.save('/one', 'Claude', 'sonnet')]);
     expect(await new ModelStore(directory).read('/one')).toEqual({ Codex: 'codex-a', Claude: 'sonnet' });
     expect(await store.read('/two')).toEqual({ Codex: '', Claude: '' });
@@ -42,9 +42,9 @@ describe('model selection', () => {
 describe('native model discovery', () => {
   it('reads every Codex page using only initialize/model-list and reaps the child', async () => {
     let child: ReturnType<typeof spawn>;
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-catalog-')), log = path.join(directory, 'rpc.jsonl');
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-catalog-')), log = path.join(directory, 'rpc.jsonl');
     const models = await codexModels(process.cwd(), process.execPath, undefined, () => child = spawn(process.execPath, [path.resolve('tests/fixtures/codex-chat-server.mjs')], {
-      windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, AGENT_DOCK_RPC_LOG: log },
+      windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, AGENT_TANDEM_RPC_LOG: log },
     }) as any);
     expect(models.map(row => row.id)).toEqual(['fixture-supported', 'fixture-default']);
     expect(models[0]!.reasoningEfforts?.map(row => row.id)).toEqual(['low', 'medium', 'ultra']);
@@ -56,7 +56,7 @@ describe('native model discovery', () => {
     let child: ReturnType<typeof spawn>;
     const abort = new AbortController();
     const job = codexModels(process.cwd(), process.execPath, abort.signal, () => child = spawn(process.execPath, [path.resolve('tests/fixtures/codex-chat-server.mjs')], {
-      windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, AGENT_DOCK_MODEL_CASE: 'hung-init' },
+      windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, AGENT_TANDEM_MODEL_CASE: 'hung-init' },
     }) as any);
     setTimeout(() => abort.abort(), 150);
     await expect(job).rejects.toThrow('cancelled');

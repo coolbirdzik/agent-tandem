@@ -15,18 +15,18 @@ async function waitFor(predicate: () => boolean, description: string) {
 }
 const codeLenses = (uri: vscode.Uri) => vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri);
 export async function run() {
-  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-dock-local.agent-dock')!.activate();
+  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-tandem-local.agent-tandem')!.activate();
   await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
-  const runtime = process.env.AGENT_DOCK_NAV_RUNTIME!;
+  const runtime = process.env.AGENT_TANDEM_NAV_RUNTIME!;
   const reportFile = path.join(runtime, '..', '..', 'artifacts/change-navigation-test.json');
-  if (process.env.AGENT_DOCK_NAV_REOPEN) {
+  if (process.env.AGENT_TANDEM_NAV_REOPEN) {
     const prior = JSON.parse(await readFile(reportFile, 'utf8'));
-    await vscode.commands.executeCommand('vscode.diff', vscode.Uri.parse(prior.last.original), vscode.Uri.parse(prior.last.modified), 'restored · AgentDock changes');
+    await vscode.commands.executeCommand('vscode.diff', vscode.Uri.parse(prior.last.original), vscode.Uri.parse(prior.last.modified), 'restored · AgentTandem changes');
     await waitFor(() => api.changeNavigationState()?.total === 4, 'saved navigation scope restores after restarting Extension Host');
     const editor = vscode.window.activeTextEditor!;
     editor.selection = new vscode.Selection(21, 0, 21, 0);
     await new Promise(resolve => setTimeout(resolve, 800));
-    await vscode.commands.executeCommand('agentDock.nextChange');
+    await vscode.commands.executeCommand('agentTandem.nextChange');
     await waitFor(() => api.changeNavigationState()?.index === 1, 'restored last file advances to first');
     await writeFile(path.join(runtime, 'reopen-report.json'), JSON.stringify({ success: true, counter: api.changeNavigationState() }, null, 2));
     return;
@@ -49,10 +49,10 @@ export async function run() {
   await writeFile(path.join(project, last), lastAfter);
   const captured = await reviews.finish(project, 'navigation-test');
   assert.equal(captured.files.length, 4);
-  await vscode.commands.executeCommand('agentDock.refreshReview');
+  await vscode.commands.executeCommand('agentTandem.refreshReview');
   const request = (file?: string) => ({ project, revision: api.viewState().review!.revision, file });
   const openSingle = async (file = first, line = 0) => {
-    await vscode.commands.executeCommand('agentDock.previewReview', request(file));
+    await vscode.commands.executeCommand('agentTandem.previewReview', request(file));
     await waitFor(() => api.changeNavigationState()?.file === file, 'single file navigation scope');
     const editor = vscode.window.activeTextEditor!;
     editor.selection = new vscode.Selection(line, 0, line, 0);
@@ -61,14 +61,14 @@ export async function run() {
     return editor;
   };
   const openMulti = async () => {
-    await vscode.commands.executeCommand('agentDock.previewReview', request());
+    await vscode.commands.executeCommand('agentTandem.previewReview', request());
     await waitFor(() => vscode.window.tabGroups.activeTabGroup.activeTab?.label.includes('Pending changes') ?? false, 'multi-file changes active');
     await new Promise(resolve => setTimeout(resolve, 800));
     assert.equal(api.changeNavigationState()?.total, 4);
   };
   const visited: unknown[] = [];
   const move = async (direction: 'next' | 'previous', file: string, line: number) => {
-    await vscode.commands.executeCommand(`agentDock.${direction}Change`);
+    await vscode.commands.executeCommand(`agentTandem.${direction}Change`);
     await waitFor(() => api.changeNavigationState()?.file === file && vscode.window.activeTextEditor?.selection.active.line === line, `${direction}: ${file}:${line + 1}`);
     const state = api.changeNavigationState()!;
     assert.equal(state.total, 4);
@@ -83,12 +83,12 @@ export async function run() {
   assert.equal((await vscode.workspace.openTextDocument(reviewSnapshotUri(initial.before, first))).getText(), before);
   // Rapid clicks are processed in order across file boundaries.
   await openSingle(first, 99);
-  await Promise.all([1, 2, 3].map(() => vscode.commands.executeCommand('agentDock.nextChange')));
+  await Promise.all([1, 2, 3].map(() => vscode.commands.executeCommand('agentTandem.nextChange')));
   await waitFor(() => api.changeNavigationState()?.file === last, 'queued Next clicks reach fourth file');
   await openMulti();
   const multiFiles = new Set<string>();
   for (let i = 0; i < 10; i++) {
-    await vscode.commands.executeCommand('agentDock.nextChange'); await delay();
+    await vscode.commands.executeCommand('agentTandem.nextChange'); await delay();
     const state = api.changeNavigationState()!; assert.equal(state.total, 4); multiFiles.add(state.file);
     console.log(`MULTI_FILE_POSITION ${JSON.stringify({ state, uri: vscode.window.activeTextEditor?.document.uri.toString(), line: vscode.window.activeTextEditor?.selection.active.line })}`);
   }
@@ -96,9 +96,9 @@ export async function run() {
   const plain = await vscode.workspace.openTextDocument({ content: 'untouched\n' });
   await vscode.window.showTextDocument(plain);
   assert.equal(api.changeNavigationState(), undefined, 'Counter hides in unrelated editors');
-  await vscode.commands.executeCommand('agentDock.nextChange');
+  await vscode.commands.executeCommand('agentTandem.nextChange');
   assert.equal(vscode.window.activeTextEditor?.document, plain);
-  if (process.env.AGENT_DOCK_NAV_VISUAL) {
+  if (process.env.AGENT_TANDEM_NAV_VISUAL) {
     for (const stage of ['badge', 'single', 'multi']) {
       if (stage === 'badge') await openSingle(first, 0);
       else if (stage === 'single') await openSingle(first, 99); else await openMulti();
@@ -115,7 +115,7 @@ export async function run() {
     }
   }
   // The compact lens row must work on released builds, where editor insets are unavailable.
-  const settings = () => vscode.workspace.getConfiguration('agentDock');
+  const settings = () => vscode.workspace.getConfiguration('agentTandem');
   await settings().update('blockActionsStyle', 'lens', vscode.ConfigurationTarget.Global);
   const lensEditor = await openSingle(first, 0);
   assert.equal(vscode.workspace.getConfiguration('diffEditor').get<boolean>('codeLens'), true, 'Opening a review enables diff code lenses');
@@ -131,7 +131,7 @@ export async function run() {
   await settings().update('blockActionsStyle', 'auto', vscode.ConfigurationTarget.Global);
   await openSingle(first, 0);
   assert.equal((await codeLenses(lensEditor.document.uri)).length, 0, 'Card style replaces the lens row instead of adding to it');
-  if (!process.env.AGENT_DOCK_NAV_VISUAL) await settings().update('blockActionsStyle', 'lens', vscode.ConfigurationTarget.Global);
+  if (!process.env.AGENT_TANDEM_NAV_VISUAL) await settings().update('blockActionsStyle', 'lens', vscode.ConfigurationTarget.Global);
   // Floating review actions decide one hunk, not the entire file.
   const firstBeforeAccept = api.viewState().review!.files.find(file => file.path === first)!.before;
   for (const [stage, line] of [
@@ -139,11 +139,11 @@ export async function run() {
     ['hunkRevert', 54],
   ] as const) {
     let blockEditor: vscode.TextEditor;
-    if (stage === 'hunkRevert' && process.env.AGENT_DOCK_NAV_VISUAL) {
+    if (stage === 'hunkRevert' && process.env.AGENT_TANDEM_NAV_VISUAL) {
       await openMulti();
       for (let attempt = 0; attempt < 20; attempt++) {
         if (api.changeNavigationState()?.file === first && vscode.window.activeTextEditor?.selection.active.line === line) break;
-        await vscode.commands.executeCommand('agentDock.nextChange'); await delay();
+        await vscode.commands.executeCommand('agentTandem.nextChange'); await delay();
       }
       assert.equal(vscode.window.activeTextEditor?.selection.active.line, line, 'Multi-file preview reveals target block');
       blockEditor = vscode.window.activeTextEditor!;
@@ -151,14 +151,14 @@ export async function run() {
     } else blockEditor = await openSingle(first, stage === 'hunkAccept' ? 20 : 0);
     // Keep the cursor outside both target changes. Buttons must bind their own block.
     const cursorLine = blockEditor.selection.active.line;
-    if (process.env.AGENT_DOCK_NAV_VISUAL) {
+    if (process.env.AGENT_TANDEM_NAV_VISUAL) {
       await vscode.workspace.getConfiguration('editor').update('fontSize', 10, vscode.ConfigurationTarget.Global);
       await vscode.workspace.getConfiguration('editor').update('lineHeight', 13, vscode.ConfigurationTarget.Global);
       if (stage === 'hunkAccept') blockEditor.revealRange(new vscode.Range(Math.max(0, line - 5), 0, Math.min(119, line + 35), 0), vscode.TextEditorRevealType.AtTop);
       await new Promise(resolve => setTimeout(resolve, 800));
     }
     const revision = api.viewState().review!.revision;
-    if (process.env.AGENT_DOCK_NAV_VISUAL) {
+    if (process.env.AGENT_TANDEM_NAV_VISUAL) {
       const blocks = await reviews.hunks({ project, revision, file: first });
       const blockIndex = blocks.findIndex(hunk => hunk.newLine === line) + 1;
       assert.ok(blockIndex, `target block exists at line ${line + 1}`);
@@ -170,7 +170,7 @@ export async function run() {
       }
     } else {
       // Click the block's own lens: the action must carry its hunk, not the cursor.
-      const action = stage === 'hunkAccept' ? 'agentDock.acceptHunk' : 'agentDock.rejectHunk';
+      const action = stage === 'hunkAccept' ? 'agentTandem.acceptHunk' : 'agentTandem.rejectHunk';
       const lens = (await codeLenses(blockEditor.document.uri)).find(lens => lens.range.start.line === line && lens.command?.command === action);
       assert.ok(lens, `${stage} renders its action lens at line ${line + 1}`);
       await vscode.commands.executeCommand(lens.command!.command, ...(lens.command!.arguments ?? []));
@@ -195,16 +195,16 @@ export async function run() {
   await vscode.commands.executeCommand('vscode.diff', reviewSnapshotUri(originalFirst.before, first), reviewSnapshotUri(originalFirst.after, first), 'Old review preview');
   vscode.window.activeTextEditor!.selection = new vscode.Selection(7, 0, 7, 0);
   await new Promise(resolve => setTimeout(resolve, 800));
-  await vscode.commands.executeCommand('agentDock.revertCurrentChange');
+  await vscode.commands.executeCommand('agentTandem.revertCurrentChange');
   assert.equal(api.viewState().review!.revision, reviewedRevision, 'Old preview cannot revert an accepted hunk');
-  await vscode.commands.executeCommand('agentDock.acceptHunk', { project, revision: 'stale-revision', file: first, hunk: 'stale-hunk', line: 7 });
+  await vscode.commands.executeCommand('agentTandem.acceptHunk', { project, revision: 'stale-revision', file: first, hunk: 'stale-hunk', line: 7 });
   assert.equal(api.viewState().review!.revision, reviewedRevision, 'A stale lens cannot decide a block');
   assert.equal((await codeLenses(vscode.window.activeTextEditor!.document.uri)).length, 0, 'Old previews render no block actions');
   assert.equal(await readFile(path.join(project, first), 'utf8'), after.replace('value55 = 5500', 'value55 = 55'));
   const workspaceEditor = await vscode.window.showTextDocument(vscode.Uri.file(path.join(project, first)));
   await workspaceEditor.edit(edit => edit.insert(new vscode.Position(0, 0), '// my unsaved change\n'));
   await openSingle(first, 99);
-  await vscode.commands.executeCommand('agentDock.revertCurrentChange');
+  await vscode.commands.executeCommand('agentTandem.revertCurrentChange');
   assert.equal(api.viewState().review!.revision, reviewedRevision, 'Dirty workspace editor blocks per-hunk revert');
   assert.match(api.viewState().error!, /unsaved edits/);
   assert.ok(workspaceEditor.document.getText().startsWith('// my unsaved change'));
@@ -215,5 +215,5 @@ export async function run() {
   const lastFile = captured.files.find(file => file.path === last)!;
   const report = { success: true, vscode: vscode.version, visited, multiFiles: [...multiFiles], last: { original: reviewSnapshotUri(lastFile.before, last).toString(), modified: reviewSnapshotUri(lastFile.after, last).toString() }, checks: ['Single-file clicks retain all four files', 'Next/Previous cross file boundaries and wrap', 'Added/deleted files and first-line hunks remain reachable', 'Rapid clicks serialize', 'Counter updates and hides in unrelated editors', 'Floating Accept/Revert decide only the selected hunk', 'Old previews and dirty workspace edits block hunk decisions', 'Every block renders an Accept/Reject/Next lens row that decides its own hunk'] };
   await writeFile(reportFile, JSON.stringify(report, null, 2));
-  console.log(`AGENT_DOCK_NAV_TEST ${JSON.stringify(report)}`);
+  console.log(`AGENT_TANDEM_NAV_TEST ${JSON.stringify(report)}`);
 }

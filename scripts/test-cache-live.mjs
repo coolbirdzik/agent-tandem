@@ -53,12 +53,12 @@ for (const provider of ['Codex', 'Claude']) {
       assert.ok(usage && Number.isFinite(usage.cachedTokens), 'Native cache usage telemetry must be present.');
       check.turns.push({ turn, resumed: !!before, usage });
       previousUsage = usage;
-      console.log(`AGENT_DOCK_CACHE_TURN ${JSON.stringify({ provider, ...check.turns.at(-1) })}`);
+      console.log(`AGENT_TANDEM_CACHE_TURN ${JSON.stringify({ provider, ...check.turns.at(-1) })}`);
     }
     // A miss is valid native behavior; report the observation instead of promising a hit.
     check.status = 'completed'; check.secondTurnCacheHit = check.turns[1].usage.cachedTokens > 0;
   } catch (error) { check.status = 'failed'; check.error = error.message; }
-  finally { console.log(`AGENT_DOCK_CACHE_LIVE ${JSON.stringify(check)}`); }
+  finally { console.log(`AGENT_TANDEM_CACHE_LIVE ${JSON.stringify(check)}`); }
 }
 await mkdir(path.join(root, 'artifacts'), { recursive: true });
 const success = checks.every(check => check.status === 'completed');

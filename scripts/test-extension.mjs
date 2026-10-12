@@ -6,8 +6,8 @@ const root = process.cwd();
 delete process.env.ELECTRON_RUN_AS_NODE;
 await mkdir(path.join(root, '.test-runtime'), { recursive: true });
 const runtime = await mkdtemp(path.join(root, '.test-runtime', 'extension-'));
-const packaged = !!process.env.AGENT_DOCK_EXTENSION_PATH;
-const extensionManifest = JSON.parse(await readFile(path.join(process.env.AGENT_DOCK_EXTENSION_PATH || root, 'package.json'), 'utf8'));
+const packaged = !!process.env.AGENT_TANDEM_EXTENSION_PATH;
+const extensionManifest = JSON.parse(await readFile(path.join(process.env.AGENT_TANDEM_EXTENSION_PATH || root, 'package.json'), 'utf8'));
 const extensionId = `${extensionManifest.publisher}.${extensionManifest.name}`;
 const profile = path.join(runtime, 'test-profiles', `${packaged ? 'packaged' : 'source'}-${Date.now()}`);
 await mkdir(path.join(profile, 'User'), { recursive: true });
@@ -20,7 +20,7 @@ const otherProject = path.join(runtime, 'other-project');
 await mkdir(otherProject, { recursive: true });
 const workspaceFile = path.join(runtime, 'test.code-workspace');
 // This suite owns explicit capture boundaries; external tracking has its own suite.
-await writeFile(workspaceFile, JSON.stringify({ folders: [{ path: workspace }, { path: otherProject }], settings: { 'agentDock.autoTrackExternalChanges': false } }));
+await writeFile(workspaceFile, JSON.stringify({ folders: [{ path: workspace }, { path: otherProject }], settings: { 'agentTandem.autoTrackExternalChanges': false } }));
 const codexHome = path.join(runtime, 'codex');
 const claudeHome = path.join(runtime, 'claude');
 await mkdir(path.join(codexHome, 'sessions'), { recursive: true });
@@ -50,11 +50,11 @@ if (executable && !process.env.VSCODE_EXECUTABLE_PATH) {
 try {
   const options = {
     vscodeExecutablePath: executable || undefined,
-    extensionDevelopmentPath: process.env.AGENT_DOCK_EXTENSION_PATH || root,
+    extensionDevelopmentPath: process.env.AGENT_TANDEM_EXTENSION_PATH || root,
     extensionTestsPath: path.join(root, 'dist/extension-tests.js'),
-    extensionTestsEnv: { AGENT_DOCK_EXTENSION_ID: extensionId, AGENT_DOCK_REPORT_DIR: reportDirectory, CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, AGENT_DOCK_CODEX_FIXTURE: codexFile, AGENT_DOCK_CLAUDE_FIXTURE: claudeFile },
+    extensionTestsEnv: { AGENT_TANDEM_EXTENSION_ID: extensionId, AGENT_TANDEM_REPORT_DIR: reportDirectory, CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, AGENT_TANDEM_CODEX_FIXTURE: codexFile, AGENT_TANDEM_CLAUDE_FIXTURE: claudeFile },
     launchArgs: [workspaceFile, '--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'],
   };
   await runTests(options);
-  await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_DOCK_TEST_PHASE: 'reopen' } });
+  await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_TANDEM_TEST_PHASE: 'reopen' } });
 } catch (error) { console.error(error); process.exitCode = 1; }

@@ -8,7 +8,7 @@ import { reviewHunks, encodeSnapshot, textSnapshot } from '../src/core/review-hu
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 async function fixture(before: Buffer | string, after: Buffer | string) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'agentdock-hunks-')); dirs.push(dir);
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-hunks-')); dirs.push(dir);
   const project = path.join(dir, 'project'); await mkdir(project);
   const store = new ReviewStore(path.join(dir, 'review')), file = 'source.ts';
   await writeFile(path.join(project, file), before); await store.begin(project, 'turn');

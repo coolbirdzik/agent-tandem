@@ -12,8 +12,8 @@ const providerHomes = await providerTestHomes(runtime);
 const options = {
   vscodeExecutablePath: process.env.VSCODE_EXECUTABLE_PATH || path.join(process.env.LOCALAPPDATA, 'Programs/Microsoft VS Code/Code.exe'),
   extensionDevelopmentPath: root, extensionTestsPath: path.join(root, 'dist/cli-manager-live-tests.js'),
-  extensionTestsEnv: { ...providerHomes, AGENT_DOCK_CLI_REPORT_DIR: path.join(root, 'artifacts') },
+  extensionTestsEnv: { ...providerHomes, AGENT_TANDEM_CLI_REPORT_DIR: path.join(root, 'artifacts') },
   launchArgs: [workspace, '--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'],
 };
 await runTests(options);
-await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_DOCK_CLI_PHASE: 'reopen' } });
+await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_TANDEM_CLI_PHASE: 'reopen' } });

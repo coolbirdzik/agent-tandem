@@ -8,7 +8,7 @@ const temporary: string[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(temporary.splice(0).map(folder => rm(folder, { recursive: true, force: true }))); });
 describe.skipIf(process.platform !== 'win32')('Windows provider discovery', () => {
   async function executables() {
-    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'agent-dock-provider-'))); temporary.push(root);
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-provider-'))); temporary.push(root);
     const wrapperFolder = path.join(root, 'npm'), nativeFolder = path.join(root, 'native');
     const architecture = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
     const wrapper = path.join(wrapperFolder, `node_modules/@openai/codex/vendor/${architecture}-pc-windows-msvc/codex/codex.exe`);
@@ -84,7 +84,7 @@ describe.skipIf(process.platform !== 'win32')('Windows provider discovery', () =
     expect(await findExecutable('codex')).toBe(native);
   });
   async function desktopFixture() {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-desktop-')); temporary.push(root);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-desktop-')); temporary.push(root);
     vi.stubEnv('PATH', ''); vi.stubEnv('USERPROFILE', path.join(root, 'user'));
     vi.stubEnv('LOCALAPPDATA', path.join(root, 'local')); vi.stubEnv('CODEX_HOME', '');
     const binary = async (relative: string) => {

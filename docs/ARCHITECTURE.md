@@ -1,12 +1,12 @@
-# Proposed AgentDock architecture
+# Proposed AgentTandem architecture
 
-This is the MVP design described in the [implementation plan](PLAN.md). AgentDock owns the UI, session history, checkpoints and code transactions; providers own the agent loop. Specific APIs and configuration will be pinned after the integration spike.
+This is the MVP design described in the [implementation plan](PLAN.md). AgentTandem owns the UI, session history, checkpoints and code transactions; providers own the agent loop. Specific APIs and configuration will be pinned after the integration spike.
 
 ## Main layers
 
-The host registers one `WebviewViewProvider` for `agentDock.panel`, containing sessions, messages, previews and diagnostics. Inline diffs use stored snapshots and line patches. `openStep/openFile/openCumulative` commands update panel state only; `InEditor` suffixes and `openInTab` are opt-in editor actions. Two native tree views plus a default editor tab are no longer used.
+The host registers one `WebviewViewProvider` for `agentTandem.panel`, containing sessions, messages, previews and diagnostics. Inline diffs use stored snapshots and line patches. `openStep/openFile/openCumulative` commands update panel state only; `InEditor` suffixes and `openInTab` are opt-in editor actions. Two native tree views plus a default editor tab are no longer used.
 
-Provider conversations are the primary input. `ProjectConversations` lists/reads local history, maps `(provider, sessionId)` and filters cwd by workspace root. The host polls revisions, retains selections and rejects stale asynchronous reads after project/session switches. Claude uses SDK session history; Codex currently uses a rollout compatibility reader. AgentDock owns only snapshots/journals and UI metadata; it never rewrites CLI transcripts to simulate synchronization. See [Conversation sync](CONVERSATION-SYNC.md).
+Provider conversations are the primary input. `ProjectConversations` lists/reads local history, maps `(provider, sessionId)` and filters cwd by workspace root. The host polls revisions, retains selections and rejects stale asynchronous reads after project/session switches. Claude uses SDK session history; Codex currently uses a rollout compatibility reader. AgentTandem owns only snapshots/journals and UI metadata; it never rewrites CLI transcripts to simulate synchronization. See [Conversation sync](CONVERSATION-SYNC.md).
 
 ```mermaid
 flowchart LR
@@ -67,7 +67,7 @@ Capabilities include at least `streaming`, `resume`, `forkAtBoundary`, `interrup
 
 Normalized events include session ready, turn started, text delta, tool started/output/completed, approval requested/resolved, provider warning, turn completed/interrupted/failed and transport disconnected. Every event carries `sessionId`, `turnId`, `runId`, `sequence` and native IDs where available.
 
-AgentDock and provider IDs are stored separately. `runId` rejects stale process events after retry/reload; state machines ignore duplicates and never convert failed turns to success merely because the process exits with code 0.
+AgentTandem and provider IDs are stored separately. `runId` rejects stale process events after retry/reload; state machines ignore duplicates and never convert failed turns to success merely because the process exits with code 0.
 
 ### Codex
 
@@ -79,7 +79,7 @@ Forking at a completed turn can use `thread/fork` with the last retained boundar
 
 Use the TypeScript Claude Agent SDK to control the Claude Code agent. Map session/message IDs and verify resume/fork against the pinned SDK. Terminal/ANSI parsing is not the primary data source. [Claude Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview), [Claude sessions](https://code.claude.com/docs/en/agent-sdk/sessions)
 
-Native file checkpoints are supplementary. AgentDock snapshots cover manifest files whether changed by tools or shells; native rewind does not replace general code restore. [Claude file checkpointing](https://code.claude.com/docs/en/agent-sdk/file-checkpointing)
+Native file checkpoints are supplementary. AgentTandem snapshots cover manifest files whether changed by tools or shells; native rewind does not replace general code restore. [Claude file checkpointing](https://code.claude.com/docs/en/agent-sdk/file-checkpointing)
 
 ## Stored data
 
@@ -181,7 +181,7 @@ On activation, migrate schemas, reconcile transactions, inspect live locks/proce
 
 Retention uses configurable quotas and blob reference counts. Never delete checkpoints referenced by sessions/branches/revert journals. Insufficient space stops turns before promising complete checkpoints and offers cleanup of resolved data.
 
-Worktree cleanup validates AgentDock ownership metadata and paths inside managed storage. General cleanup must never delete user repositories.
+Worktree cleanup validates AgentTandem ownership metadata and paths inside managed storage. General cleanup must never delete user repositories.
 
 ## Permissions and execution boundaries
 

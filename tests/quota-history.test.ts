@@ -51,7 +51,7 @@ describe('Quota history and capacity trends', () => {
     expect(quotaObservations('Codex', status, { ...data, updatedAt: now - 3 * 60000 }, now)).toEqual([]);
   });
   it('persists cycles across reloads and concurrent stores without losing or doubling samples', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-quota-history-'));
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-history-'));
     const a = new QuotaHistoryStore(directory), b = new QuotaHistoryStore(directory);
     await Promise.all([a.record([sample(0)]), b.record([sample(1)])]);
     await a.record([sample(0)]);
@@ -61,7 +61,7 @@ describe('Quota history and capacity trends', () => {
     expect(await a.record()).toEqual([improved, sample(1)]);
   });
   it('filters invalid persisted rows and only exposes meter fields', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-quota-history-'));
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-history-'));
     await writeFile(path.join(directory, 'quota-history.json'), JSON.stringify({ version: 1, observations: [
       { ...sample(0), accessToken: 'secret' }, { ...sample(1), usedPercent: 0 }, { ...sample(2), observedTokens: -1 },
     ] }));
@@ -71,7 +71,7 @@ describe('Quota history and capacity trends', () => {
     expect(await readFile(path.join(directory, 'quota-history.json'), 'utf8')).not.toContain('secret');
   });
   it('surfaces corrupt history without overwriting prior evidence', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-quota-history-')), file = path.join(directory, 'quota-history.json');
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-history-')), file = path.join(directory, 'quota-history.json');
     await writeFile(file, 'corrupt');
     await expect(new QuotaHistoryStore(directory).record([sample(0)])).rejects.toThrow();
     expect(await readFile(file, 'utf8')).toBe('corrupt');

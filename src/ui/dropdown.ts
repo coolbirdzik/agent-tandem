@@ -1,4 +1,4 @@
-/** A single themed, keyboard-accessible picker for every select in the dock.
+/** A single themed, keyboard-accessible picker for every select in the panel.
  * The select remains the form/value source; the browser's native menu is hidden.
  */
 export class Dropdowns {
@@ -49,8 +49,8 @@ class Dropdown {
   private searchedAt = 0;
   get isOpen() { return !this.menu.hidden; }
   constructor(private select: HTMLSelectElement, toggle: () => void, private dismiss: (restore?: boolean) => void) {
-    const id = select.id || `dock-picker-${++nextId}`;
-    this.wrapper.className = 'dock-dropdown'; this.wrapper.dataset.select = id;
+    const id = select.id || `tandem-picker-${++nextId}`;
+    this.wrapper.className = 'tandem-dropdown'; this.wrapper.dataset.select = id;
     select.before(this.wrapper); this.wrapper.append(select, this.trigger, this.menu);
     select.hidden = true; select.tabIndex = -1;
     this.trigger.type = 'button'; this.trigger.className = 'dropdown-trigger'; this.trigger.id = `${id}-trigger`;

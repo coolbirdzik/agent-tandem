@@ -19,9 +19,9 @@ try {
   const source = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const publisher = value('--publisher') || process.env.MARKETPLACE_PUBLISHER || source.publisher;
   const repositoryUrl = value('--repository-url') || process.env.MARKETPLACE_REPOSITORY_URL ||
-    (process.env.GITHUB_REPOSITORY ? `https://github.com/${process.env.GITHUB_REPOSITORY}` : undefined);
+    (process.env.GITHUB_REPOSITORY ? `https://github.com/${process.env.GITHUB_REPOSITORY}` : source.repository?.url);
   const preview = args.includes('--preview');
-  if (!preview && publisher === 'agent-dock-local') throw new Error('Set MARKETPLACE_PUBLISHER or pass --publisher with your Marketplace ID. Use --preview for a local validation package.');
+  if (!preview && publisher === 'agent-tandem-local') throw new Error('Set MARKETPLACE_PUBLISHER or pass --publisher with your Marketplace ID. Use --preview for a local validation package.');
   const manifest = marketplaceManifest(source, { publisher, repositoryUrl });
   const tag = process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : undefined;
   const contentBranch = value('--branch') ||
@@ -61,6 +61,6 @@ try {
   if (!repositoryUrl) console.warn('No repository URL configured. Marketplace images/links need a public repository; pass --repository-url when preparing your upload.');
   console.log(`MARKETPLACE_VSIX ${packagePath}`);
 } catch (error) {
-  console.error(`[AgentDock package] ${error.message}`);
+  console.error(`[AgentTandem package] ${error.message}`);
   process.exitCode = 1;
 }

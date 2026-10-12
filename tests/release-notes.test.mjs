@@ -9,7 +9,7 @@ import { releaseInfo } from '../scripts/release-notes.mjs';
 const execute = promisify(execFile), roots = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture() {
-  const cwd = await realpath(await mkdtemp(path.join(os.tmpdir(), 'agentdock-release-'))); roots.push(cwd);
+  const cwd = await realpath(await mkdtemp(path.join(os.tmpdir(), 'agenttandem-release-'))); roots.push(cwd);
   const git = async (...args) => (await execute('git', args, { cwd, windowsHide: true })).stdout.trim();
   await git('init', '-q', '-b', 'main'); await git('config', 'user.name', 'Release test'); await git('config', 'user.email', 'release@example.test');
   let sequence = 0;
@@ -17,7 +17,7 @@ async function fixture() {
     await writeFile(path.join(cwd, 'fixture.txt'), String(sequence++)); await git('add', 'fixture.txt'); await git('commit', '-q', '-m', message);
     return git('rev-parse', 'HEAD');
   };
-  const info = tag => releaseInfo({ cwd, tag, version: tag.replace(/^v/, ''), mainRef: 'main', repositoryUrl: 'https://github.com/example/agent-dock' });
+  const info = tag => releaseInfo({ cwd, tag, version: tag.replace(/^v/, ''), mainRef: 'main', repositoryUrl: 'https://github.com/example/agent-tandem' });
   return { cwd, git, commit, info };
 }
 describe('Git-history releases', () => {
@@ -26,7 +26,7 @@ describe('Git-history releases', () => {
     await f.git('tag', 'v1.0.0'); const result = await f.info('v1.0.0');
     expect(result.previousTag).toBeNull(); expect(result.notes).toContain('Initial release');
     expect(result.notes).toContain('Add native review'); expect(result.notes).not.toContain('adjust build'); expect(result.notes).not.toContain('bump version');
-    expect(result.notes).toContain('agent-dock-1.0.0.vsix');
+    expect(result.notes).toContain('agent-tandem-1.0.0.vsix');
   });
   it('uses the preceding reachable tag, ignores an unrelated branch tag and retains commit links', async () => {
     const f = await fixture(); await f.commit('Old feature'); await f.git('tag', 'v1.0.0');

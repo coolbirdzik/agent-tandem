@@ -20,7 +20,7 @@ const jsonl = (rows: unknown[]) => rows.map(row => JSON.stringify(row)).join('\n
 
 describe('Native usage accounting', () => {
   it('reuses token-only disk cache after reload, invalidates changed/corrupt entries and reapplies account evidence', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-usage-cache-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-usage-cache-'));
     try {
       const homes = { codex: path.join(root, 'codex'), claude: path.join(root, 'claude') }, cache = path.join(root, 'cache');
       const file = path.join(homes.codex, 'sessions', 's.jsonl'); await mkdir(path.dirname(file), { recursive: true });
@@ -56,7 +56,7 @@ describe('Native usage accounting', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('keeps usage available when the optional cache directory cannot be written', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-usage-cache-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-usage-cache-'));
     try {
       const folder = path.join(root, 'claude', 'projects'); await mkdir(folder, { recursive: true });
       await writeFile(path.join(folder, 's.jsonl'), jsonl([claude('r1')]));
@@ -75,7 +75,7 @@ describe('Native usage accounting', () => {
     expect(parser.records()[0]?.account).toBeUndefined();
   });
   it('separates accounts within one conversation, preserves fork attribution and leaves external history unknown', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-scoped-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-scoped-'));
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-10T08:00:00Z'));
     try {
       const homes = { codex: path.join(root, 'codex'), claude: path.join(root, 'claude') };
@@ -106,7 +106,7 @@ describe('Native usage accounting', () => {
     } finally { clock.mockRestore(); await rm(root, { recursive: true, force: true }); }
   });
   it('prices deduplicated responses individually and exposes only recent timestamp/token metadata', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-priced-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-priced-'));
     const now = Date.parse('2026-10-10T08:00:00Z');
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
     try {
@@ -157,7 +157,7 @@ describe('Native usage accounting', () => {
     expect(parser.records()[0]).toMatchObject({ input: 310, output: 20, cacheRead: 100, cacheWrite: 200, total: 330 });
   });
   it('includes all projects, archived sessions/subagents, deduplicates copied/streamed responses and updates changed files', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-usage-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-usage-'));
     try {
       const homes = { codex: path.join(root, 'codex'), claude: path.join(root, 'claude') };
       const active = path.join(homes.codex, 'sessions', 'rollout.jsonl'), archived = path.join(homes.codex, 'archived_sessions', 'copied.jsonl');
@@ -186,7 +186,7 @@ describe('Native usage accounting', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('reports malformed/oversized records and tolerates a live partial tail', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-usage-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-usage-'));
     try {
       const folder = path.join(root, 'claude', 'projects', 'project'); await mkdir(folder, { recursive: true });
       const file = path.join(folder, 's.jsonl');
@@ -199,7 +199,7 @@ describe('Native usage accounting', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('reads usage from a large assistant response while skipping large image/tool-only records', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-usage-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-usage-'));
     try {
       const folder = path.join(root, 'claude', 'projects', 'project'); await mkdir(folder, { recursive: true });
       const large = 'x'.repeat(3 * 1024 * 1024);

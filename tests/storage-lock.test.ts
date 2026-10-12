@@ -13,7 +13,7 @@ const pause = (ms = 70) => new Promise(resolve => setTimeout(resolve, ms));
 const gate = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 const root = () => path.join(folder, `storage-${sequence++}`);
 beforeAll(async () => {
-  folder = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-lock-')); bundle = path.join(folder, 'lock.mjs');
+  folder = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-lock-')); bundle = path.join(folder, 'lock.mjs');
   await build({ entryPoints: ['src/core/storage-lock.ts'], outfile: bundle, bundle: true, platform: 'node', format: 'esm' });
 });
 afterEach(async () => {

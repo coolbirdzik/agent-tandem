@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <title>AgentDock - Claude, Codex, history and dashboard</title>
+  <title>AgentTandem - Claude, Codex, history and dashboard</title>
   <rect width="256" height="256" rx="56" fill="#F4F0E8"/>
   <path d="M67 67a86 86 0 1 1-25 61M67 46v21h21" fill="none" stroke="#30362F" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
   <g transform="translate(102 105) scale(.38)" fill="#30362F">

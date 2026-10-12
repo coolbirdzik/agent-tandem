@@ -20,8 +20,8 @@ await writeFile(path.join(profile, 'User/settings.json'), JSON.stringify({ 'wind
 const options = {
   vscodeExecutablePath: process.env.VSCODE_EXECUTABLE_PATH || path.join(process.env.LOCALAPPDATA, 'Programs/Microsoft VS Code/Code.exe'),
   extensionDevelopmentPath: root, extensionTestsPath: path.join(root, 'dist/context-history-tests.js'),
-  extensionTestsEnv: { CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, AGENT_DOCK_CONTEXT_FIXTURE: fixture, AGENT_DOCK_CONTEXT_REPORT: path.join(root, 'artifacts/context-history-test.json') },
+  extensionTestsEnv: { CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome, AGENT_TANDEM_CONTEXT_FIXTURE: fixture, AGENT_TANDEM_CONTEXT_REPORT: path.join(root, 'artifacts/context-history-test.json') },
   launchArgs: [workspace, '--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'],
 };
 await runTests(options);
-await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_DOCK_CONTEXT_REOPEN: 'true', AGENT_DOCK_CONTEXT_REPORT: path.join(root, 'artifacts/context-history-reopen-test.json') } });
+await runTests({ ...options, extensionTestsEnv: { ...options.extensionTestsEnv, AGENT_TANDEM_CONTEXT_REOPEN: 'true', AGENT_TANDEM_CONTEXT_REPORT: path.join(root, 'artifacts/context-history-reopen-test.json') } });

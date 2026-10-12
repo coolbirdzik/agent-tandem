@@ -1,6 +1,6 @@
 # Keep your own agent workflow
 
-Run Codex or Claude in their own CLI or native extension, or chat through AgentDock. Saved workspace changes are captured without an extra model request.
+Run Codex or Claude in their own CLI or native extension, or chat through AgentTandem. Saved workspace changes are captured without an extra model request.
 
 **Tracking on** appears beside quota in the bottom VS Code status bar. Pending changes replace it with **Review · N files**; click to open the latest conversation diff directly. The Review heading and **… → Change tracking** offer Pause/Resume and this guide. Capture updates badges without opening a panel or stealing focus.
 

@@ -40,7 +40,7 @@ describe('account and quota data', () => {
 
 describe('read-only provider queries', () => {
   async function codex(mode: string, signal?: AbortSignal) {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-account-')), log = path.join(directory, 'rpc.jsonl');
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-account-')), log = path.join(directory, 'rpc.jsonl');
     let child!: ChildProcessWithoutNullStreams;
     const job = readCodexAccount(directory, process.execPath, signal, () => child = spawn(process.execPath, [path.resolve('tests/fixtures/account-server.mjs')], {
       env: { ...process.env, ACCOUNT_CASE: mode, ACCOUNT_RPC_LOG: log }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,

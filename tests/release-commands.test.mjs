@@ -9,7 +9,7 @@ import { bumpVersion, pushRelease } from '../scripts/release.mjs';
 const execute = promisify(execFile), roots = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture() {
-  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'agentdock-release-command-'))); roots.push(root);
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'agenttandem-release-command-'))); roots.push(root);
   const cwd = path.join(root, 'work'), remote = path.join(root, 'remote.git');
   const run = async (at, ...args) => (await execute('git', args, { cwd: at, windowsHide: true })).stdout.trim();
   await run(root, 'init', '-q', '--bare', remote);

@@ -16,7 +16,7 @@ describe('host message queue', () => {
     expect(restored.state('L:\\Code\\other')).toBeUndefined();
   });
   it('atomically persists the latest queue and reloads independently of VS Code memento flushing', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-queue-'));
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-queue-'));
     try {
       const store = new ChatQueueStore(directory, 'workspace'), queue = new ChatQueue(); queue.enqueue(request('one'), chat, chat.conversationKey);
       const first = store.save(queue.snapshot()); queue.enqueue(request('two'), chat, chat.conversationKey); const second = store.save(queue.snapshot());

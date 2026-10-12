@@ -5,9 +5,9 @@ import path from 'node:path';
 import type { ExtensionAPI } from '../../src/extension';
 
 export async function run() {
-  const extension = vscode.extensions.getExtension<ExtensionAPI>('agent-dock-local.agent-dock'); assert.ok(extension);
+  const extension = vscode.extensions.getExtension<ExtensionAPI>('agent-tandem-local.agent-tandem'); assert.ok(extension);
   const api = await extension.activate();
-  const expected = JSON.parse(process.env.AGENT_DOCK_HISTORY_EXPECTED!) as { project: string; ids: string[] }[];
+  const expected = JSON.parse(process.env.AGENT_TANDEM_HISTORY_EXPECTED!) as { project: string; ids: string[] }[];
   const results = [];
   for (const { project, ids } of expected) {
     if (api.viewState().project?.toLowerCase() !== project.toLowerCase()) {
@@ -28,6 +28,6 @@ export async function run() {
     results.push({ project, expected: ids.length, found: found.length, opened, messages, errors: index.errors });
   }
   const report = { success: true, vscode: vscode.version, results };
-  await writeFile(path.join(process.env.AGENT_DOCK_REPORT_DIR!, 'history-local.json'), JSON.stringify(report, null, 2));
-  console.log(`AGENT_DOCK_HISTORY_LOCAL ${JSON.stringify(report)}`);
+  await writeFile(path.join(process.env.AGENT_TANDEM_REPORT_DIR!, 'history-local.json'), JSON.stringify(report, null, 2));
+  console.log(`AGENT_TANDEM_HISTORY_LOCAL ${JSON.stringify(report)}`);
 }

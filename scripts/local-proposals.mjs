@@ -12,7 +12,7 @@ export async function enableLocalProposals(file, extensionId) {
   if (enabled.includes(extensionId)) return false;
   const updated = applyEdits(original, modify(original, ['enable-proposed-api'], [...enabled, extensionId], { formattingOptions: { insertSpaces: true, tabSize: 2, eol: original.includes('\r\n') ? '\r\n' : '\n' } }));
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(`${file}.agent-dock-backup`, original, { flag: 'wx' }).catch(error => { if (error.code !== 'EEXIST') throw error; });
+  await writeFile(`${file}.agent-tandem-backup`, original, { flag: 'wx' }).catch(error => { if (error.code !== 'EEXIST') throw error; });
   await writeFile(file, updated);
   return true;
 }

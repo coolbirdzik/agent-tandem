@@ -59,7 +59,7 @@ jobs:
       - name: Upload VSIX and release notes
         uses: actions/upload-artifact@v6
         with:
-          name: agent-dock-vsix
+          name: agent-tandem-vsix
           path: |
             artifacts/*.vsix
             artifacts/*.vsix.sha256
@@ -73,7 +73,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: agent-dock-test-diagnostics
+          name: agent-tandem-test-diagnostics
           path: |
             artifacts/unit-tests.json
             artifacts/marketplace-host.log
@@ -95,7 +95,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v6
         with:
-          name: agent-dock-vsix
+          name: agent-tandem-vsix
           path: artifacts
       - name: Create or update the tagged GitHub Release
         env:
@@ -106,7 +106,7 @@ jobs:
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" artifacts/*.vsix artifacts/*.vsix.sha256 --clobber
-            gh release edit "$RELEASE_TAG" --title "AgentDock $RELEASE_TAG" --notes-file artifacts/release-notes.md
+            gh release edit "$RELEASE_TAG" --title "AgentTandem $RELEASE_TAG" --notes-file artifacts/release-notes.md
           else
-            gh release create "$RELEASE_TAG" artifacts/*.vsix artifacts/*.vsix.sha256 --verify-tag --target main --title "AgentDock $RELEASE_TAG" --notes-file artifacts/release-notes.md
+            gh release create "$RELEASE_TAG" artifacts/*.vsix artifacts/*.vsix.sha256 --verify-tag --target main --title "AgentTandem $RELEASE_TAG" --notes-file artifacts/release-notes.md
           fi

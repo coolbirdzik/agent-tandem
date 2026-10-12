@@ -9,7 +9,7 @@ import type { Session } from '../src/core/types';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function fixture(before: Uint8Array, after: Uint8Array) {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-preview-')); roots.push(root);
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-preview-')); roots.push(root);
   const workspace = path.join(root, 'workspace'); await mkdir(workspace);
   const history = new HistoryStore(path.join(root, 'history'));
   await writeFile(path.join(workspace, 'file.ts'), before); const baseline = await history.capture(workspace);

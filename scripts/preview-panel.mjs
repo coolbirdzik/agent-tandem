@@ -7,10 +7,10 @@ import { createRequire } from 'node:module';
 await mkdir('artifacts', { recursive: true });
 await build({ entryPoints: ['src/host/panel-html.ts'], outfile: 'artifacts/panel-html.cjs', bundle: true, platform: 'node', format: 'cjs' });
 const { panelHtml } = createRequire(import.meta.url)('../artifacts/panel-html.cjs');
-const project = 'L:\\Code\\agent-dock';
+const project = 'L:\\Code\\agent-tandem';
 const conversation = { key: 'Codex:preview', id: 'preview', provider: 'Codex', title: 'Model picker and chat layout', cwd: project, revision: 'preview:1', updatedAt: Date.now() };
 const state = {
-  sessions: [], running: false, providers: [], project, projectName: 'agent-dock', screen: 'conversations', composeProvider: 'Codex',
+  sessions: [], running: false, providers: [], project, projectName: 'agent-tandem', screen: 'conversations', composeProvider: 'Codex',
   selectedModels: { Codex: 'gpt-5.2-codex', Claude: 'sonnet' }, accessModes: { Codex: 'full-access', Claude: 'default' },
   modelCatalogs: { Codex: { status: 'ready', choices: [{ id: 'gpt-5.2-codex', label: 'gpt-5.2-codex', reasoningEfforts: [{id:'low',label:'Low'},{id:'medium',label:'Medium'},{id:'high',label:'High'},{id:'xhigh',label:'Extra high'}] }, { id: 'gpt-5.2', label: 'gpt-5.2' }] }, Claude: { status: 'ready', choices: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: [{id:'low',label:'Low'},{id:'medium',label:'Medium'},{id:'high',label:'High'}] }, { id: 'opus', label: 'Opus' }] } },
   accounts: { Codex: {status:'ready',account:{signedIn:true,email:'demo@example.test',method:'ChatGPT',plan:'plus'},quota:{status:'available',windows:[{id:'5h',label:'5h',usedPercent:25},{id:'7d',label:'7d',usedPercent:82}]} } },

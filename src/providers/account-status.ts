@@ -102,7 +102,7 @@ export async function readCodexAccount(project: string, configured = '', signal?
   });
   try {
     if (signal?.aborted) abort();
-    await call('initialize', { clientInfo: { name: 'agent_dock', title: 'AgentDock', version: '0.1.0' }, capabilities: { experimentalApi: true } });
+    await call('initialize', { clientInfo: { name: 'agent_tandem', title: 'AgentTandem', version: '0.1.0' }, capabilities: { experimentalApi: true } });
     child.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
     // Read the current sign-in. Forcing OAuth renewal on every quota poll can
     // return a null account even when the existing session can read rate limits.

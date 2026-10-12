@@ -21,7 +21,7 @@ const patch = (input: string, at: number, output = 'Success. Updated the followi
 const folders: string[] = [];
 afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-conversation-review-')); folders.push(root);
+  const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-conversation-review-')); folders.push(root);
   const project = path.join(root, 'project'); await mkdir(project);
   const store = new ReviewStore(path.join(root, 'storage', 'reviews'));
   const set = (name: string, text: string) => writeFile(path.join(project, name), text);

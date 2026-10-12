@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { HistoryStore } from './core/history';
 import { runDemo } from './core/demo';
 import type { Session, ViewState } from './core/types';
-import { openChanges, DockView, selectionFrom, SnapshotDocuments } from './host/preview';
+import { openChanges, TandemView, selectionFrom, SnapshotDocuments } from './host/preview';
 import { openReviewChanges, ReviewDocuments, reviewSnapshotUri } from './host/review-editor';
 import { registerChangeNavigation, type ChangeNavigationState } from './host/change-navigation';
 import { ReviewHunkActions } from './host/review-hunk-actions';
@@ -66,7 +66,7 @@ export interface ExtensionAPI {
 let cancel: AbortController | undefined;
 export async function activate(context: vscode.ExtensionContext): Promise<ExtensionAPI> {
   const changeNavigation = await registerChangeNavigation(context);
-  const output = vscode.window.createOutputChannel('AgentDock');
+  const output = vscode.window.createOutputChannel('AgentTandem');
   const history = new HistoryStore(context.globalStorageUri.fsPath);
   const attachments = new AttachmentStore(context.globalStorageUri.fsPath);
   const usageAccounts = new UsageAccountStore(path.join(context.globalStorageUri.fsPath, 'usage'));
@@ -170,7 +170,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (!disposed && generation === version && state.project === project && fastModeRevision === revision) state.codexFastMode = enabled;
   }
   await Promise.all([restoreAccessModes(), restoreModels(), restoreEfforts(), restoreFastMode()]);
-  const preview = new DockView(context.extensionUri, () => state,
+  const preview = new TandemView(context.extensionUri, () => state,
     async (command, selected) => vscode.commands.executeCommand(command, selected), report);
   const quotaBar = new QuotaStatusBar(), trackingBar = new TrackingStatusBar(), usageHistory = new UsageHistory(undefined, usageAccounts, path.join(context.globalStorageUri.fsPath, 'usage', 'history-cache'));
   const storage = new StorageManager(context.globalStorageUri.fsPath);
@@ -180,7 +180,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let usageState: Pick<UsageDashboardState, 'status' | 'data' | 'error'> = { status: 'idle' };
   let usageJob: Promise<void> | undefined, usageAbort: AbortController | undefined;
   function dashboardState(): UsageDashboardState {
-    const config = vscode.workspace.getConfiguration('agentDock');
+    const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
     return { ...usageState, storage: storageState, accounts: state.accounts, quotaHistory, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day' } };
@@ -228,7 +228,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const results = await Promise.allSettled(providers.map(async provider => {
       const files = await installedCLIs(provider === 'Codex' ? 'codex' : 'claude');
       for (const folder of vscode.workspace.workspaceFolders ?? []) {
-        const configured = vscode.workspace.getConfiguration('agentDock', folder.uri).get<string>(cliKey(provider));
+        const configured = vscode.workspace.getConfiguration('agentTandem', folder.uri).get<string>(cliKey(provider));
         if (configured && !files.some(file => cliPathKey(file.executable) === cliPathKey(configured))) {
           try { files.push(await cliInfo(provider === 'Codex' ? 'codex' : 'claude', configured)); } catch { /* Missing configured executables stay visible as selection errors. */ }
         }
@@ -251,7 +251,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     let registry;
     try { registry = await Promise.race([ensureCLIRegistry(), stopped]); signal?.throwIfAborted(); }
     finally { signal?.removeEventListener('abort', stop); }
-    const config = vscode.workspace.getConfiguration('agentDock', project ? vscode.Uri.file(project) : undefined);
+    const config = vscode.workspace.getConfiguration('agentTandem', project ? vscode.Uri.file(project) : undefined);
     const terminal = config.get<string>(cliModeKey(provider)) === 'terminal';
     const selectedId = terminal ? '' : config.get<string>(cliIdKey(provider)) ?? '';
     const selectedEntry = selectedId ? registry.entries.find(entry => entry.id === selectedId && entry.provider === provider) : undefined;
@@ -269,7 +269,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       for (const provider of ['Codex', 'Claude'] as const) {
         try { const selection = await managedCLI(provider, project); active[provider] = { id: selection.entry.id, source: selection.source }; }
         catch (error) {
-          const config = vscode.workspace.getConfiguration('agentDock', project ? vscode.Uri.file(project) : undefined);
+          const config = vscode.workspace.getConfiguration('agentTandem', project ? vscode.Uri.file(project) : undefined);
           const terminal = config.get<string>(cliModeKey(provider)) === 'terminal', configured = terminal ? '' : config.get<string>(cliKey(provider));
           const selectedId = terminal ? '' : config.get<string>(cliIdKey(provider));
           const source = selectedId || configured ? 'project' : terminal ? 'path' : 'default';
@@ -287,7 +287,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const registry = await ensureCLIRegistry();
     const entry = id && id !== 'path' ? registry.entries.find(entry => entry.id === id && entry.provider === provider && entry.enabled && !entry.error) : undefined;
     if (id && id !== 'path' && !entry) throw new Error('Choose an enabled CLI.');
-    const config = vscode.workspace.getConfiguration('agentDock', vscode.Uri.file(state.project));
+    const config = vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(state.project));
     await config.update(cliKey(provider), entry?.executable ?? '', vscode.ConfigurationTarget.WorkspaceFolder);
     await config.update(cliModeKey(provider), id === 'path' ? 'terminal' : 'default', vscode.ConfigurationTarget.WorkspaceFolder);
     await config.update(cliIdKey(provider), entry?.id ?? '', vscode.ConfigurationTarget.WorkspaceFolder);
@@ -375,7 +375,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(project, '**/*'));
     const changed = (uri: vscode.Uri) => {
       const name = path.relative(project, uri.fsPath).replace(/\\/g, '/');
-      if (name.startsWith('../') || name.split('/').some(part => ['.git', 'node_modules', '.test-runtime'].includes(part)) || /\.agent-dock-revert$/.test(name)) return;
+      if (name.startsWith('../') || name.split('/').some(part => ['.git', 'node_modules', '.test-runtime'].includes(part)) || /\.agent-tandem-revert$/.test(name)) return;
       externalDirty = true; scheduleExternalCapture();
     };
     const events = [watcher.onDidCreate(changed), watcher.onDidChange(changed), watcher.onDidDelete(changed)];
@@ -422,7 +422,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     let review = await reviews.read(project);
     if (recover && review.busy && !activeReviewProjects.has(project)) review = await reviews.finish(project, undefined, true);
     if (vscode.workspace.isTrusted) {
-      try { review = await reviews.initializeExternalTracking(project, vscode.workspace.getConfiguration('agentDock', vscode.Uri.file(project)).get('autoTrackExternalChanges', true)); }
+      try { review = await reviews.initializeExternalTracking(project, vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(project)).get('autoTrackExternalChanges', true)); }
       catch (error) { review = { ...review, notice: `Automatic tracking could not start: ${error instanceof Error ? error.message : String(error)}` }; report(error); }
     }
     const undo = await checkpoints.undo(project);
@@ -486,15 +486,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const documents = new SnapshotDocuments(history, () => state.sessions);
   const reviewDocuments = new ReviewDocuments(reviews.history);
   context.subscriptions.push(output, preview, settings, quotaBar, trackingBar, documents, reviewDocuments,
-    vscode.window.registerWebviewViewProvider('agentDock.panel', preview, { webviewOptions: { retainContextWhenHidden: true } }),
-    vscode.workspace.registerTextDocumentContentProvider('agentdock-snapshot', documents),
-    vscode.workspace.registerTextDocumentContentProvider('agentdock-review', reviewDocuments));
+    vscode.window.registerWebviewViewProvider('agentTandem.panel', preview, { webviewOptions: { retainContextWhenHidden: true } }),
+    vscode.workspace.registerTextDocumentContentProvider('agenttandem-snapshot', documents),
+    vscode.workspace.registerTextDocumentContentProvider('agenttandem-review', reviewDocuments));
 
   const run = async (delay?: number) => {
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before running the local fixture demo.');
     if (state.running) throw new Error('A demo is already running.');
     state.running = true; state.error = undefined; cancel = new AbortController();
-    await vscode.commands.executeCommand('setContext', 'agentDock.running', true); update();
+    await vscode.commands.executeCommand('setContext', 'agentTandem.running', true); update();
     try {
       const session = await runDemo(history, path.join(context.globalStorageUri.fsPath, 'fixtures'), cancel.signal, value => {
         const index = state.sessions.findIndex(session => session.id === value.id);
@@ -505,14 +505,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       return session;
     } finally {
       state.running = false; cancel = undefined;
-      await vscode.commands.executeCommand('setContext', 'agentDock.running', false); update();
+      await vscode.commands.executeCommand('setContext', 'agentTandem.running', false); update();
     }
   };
   const register = (name: string, handler: (...args: unknown[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(name, async (...args: unknown[]) => {
     try { return await handler(...args); } catch (error) { report(error); throw error; }
   }));
-  register('agentDock.open', () => { state.screen = 'changes'; update(); return preview.open(); });
-  register('agentDock.openInTab', () => preview.openInTab());
+  register('agentTandem.open', () => { state.screen = 'changes'; update(); return preview.open(); });
+  register('agentTandem.openInTab', () => preview.openInTab());
   const storageAction = async (operation: () => Promise<StorageState>) => {
     if (storageJob) throw new Error('Wait for storage management to finish.');
     storageState = { ...storageState, status: 'loading', error: undefined }; settings.update();
@@ -524,14 +524,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     storageJob = job;
     try { await job; } finally { if (storageJob === job) storageJob = undefined; }
   };
-  register('agentDock.refreshStorage', () => storageAction(async () => { cleanupPlan = undefined; historyDeletionPlan = undefined; return storage.inspect(); }));
-  register('agentDock.previewStorageCleanup', () => storageAction(async () => {
+  register('agentTandem.refreshStorage', () => storageAction(async () => { cleanupPlan = undefined; historyDeletionPlan = undefined; return storage.inspect(); }));
+  register('agentTandem.previewStorageCleanup', () => storageAction(async () => {
     historyDeletionPlan = undefined;
     const summary = await storage.inspect();
     if (summary.cleanupBlocked) throw new Error(summary.cleanupBlocked);
     cleanupPlan = await storage.preview(); return { ...summary, plan: cleanupPlan };
   }));
-  register('agentDock.previewHistoryDeletion', value => storageAction(async () => {
+  register('agentTandem.previewHistoryDeletion', value => storageAction(async () => {
     if (!value || typeof value !== 'object' || !Array.isArray((value as { ids?: unknown }).ids)) throw new Error('Select saved history to delete.');
     cleanupPlan = undefined;
     const summary = await storage.inspect();
@@ -539,7 +539,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     historyDeletionPlan = await storage.previewHistoryDeletion((value as { ids: string[] }).ids);
     return { ...summary, historyPlan: historyDeletionPlan };
   }));
-  register('agentDock.deleteHistory', value => storageAction(async () => {
+  register('agentTandem.deleteHistory', value => storageAction(async () => {
     if (!historyDeletionPlan || !value || typeof value !== 'object' || (value as { token?: unknown }).token !== historyDeletionPlan.token) throw new Error('Preview history deletion before deleting data.');
     if (chatAbort || reviewing || externalSwitching || state.running || externalJob || activeReviewProjects.size) throw new Error('Wait for capture or review to finish before deleting history.');
     const approved = historyDeletionPlan;
@@ -556,26 +556,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     update();
     return { ...(await storage.inspect()), historyResult: result };
   }));
-  register('agentDock.cleanupStorage', value => storageAction(async () => {
+  register('agentTandem.cleanupStorage', value => storageAction(async () => {
     if (!cleanupPlan || !value || typeof value !== 'object' || (value as { token?: unknown }).token !== cleanupPlan.token) throw new Error('Preview cleanup before deleting data.');
     if (chatAbort || reviewing || externalSwitching || state.running || externalJob) throw new Error('Wait for capture or review to finish before cleanup.');
     const approved = cleanupPlan;
     if (!approved.files.length) return { ...(await storage.inspect()), plan: approved };
-    const answer = await vscode.window.showWarningMessage(`Remove ${approved.files.length} unused snapshot files (${(approved.bytes / 1024 / 1024).toFixed(2)} MB) from AgentDock storage?`, { modal: true, detail: `Only the files in your preview are eligible. Baselines, pending review, checkpoints, Undo and demo history stay protected. Project files, native Codex/Claude history, attachments and usage records are kept.\n\n${storage.root}` }, 'Clean unused snapshots');
+    const answer = await vscode.window.showWarningMessage(`Remove ${approved.files.length} unused snapshot files (${(approved.bytes / 1024 / 1024).toFixed(2)} MB) from AgentTandem storage?`, { modal: true, detail: `Only the files in your preview are eligible. Baselines, pending review, checkpoints, Undo and demo history stay protected. Project files, native Codex/Claude history, attachments and usage records are kept.\n\n${storage.root}` }, 'Clean unused snapshots');
     if (answer !== 'Clean unused snapshots') return { ...(await storage.inspect()), plan: approved };
     storageState = { ...storageState, status: 'cleaning' }; settings.update();
     const result = await storage.cleanup(approved); cleanupPlan = undefined;
     return { ...(await storage.inspect()), result };
   }));
-  register('agentDock.revealStorage', () => vscode.commands.executeCommand('revealFileInOS', context.globalStorageUri));
+  register('agentTandem.revealStorage', () => vscode.commands.executeCommand('revealFileInOS', context.globalStorageUri));
   const onboardingMarker = vscode.Uri.joinPath(context.globalStorageUri, 'onboarding-v1.done');
   const showGettingStarted = async () => {
-    await vscode.commands.executeCommand('workbench.action.openWalkthrough', 'agent-dock-local.agent-dock#gettingStarted', false);
+    await vscode.commands.executeCommand('workbench.action.openWalkthrough', `${context.extension.id}#gettingStarted`, false);
     await vscode.workspace.fs.createDirectory(context.globalStorageUri);
     await vscode.workspace.fs.writeFile(onboardingMarker, new Uint8Array([49]));
   };
-  register('agentDock.gettingStarted', showGettingStarted);
-  register('agentDock.trackingControls', async () => {
+  register('agentTandem.gettingStarted', showGettingStarted);
+  register('agentTandem.trackingControls', async () => {
     const project = state.project, version = generation;
     const enabled = !!state.review?.externalTracking;
     const choices = [
@@ -584,15 +584,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       { label: '$(refresh) Capture changes now', description: 'Refresh saved workspace edits', action: 'capture' },
       { label: '$(book) Getting started', description: 'Tracking, review, chat and usage dashboard', action: 'guide' },
     ];
-    const choice = await vscode.window.showQuickPick(choices, { title: `AgentDock · Change tracking ${enabled ? 'on' : 'off'}`, placeHolder: 'Saved changes from all apps are tracked, including manual edits.' });
+    const choice = await vscode.window.showQuickPick(choices, { title: `AgentTandem · Change tracking ${enabled ? 'on' : 'off'}`, placeHolder: 'Saved changes from all apps are tracked, including manual edits.' });
     if (!choice) return;
     if (choice.action === 'guide') return showGettingStarted();
     if (disposed || version !== generation || project !== state.project) throw new Error('The workspace changed. Open change tracking again.');
-    if (choice.action === 'toggle') return vscode.commands.executeCommand('agentDock.toggleExternalReview');
+    if (choice.action === 'toggle') return vscode.commands.executeCommand('agentTandem.toggleExternalReview');
     if (choice.action === 'capture') return captureExternalReview();
     state.screen = 'changes'; update(); await preview.open(); await captureExternalReview();
   });
-  register('agentDock.toggleExternalReview', async () => {
+  register('agentTandem.toggleExternalReview', async () => {
     const project = state.project, version = generation;
     if (!project || !vscode.workspace.isTrusted) throw new Error('Open and trust a local workspace before tracking external changes.');
     if (chatAbort || reviewing || externalSwitching) throw new Error('Wait for the active action before changing external review mode.');
@@ -606,26 +606,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       return result;
     } finally { externalSwitching = false; if (!disposed && generation === version && state.project === project) { state.reviewBusy = false; update(); } }
   });
-  register('agentDock.captureExternalChanges', async () => { await captureExternalReview(); return state.review; });
+  register('agentTandem.captureExternalChanges', async () => { await captureExternalReview(); return state.review; });
 
-  register('agentDock.openSettings', async () => { settings.open(); await refreshAccounts(); return dashboardState(); });
-  register('agentDock.openStorage', async () => { settings.open('storage'); await vscode.commands.executeCommand('agentDock.refreshStorage'); return dashboardState(); });
-  register('agentDock.refreshUsageDashboard', async () => {
+  register('agentTandem.openSettings', async () => { settings.open(); await refreshAccounts(); return dashboardState(); });
+  register('agentTandem.openStorage', async () => { settings.open('storage'); await vscode.commands.executeCommand('agentTandem.refreshStorage'); return dashboardState(); });
+  register('agentTandem.refreshUsageDashboard', async () => {
     await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]); await refreshUsageDashboard(); return dashboardState();
   });
-  register('agentDock.openVSCodeSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:agent-dock-local.agent-dock'));
-  register('agentDock.setDashboardPreferences', async value => {
+  register('agentTandem.openVSCodeSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`));
+  register('agentTandem.setDashboardPreferences', async value => {
     if (!value || typeof value !== 'object') throw new Error('Invalid dashboard preference.');
-    const selection = value as Record<string, unknown>, config = vscode.workspace.getConfiguration('agentDock');
+    const selection = value as Record<string, unknown>, config = vscode.workspace.getConfiguration('agentTandem');
     if (selection.showQuotaInStatusBar !== undefined && typeof selection.showQuotaInStatusBar !== 'boolean') throw new Error('Invalid status bar preference.');
     if (selection.grouping !== undefined && !['day', 'week', 'month'].includes(String(selection.grouping))) throw new Error('Invalid dashboard grouping.');
     if (selection.showQuotaInStatusBar !== undefined) await config.update('showQuotaInStatusBar', selection.showQuotaInStatusBar, vscode.ConfigurationTarget.Global);
     if (selection.grouping !== undefined) await config.update('usageDashboardDefaultGrouping', selection.grouping, vscode.ConfigurationTarget.Global);
     update();
   });
-  register('agentDock.manageCLIs', async () => { state.screen = 'cli'; update(); await refreshCLIManager(); await preview.open(); });
-  register('agentDock.refreshCLIs', () => refreshCLIManager());
-  register('agentDock.chooseCLI', async value => {
+  register('agentTandem.manageCLIs', async () => { state.screen = 'cli'; update(); await refreshCLIManager(); await preview.open(); });
+  register('agentTandem.refreshCLIs', () => refreshCLIManager());
+  register('agentTandem.chooseCLI', async value => {
     if (value !== 'Codex' && value !== 'Claude') throw new Error('Choose a provider.');
     if (!state.project || !vscode.workspace.isTrusted) throw new Error('Open and trust a local project before choosing its CLI.');
     if (chatAbort || reviewing || cliManaging) throw new Error('Stop the active agent before changing its CLI.');
@@ -643,7 +643,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     try { await setProjectCLI(provider, selection.id); await loadModels(provider, true); void loadAccount(provider, true); }
     finally { cliManaging = false; await refreshCLIManager(); }
   });
-  register('agentDock.cliAction', async value => {
+  register('agentTandem.cliAction', async value => {
     const request = cliRequest(value);
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before managing local CLIs.');
     if (request.project !== state.project) throw new Error('The workspace changed. Try the CLI action again.');
@@ -668,8 +668,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         const registered = { ...info, provider, name: request.name?.trim() || entry?.name || `${provider} ${info.version.replace(/^codex-cli\s+/, '').replace(/ \(Claude Code\)$/, '')}` };
         if (request.action === 'add') await cliStore.add(request.revision, registered);
         else await cliStore.edit(request.revision, entry!.id, registered);
-        if (entry && request.project === state.project && cliPathKey(entry.executable) !== cliPathKey(info.executable) && state.project && vscode.workspace.getConfiguration('agentDock', vscode.Uri.file(state.project)).get<string>(cliKey(provider)) === entry.executable) {
-          await vscode.workspace.getConfiguration('agentDock', vscode.Uri.file(state.project)).update(cliKey(provider), info.executable, vscode.ConfigurationTarget.WorkspaceFolder);
+        if (entry && request.project === state.project && cliPathKey(entry.executable) !== cliPathKey(info.executable) && state.project && vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(state.project)).get<string>(cliKey(provider)) === entry.executable) {
+          await vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(state.project)).update(cliKey(provider), info.executable, vscode.ConfigurationTarget.WorkspaceFolder);
         }
       } else if (request.action === 'toggle') {
         if (request.enabled === undefined) throw new Error('Choose whether this CLI is enabled.');
@@ -697,19 +697,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       throw error;
     } finally { cliManaging = false; await refreshCLIManager(); }
   });
-  register('agentDock.refreshAccount', async value => {
+  register('agentTandem.refreshAccount', async value => {
     const selection = value as { project?: string; provider?: ConversationProvider } | undefined;
     if (!selection || selection.project !== state.project || (selection.provider !== 'Codex' && selection.provider !== 'Claude')) throw new Error('The workspace changed. Refresh the account again.');
     await loadAccount(selection.provider, true); await refreshUsageDashboard(); return state.accounts?.[selection.provider];
   });
-  register('agentDock.refreshModels', async value => {
+  register('agentTandem.refreshModels', async value => {
     const selection = modelSelection(value);
     if (selection.project !== state.project) throw new Error('The workspace changed. Refresh models again.');
     if (chatAbort || reviewing) throw new Error('Wait for the active agent before refreshing models.');
     await loadModels(selection.provider, true);
     return state.modelCatalogs?.[selection.provider];
   });
-  register('agentDock.setModel', async value => {
+  register('agentTandem.setModel', async value => {
     const selection = modelSelection(value);
     if (!state.project || selection.project !== state.project) throw new Error('The workspace changed. Choose the model again.');
     if (chatAbort || reviewing) throw new Error('Stop the active agent before changing its model.');
@@ -719,7 +719,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     state.selectedModels = { ...(state.selectedModels ?? defaultModels()), [provider]: selection.model }; state.error = undefined; update();
     await modelStore.save(selection.project, provider, selection.model);
   });
-  register('agentDock.setReasoningEffort', async value => {
+  register('agentTandem.setReasoningEffort', async value => {
     const selection = effortSelection(value);
     if (!state.project || selection.project !== state.project) throw new Error('The workspace changed. Choose reasoning effort again.');
     if (chatAbort || reviewing || cliManaging) throw new Error('Wait for the active action before changing reasoning effort.');
@@ -730,7 +730,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     state.selectedEfforts = { ...efforts, [provider]: { ...efforts[provider], [selection.model]: selection.effort } }; state.error = undefined; update();
     await effortStore.save(selection.project, provider, selection.model, selection.effort);
   });
-  register('agentDock.setAccessMode', async value => {
+  register('agentTandem.setAccessMode', async value => {
     const selection = accessSelection(value);
     if (!state.project || selection.project !== state.project) throw new Error('The workspace changed. Choose the access mode again.');
     if (chatAbort || reviewing) throw new Error('Stop the active agent before changing its access mode.');
@@ -739,7 +739,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     state.accessModes = { ...(state.accessModes ?? defaultAccessModes()), [provider]: selection.mode }; state.error = undefined; update();
     await accessStore.save(selection.project, provider, selection.mode);
   });
-  register('agentDock.setFastMode', async value => {
+  register('agentTandem.setFastMode', async value => {
     const selection = fastModeSelection(value);
     if (!state.project || selection.project !== state.project) throw new Error('The workspace changed. Choose Fast mode again.');
     if (chatAbort || reviewing || cliManaging) throw new Error('Wait for the active action before changing Fast mode.');
@@ -748,7 +748,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     fastModeRevision++; state.codexFastMode = selection.enabled; state.error = undefined; update();
     await fastModeStore.save(selection.project, selection.enabled);
   });
-  register('agentDock.newChat', async provider => {
+  register('agentTandem.newChat', async provider => {
     if (state.chat?.status === 'running' || chatAbort || reviewing || cliManaging) throw new Error('Wait for the active reply, review or CLI action before starting a new conversation.');
     if (provider !== 'Claude' && provider !== 'Codex') throw new Error('Choose Claude Code or Codex.');
     if (state.project) { chatQueue.pause(state.project, 'New conversation opened. Resume the queued conversation when ready.'); saveQueue(); }
@@ -758,18 +758,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     state.composeProvider = provider; state.screen = 'conversations'; state.error = undefined;
     await preferences.save({ project: state.project }); update(); void loadModels(provider);
   });
-  register('agentDock.stopChat', () => {
+  register('agentTandem.stopChat', () => {
     if (!chatAbort || chatAbort.signal.aborted || state.chat?.phase === 'finishing') return;
     if (state.chat) { state.chat.phase = 'stopping'; state.chat.activity = undefined; }
     if (state.project) { chatQueue.pause(state.project, 'Stopped. Resume queued messages when ready.'); saveQueue(); }
     chatAbort.abort(); update();
   });
-  register('agentDock.answerAgent', value => {
+  register('agentTandem.answerAgent', value => {
     const answer = promptAnswer(value);
     const reply = promptReplies.get(answer.id); if (!reply) throw new Error('This request has already closed.');
     reply(answer);
   });
-  register('agentDock.queueAction', async value => {
+  register('agentTandem.queueAction', async value => {
     const request = value as { project?: string; action?: string; id?: string; text?: string } | undefined;
     if (!state.project || request?.project !== state.project) throw new Error('The workspace changed. Try again.');
     if (request.action === 'remove' && typeof request.id === 'string') chatQueue.remove(state.project, request.id);
@@ -790,7 +790,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const request = chatQueue.next(project, state.conversation?.conversation); saveQueue();
     if (request) void sendChat(request).catch(error => { chatQueue.restore(request, error instanceof Error ? error.message : 'Could not send. Resume to retry.'); saveQueue(); report(error); });
   }
-  register('agentDock.sendChat', sendChat);
+  register('agentTandem.sendChat', sendChat);
   async function sendChat(value: unknown) {
     const request = chatRequest(value);
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before chatting with an agent.');
@@ -890,7 +890,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       }),
     };
     try {
-      const config = vscode.workspace.getConfiguration('agentDock', vscode.Uri.file(request.project));
+      const config = vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(request.project));
       providerRequest.preparedAttachments = await attachments.prepare(request.attachments);
       // Checkpoints and immediate edit/resend must match the native history text.
       if (request.attachments?.length) {
@@ -966,20 +966,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (request.project !== state.project || typeof request.revision !== 'string' || (request.file !== undefined && typeof request.file !== 'string') || (request.group !== undefined && (typeof request.group !== 'string' || !request.group))) throw new Error('The project or review changed.');
     return request;
   }
-  register('agentDock.previewReview', async value => {
+  register('agentTandem.previewReview', async value => {
     const request = reviewRequest(value), version = ++uiGeneration;
     await openReviewChanges(reviews, request, changeNavigation, () => !disposed && request.project === state.project && version === uiGeneration);
   });
-  register('agentDock.closeReviewPreview', () => { state.reviewPreview = undefined; update(); });
-  register('agentDock.refreshReview', async () => { if (state.review?.externalTracking) await captureExternalReview(); else await refreshReview(state.project, true); });
-  register('agentDock.reviewLatest', async () => {
+  register('agentTandem.closeReviewPreview', () => { state.reviewPreview = undefined; update(); });
+  register('agentTandem.refreshReview', async () => { if (state.review?.externalTracking) await captureExternalReview(); else await refreshReview(state.project, true); });
+  register('agentTandem.reviewLatest', async () => {
     const project = state.project;
     if (state.review?.externalTracking && !chatAbort && !reviewing && !externalSwitching) await captureExternalReview();
     if (project !== state.project) return;
     const review = state.review;
     if (!project || !review?.files.length) { state.screen = 'changes'; update(); await preview.open(); return; }
     const latest = [...review.files].sort((a, b) => Math.max(0, ...(b.captures ?? []).map(capture => capture.to)) - Math.max(0, ...(a.captures ?? []).map(capture => capture.to)))[0]!;
-    await vscode.commands.executeCommand('agentDock.previewReview', { project, revision: review.revision, group: reviewGroup(latest), file: latest.path });
+    await vscode.commands.executeCommand('agentTandem.previewReview', { project, revision: review.revision, group: reviewGroup(latest), file: latest.path });
   });
   const previewRevert = async (value: unknown) => {
     const request = reviewRequest(value), project = state.project;
@@ -992,8 +992,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     state.revertPreview = { token: randomUUID(), request: { ...request }, hunk, files };
     state.screen = 'changes'; state.error = undefined; update(); await preview.open();
   };
-  register('agentDock.previewRevert', previewRevert);
-  register('agentDock.cancelRevert', () => { state.revertPreview = undefined; update(); });
+  register('agentTandem.previewRevert', previewRevert);
+  register('agentTandem.cancelRevert', () => { state.revertPreview = undefined; update(); });
   const decideReview = async (value: unknown, revert: boolean) => {
     const request = reviewRequest(value);
     const hunk = (value as Partial<ReviewHunkRequest>).hunk;
@@ -1043,14 +1043,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (!disposed && state.project === request.project) { state.reviewBusy = false; await refreshReview(request.project); update(); }
     }
   };
-  register('agentDock.acceptChanges', value => decideReview(value, false));
-  register('agentDock.revertChanges', value => decideReview(value, true));
-  register('agentDock.confirmRevert', async value => {
+  register('agentTandem.acceptChanges', value => decideReview(value, false));
+  register('agentTandem.revertChanges', value => decideReview(value, true));
+  register('agentTandem.confirmRevert', async value => {
     const plan = state.revertPreview;
     if (!plan || !value || typeof value !== 'object' || (value as { token?: string }).token !== plan.token) throw new Error('Preview the Revert before confirming.');
     await decideReview({ ...plan.request, ...(plan.hunk ? { hunk: plan.hunk } : {}) }, true);
   });
-  register('agentDock.undoRevert', async value => {
+  register('agentTandem.undoRevert', async value => {
     const project = state.project, undo = state.review?.undo;
     if (!project || !undo || (value !== undefined && (!value || typeof value !== 'object' || (value as { id?: string }).id !== undo.id || (value as { project?: string }).project !== project))) throw new Error('This Revert is no longer available to Undo.');
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before undoing Revert.');
@@ -1077,7 +1077,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (chatAbort || reviewing || cliManaging || state.running) throw new Error('Wait for the active operation to finish before restoring a checkpoint.');
     return request;
   }
-  register('agentDock.previewCheckpoint', async value => {
+  register('agentTandem.previewCheckpoint', async value => {
     const request = checkpointRequest(value), version = ++uiGeneration;
     const key = state.conversation?.conversation.key;
     reviewing = true; state.reviewBusy = true; state.error = undefined; update();
@@ -1093,8 +1093,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       }
     } finally { reviewing = false; state.reviewBusy = false; update(); }
   });
-  register('agentDock.closeCheckpointPreview', () => { uiGeneration++; checkpointPlan = undefined; state.checkpointPreview = undefined; update(); });
-  register('agentDock.restoreCheckpoint', async value => {
+  register('agentTandem.closeCheckpointPreview', () => { uiGeneration++; checkpointPlan = undefined; state.checkpointPreview = undefined; update(); });
+  register('agentTandem.restoreCheckpoint', async value => {
     const request = checkpointRequest(value), selected = checkpointPlan;
     if (!selected || selected.project !== request.project || selected.id !== request.id || selected.token !== request.token || selected.key !== state.conversation?.conversation.key) throw new Error('Preview this checkpoint again before restoring.');
     const dirty = vscode.workspace.textDocuments.find(document => document.isDirty && document.uri.scheme === 'file' && belongsToProject(path.dirname(document.uri.fsPath), request.project));
@@ -1117,21 +1117,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (!disposed && state.project === request.project) { state.reviewBusy = false; await refreshReview(request.project); update(); }
     }
   });
-  register('agentDock.showSection', async screen => {
+  register('agentTandem.showSection', async screen => {
     if (screen !== 'conversations' && screen !== 'changes' && screen !== 'tools' && screen !== 'cli') throw new Error('Unknown section.');
     uiGeneration++; state.screen = screen; update(); if (screen === 'cli') void refreshCLIManager();
     if (screen === 'changes') await captureExternalReview();
   });
-  register('agentDock.syncConversations', async () => { const index = await syncConversations(); await preview.open(); return index; });
-  register('agentDock.openConversation', async key => {
+  register('agentTandem.syncConversations', async () => { const index = await syncConversations(); await preview.open(); return index; });
+  register('agentTandem.openConversation', async key => {
     if (typeof key !== 'string') throw new Error('Invalid conversation selection.');
     const version = ++uiGeneration;
     const content = await openConversation(key);
     if (version === uiGeneration) { state.screen = 'conversations'; update(); await preview.open(); }
     return content;
   });
-  register('agentDock.runDemo', async () => { uiGeneration++; state.screen = 'changes'; state.changePreview = undefined; update(); await preview.open(); return run(); });
-  register('agentDock.stop', () => cancel?.abort());
+  register('agentTandem.runDemo', async () => { uiGeneration++; state.screen = 'changes'; state.changePreview = undefined; update(); await preview.open(); return run(); });
+  register('agentTandem.stop', () => cancel?.abort());
   const inlineChanges = async (selected: unknown, cumulative: boolean) => {
     const version = ++uiGeneration;
     const result = await readChangePreview(history, state.sessions, selectionFrom(selected), cumulative);
@@ -1142,20 +1142,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     }
     return result;
   };
-  register('agentDock.openStep', selected => inlineChanges(selected, false));
-  register('agentDock.openFile', selected => inlineChanges(selected, false));
-  register('agentDock.openCumulative', selected => inlineChanges(selected, true));
-  register('agentDock.previewFile', file => {
+  register('agentTandem.openStep', selected => inlineChanges(selected, false));
+  register('agentTandem.openFile', selected => inlineChanges(selected, false));
+  register('agentTandem.openCumulative', selected => inlineChanges(selected, true));
+  register('agentTandem.previewFile', file => {
     const current = state.changePreview;
     if (!current || typeof file !== 'string') throw new Error('Choose a recorded change first.');
     return inlineChanges({ ...current.selection, file }, current.cumulative);
   });
-  register('agentDock.openStepInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), false, changeNavigation));
-  register('agentDock.openFileInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), false, changeNavigation, true));
-  register('agentDock.openCumulativeInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), true, changeNavigation));
-  register('agentDock.checkProviders', async () => {
+  register('agentTandem.openStepInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), false, changeNavigation));
+  register('agentTandem.openFileInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), false, changeNavigation, true));
+  register('agentTandem.openCumulativeInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), true, changeNavigation));
+  register('agentTandem.checkProviders', async () => {
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before starting provider processes.');
-    const config = vscode.workspace.getConfiguration('agentDock');
+    const config = vscode.workspace.getConfiguration('agentTandem');
     const version = ++uiGeneration;
     state.providers = await Promise.all((['Codex', 'Claude'] as const).map(async provider => {
       try { const selected = await managedCLI(provider, state.project); return provider === 'Codex' ? await probeCodex(selected.entry.executable) : await probeClaude(selected.entry.executable); }
@@ -1180,9 +1180,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   context.subscriptions.push({ dispose: () => { disposed = true; externalWatcher?.dispose(); clearTimeout(externalTimer); chatAbort?.abort(); usageAbort?.abort(); for (const job of modelJobs.values()) job.abort.abort(); for (const job of accountJobs.values()) job.abort.abort(); generation++; selectionGeneration++; clearInterval(timer); clearInterval(accountTimer); } },
     vscode.workspace.onDidGrantWorkspaceTrust(() => { void refreshReview(state.project, true).catch(report); void refreshCLIManager(); refreshAccounts(); void loadModels(state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex'); }),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('agentDock.showQuotaInStatusBar') || event.affectsConfiguration('agentDock.usageDashboardDefaultGrouping')) update();
-      if (event.affectsConfiguration('agentDock.autoTrackExternalChanges')) void refreshReview(state.project).catch(report);
-      if (!['codexExecutable', 'claudeExecutable', 'codexCLISelection', 'claudeCLISelection', 'codexCLIId', 'claudeCLIId'].some(key => event.affectsConfiguration(`agentDock.${key}`))) return;
+      if (event.affectsConfiguration('agentTandem.showQuotaInStatusBar') || event.affectsConfiguration('agentTandem.usageDashboardDefaultGrouping')) update();
+      if (event.affectsConfiguration('agentTandem.autoTrackExternalChanges')) void refreshReview(state.project).catch(report);
+      if (!['codexExecutable', 'claudeExecutable', 'codexCLISelection', 'claudeCLISelection', 'codexCLIId', 'claudeCLIId'].some(key => event.affectsConfiguration(`agentTandem.${key}`))) return;
       for (const job of modelJobs.values()) job.abort.abort(); modelJobs.clear(); state.modelCatalogs = {};
       resetAccounts();
       void refreshCLIManager();

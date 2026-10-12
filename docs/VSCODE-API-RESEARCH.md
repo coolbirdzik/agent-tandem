@@ -2,9 +2,9 @@
 
 Checked: 2026-10-07.
 
-UI requirement update: the default interface is **one AgentDock sidebar WebviewView**, containing conversations, tool output and inline diffs. `vscode.diff`/`vscode.changes` are used only after Open diff in editor; WebviewPanel is created only by Open in tab. This document investigates editor APIs, without requiring editor tabs on step selection. [VS Code Webview API](https://code.visualstudio.com/api/extension-guides/webview)
+UI requirement update: the default interface is **one AgentTandem sidebar WebviewView**, containing conversations, tool output and inline diffs. `vscode.diff`/`vscode.changes` are used only after Open diff in editor; WebviewPanel is created only by Open in tab. This document investigates editor APIs, without requiring editor tabs on step selection. [VS Code Webview API](https://code.visualstudio.com/api/extension-guides/webview)
 
-**Clicking individual steps to inspect code changes can be implemented with public VS Code APIs.** VS Code provides diff editors and virtual documents; AgentDock must supply the file versions for each step. This requires intermediate run snapshots rather than only before/after message snapshots as originally planned.
+**Clicking individual steps to inspect code changes can be implemented with public VS Code APIs.** VS Code provides diff editors and virtual documents; AgentTandem must supply the file versions for each step. This requires intermediate run snapshots rather than only before/after message snapshots as originally planned.
 
 These conclusions come from official documentation and Microsoft source, not a running prototype. The `main` branch establishes public/proposed status; minimum supported versions and runtime behavior require testing on supported Desktop builds.
 
@@ -22,7 +22,7 @@ The MVP uses execution steps as change boundaries. Read/search/test steps withou
 
 ## Suitable APIs
 
-| Need | API or command | AgentDock use |
+| Need | API or command | AgentTandem use |
 | --- | --- | --- |
 | One file at a step | `commands.executeCommand('vscode.diff', left, right, title, options)` | Two immutable before/after URIs |
 | All step files | `commands.executeCommand('vscode.changes', title, resourceList)` | Changes editor for the selected file set |
@@ -59,7 +59,7 @@ Built-in chat supports file review, checkpoint restore and forks in supported se
 
 The public Chat Participant API streams responses and command buttons, so a future native-chat integration could add View Changes. However, inspected editing APIs such as `ChatResponseStream.textEdit`, `workspaceEdit`, `externalEdit` are in `chatParticipantAdditions`. The MVP retains custom chat to own sessions/checkpoints. [Chat Participant API](https://code.visualstudio.com/api/extension-guides/ai/chat), [Chat participant additions proposal](https://github.com/microsoft/vscode/blob/main/src/vscode-dts/vscode.proposed.chatParticipantAdditions.d.ts)
 
-Do not rely on `_`-prefixed internal commands, Copilot internals or built-in Keep/Undo automatically managing AgentDock transactions. AgentDock Apply/Discard/Revert invokes its own engine.
+Do not rely on `_`-prefixed internal commands, Copilot internals or built-in Keep/Undo automatically managing AgentTandem transactions. AgentTandem Apply/Discard/Revert invokes its own engine.
 
 ## Clicking steps to inspect changes
 
@@ -87,14 +87,14 @@ History URIs include session, step, side and snapshot IDs; paths retain file ext
 
 ## API example
 
-This illustrates snapshot/editor wiring, not a working implementation. AgentDock must implement `history` to resolve validated IDs to historical URIs/content rather than current worktree files.
+This illustrates snapshot/editor wiring, not a working implementation. AgentTandem must implement `history` to resolve validated IDs to historical URIs/content rather than current worktree files.
 
 ```typescript
 import * as vscode from 'vscode';
 
 // During activation, retain the Disposable in context.subscriptions.
 const snapshots = vscode.workspace.registerTextDocumentContentProvider(
-  'agentdock-snapshot',
+  'agenttandem-snapshot',
   {
     provideTextDocumentContent(uri, token) {
       return history.readText(uri, token);
@@ -127,7 +127,7 @@ Single-file additions/deletions can use empty text snapshots on absent sides. Bi
 
 ## Capturing provider step changes
 
-VS Code does not know tool boundaries inside Claude/Codex processes. AgentDock must connect provider events with recorders; filesystem watchers alone cannot prove individual-step provenance.
+VS Code does not know tool boundaries inside Claude/Codex processes. AgentTandem must connect provider events with recorders; filesystem watchers alone cannot prove individual-step provenance.
 
 ### Claude
 

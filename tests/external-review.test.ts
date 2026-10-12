@@ -7,7 +7,7 @@ import { ReviewStore } from '../src/core/review';
 const folders: string[] = [];
 afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
 async function fixture() {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-external-')); folders.push(directory);
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-external-')); folders.push(directory);
   const project = path.join(directory, 'project'); await mkdir(project);
   const store = new ReviewStore(path.join(directory, 'reviews'));
   const set = (name: string, text: string) => writeFile(path.join(project, name), text);

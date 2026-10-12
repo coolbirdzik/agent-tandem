@@ -11,7 +11,7 @@ export type { Selection } from '../core/change-preview';
 
 export function snapshotUri(sessionId: string, snapshotId: string, file: string): vscode.Uri {
   assertPath(file);
-  return vscode.Uri.from({ scheme: 'agentdock-snapshot', authority: sessionId, path: `/${snapshotId}/${file}` });
+  return vscode.Uri.from({ scheme: 'agenttandem-snapshot', authority: sessionId, path: `/${snapshotId}/${file}` });
 }
 
 export class SnapshotDocuments implements vscode.TextDocumentContentProvider, vscode.Disposable {
@@ -20,7 +20,7 @@ export class SnapshotDocuments implements vscode.TextDocumentContentProvider, vs
   private edits = vscode.workspace.onDidChangeTextDocument(event => {
     // Readonly UI does not stop another extension from using WorkspaceEdit.
     // Refresh our historical buffer from immutable storage, never from live files.
-    if (event.document.uri.scheme === 'agentdock-snapshot' && event.contentChanges.length) this.emitter.fire(event.document.uri);
+    if (event.document.uri.scheme === 'agenttandem-snapshot' && event.contentChanges.length) this.emitter.fire(event.document.uri);
   });
   constructor(private history: HistoryStore, private sessions: () => Session[]) {}
   dispose() { this.edits.dispose(); this.emitter.dispose(); }
@@ -56,7 +56,7 @@ export async function openChanges(history: HistoryStore, sessions: Session[], se
   const changes = await history.changes(before, step.after);
   const filtered = selected.file ? changes.filter(change => change.path === selected.file) : changes;
   if (selected.file && !filtered.length) throw new Error('This file has no changes at the selected step.');
-  if (!filtered.length) { await vscode.window.showInformationMessage('No file changes at this step. Inspect its output in AgentDock.'); return; }
+  if (!filtered.length) { await vscode.window.showInformationMessage('No file changes at this step. Inspect its output in AgentTandem.'); return; }
   const title = `${cumulative ? 'Cumulative' : 'Step'} · ${step.title}`;
   const uri = (snapshot: string, file: string) => snapshotUri(session.id, snapshot, file);
   const comparisons = changes.map(file => ({ file: file.path, original: uri(before, file.path), modified: uri(step.after!, file.path) }));
@@ -69,7 +69,7 @@ export async function openChanges(history: HistoryStore, sessions: Session[], se
     ]);
     const available = await vscode.commands.getCommands(true);
     if (available.includes('vscode.changes')) {
-      try { await vscode.commands.executeCommand('vscode.changes', `AgentDock · ${title}`, resources); await navigation.track(comparisons, `AgentDock · ${title}`); return; }
+      try { await vscode.commands.executeCommand('vscode.changes', `AgentTandem · ${title}`, resources); await navigation.track(comparisons, `AgentTandem · ${title}`); return; }
       catch { /* Older changes-editor versions can fall back to a file picker. */ }
     }
     const file = await vscode.window.showQuickPick(filtered.map(change => ({ label: change.path, description: change.kind })), { title });
@@ -77,7 +77,7 @@ export async function openChanges(history: HistoryStore, sessions: Session[], se
   }
 }
 
-export class DockView implements vscode.WebviewViewProvider, vscode.Disposable {
+export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView;
   private tab?: vscode.WebviewPanel;
   private subscriptions: vscode.Disposable[] = [];
@@ -86,7 +86,7 @@ export class DockView implements vscode.WebviewViewProvider, vscode.Disposable {
     private readonly report: (error: unknown) => void) {}
   get resolved() { return !!this.view; }
   async open() {
-    await vscode.commands.executeCommand('agentDock.panel.focus');
+    await vscode.commands.executeCommand('agentTandem.panel.focus');
     this.view?.show(false); this.update();
   }
   resolveWebviewView(view: vscode.WebviewView) {
@@ -98,7 +98,7 @@ export class DockView implements vscode.WebviewViewProvider, vscode.Disposable {
   }
   openInTab() {
     if (this.tab) { this.tab.reveal(); this.update(); return; }
-    const tab = vscode.window.createWebviewPanel('agentDock.preview', 'AgentDock', vscode.ViewColumn.One, { enableScripts: true });
+    const tab = vscode.window.createWebviewPanel('agentTandem.preview', 'AgentTandem', vscode.ViewColumn.One, { enableScripts: true });
     this.tab = tab; this.configure(tab.webview, true);
     this.subscriptions.push(tab.onDidDispose(() => { this.tab = undefined; }));
     this.update();
@@ -112,23 +112,23 @@ export class DockView implements vscode.WebviewViewProvider, vscode.Disposable {
         if (!message || typeof message !== 'object') throw new Error('Invalid request.');
         const data = message as Record<string, unknown>;
         if (data.type === 'ready') { this.update(); return; }
-        const commands: Record<string, string> = { demo: 'agentDock.runDemo', stop: 'agentDock.stop', probe: 'agentDock.checkProviders', step: 'agentDock.openStep', cumulative: 'agentDock.openCumulative', file: 'agentDock.openFile', sync: 'agentDock.syncConversations', conversation: 'agentDock.openConversation', screen: 'agentDock.showSection', previewFile: 'agentDock.previewFile', tab: 'agentDock.openInTab', 'editor-step': 'agentDock.openStepInEditor', 'editor-file': 'agentDock.openFileInEditor', 'editor-cumulative': 'agentDock.openCumulativeInEditor' };
+        const commands: Record<string, string> = { demo: 'agentTandem.runDemo', stop: 'agentTandem.stop', probe: 'agentTandem.checkProviders', step: 'agentTandem.openStep', cumulative: 'agentTandem.openCumulative', file: 'agentTandem.openFile', sync: 'agentTandem.syncConversations', conversation: 'agentTandem.openConversation', screen: 'agentTandem.showSection', previewFile: 'agentTandem.previewFile', tab: 'agentTandem.openInTab', 'editor-step': 'agentTandem.openStepInEditor', 'editor-file': 'agentTandem.openFileInEditor', 'editor-cumulative': 'agentTandem.openCumulativeInEditor' };
         const type = String(data.type);
-        Object.assign(commands, { previewCheckpoint: 'agentDock.previewCheckpoint', restoreCheckpoint: 'agentDock.restoreCheckpoint', closeCheckpointPreview: 'agentDock.closeCheckpointPreview' });
-        Object.assign(commands, { sendChat: 'agentDock.sendChat', newChat: 'agentDock.newChat', setAccessMode: 'agentDock.setAccessMode', setModel: 'agentDock.setModel', setReasoningEffort: 'agentDock.setReasoningEffort', chooseCLI: 'agentDock.chooseCLI', cliAction: 'agentDock.cliAction', refreshCLIs: 'agentDock.refreshCLIs', refreshModels: 'agentDock.refreshModels', stopChat: 'agentDock.stopChat', answerAgent: 'agentDock.answerAgent', acceptChanges: 'agentDock.acceptChanges', revertChanges: 'agentDock.revertChanges', previewReview: 'agentDock.previewReview', closeReviewPreview: 'agentDock.closeReviewPreview', refreshReview: 'agentDock.refreshReview' });
-        commands.setFastMode = 'agentDock.setFastMode';
-        commands.refreshAccount = 'agentDock.refreshAccount';
-        commands.queueAction = 'agentDock.queueAction';
-        commands.settings = 'agentDock.openSettings';
-        commands.toggleExternalReview = 'agentDock.toggleExternalReview';
-        commands.trackingControls = 'agentDock.trackingControls';
-        commands.gettingStarted = 'agentDock.gettingStarted';
-        commands.captureExternalChanges = 'agentDock.captureExternalChanges';
-        commands.previewRevert = 'agentDock.previewRevert';
-        commands.confirmRevert = 'agentDock.confirmRevert';
-        commands.cancelRevert = 'agentDock.cancelRevert';
-        commands.undoRevert = 'agentDock.undoRevert';
-        commands.reviewLatest = 'agentDock.reviewLatest';
+        Object.assign(commands, { previewCheckpoint: 'agentTandem.previewCheckpoint', restoreCheckpoint: 'agentTandem.restoreCheckpoint', closeCheckpointPreview: 'agentTandem.closeCheckpointPreview' });
+        Object.assign(commands, { sendChat: 'agentTandem.sendChat', newChat: 'agentTandem.newChat', setAccessMode: 'agentTandem.setAccessMode', setModel: 'agentTandem.setModel', setReasoningEffort: 'agentTandem.setReasoningEffort', chooseCLI: 'agentTandem.chooseCLI', cliAction: 'agentTandem.cliAction', refreshCLIs: 'agentTandem.refreshCLIs', refreshModels: 'agentTandem.refreshModels', stopChat: 'agentTandem.stopChat', answerAgent: 'agentTandem.answerAgent', acceptChanges: 'agentTandem.acceptChanges', revertChanges: 'agentTandem.revertChanges', previewReview: 'agentTandem.previewReview', closeReviewPreview: 'agentTandem.closeReviewPreview', refreshReview: 'agentTandem.refreshReview' });
+        commands.setFastMode = 'agentTandem.setFastMode';
+        commands.refreshAccount = 'agentTandem.refreshAccount';
+        commands.queueAction = 'agentTandem.queueAction';
+        commands.settings = 'agentTandem.openSettings';
+        commands.toggleExternalReview = 'agentTandem.toggleExternalReview';
+        commands.trackingControls = 'agentTandem.trackingControls';
+        commands.gettingStarted = 'agentTandem.gettingStarted';
+        commands.captureExternalChanges = 'agentTandem.captureExternalChanges';
+        commands.previewRevert = 'agentTandem.previewRevert';
+        commands.confirmRevert = 'agentTandem.confirmRevert';
+        commands.cancelRevert = 'agentTandem.cancelRevert';
+        commands.undoRevert = 'agentTandem.undoRevert';
+        commands.reviewLatest = 'agentTandem.reviewLatest';
         if (!Object.hasOwn(commands, type)) throw new Error('Unsupported request.');
         const selected = ['step', 'cumulative', 'file', 'editor-step', 'editor-file', 'editor-cumulative'].includes(type) ? selectionFrom(data.selection) : data.selection;
         await this.invoke(commands[type]!, selected);

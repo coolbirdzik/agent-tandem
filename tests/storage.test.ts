@@ -12,7 +12,7 @@ import { withStorageLock } from '../src/core/storage-lock';
 const folders: string[] = [];
 afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
 async function fixture() {
-  const folder = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-storage-')); folders.push(folder);
+  const folder = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-storage-')); folders.push(folder);
   const root = path.join(folder, 'data'), project = path.join(folder, 'project'); await mkdir(project); await writeFile(path.join(project, 'source.ts'), 'user baseline\n');
   const reviews = new ReviewStore(path.join(root, 'reviews')), checkpoints = new CheckpointStore(path.join(root, 'checkpoints')), manager = new StorageManager(root);
   const orphan = async (history = reviews.history, text = 'unused') => {

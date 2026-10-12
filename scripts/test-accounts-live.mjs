@@ -26,7 +26,7 @@ for (const provider of ['Codex', 'Claude']) {
   // Reports include only presence flags and usage meters, never email or credentials.
   const check = { provider, success: true, hasEmail: !!value.account.email, plan: value.account.plan, method: value.account.method, quota: value.quota,
     ...(provider === 'Codex' ? { tokenActivitySource: value.usage?.source, tokenActivityStatus: value.usage?.status, hasLifetimeTokens: value.usage?.summary?.lifetimeTokens !== undefined, dailyBuckets: value.usage?.daily?.length ?? null } : {}) };
-  checks.push(check); console.log(`AGENT_DOCK_ACCOUNTS_LIVE ${JSON.stringify(check)}`);
+  checks.push(check); console.log(`AGENT_TANDEM_ACCOUNTS_LIVE ${JSON.stringify(check)}`);
 }
 await mkdir(path.join(root, 'artifacts'), { recursive: true });
 await writeFile(path.join(root, 'artifacts/accounts-live.json'), JSON.stringify({ success: true, checks }, null, 2));

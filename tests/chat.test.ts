@@ -19,7 +19,7 @@ function sink() {
   return { messages, callbacks };
 }
 const launchWithModel = (modelCase = 'supported') => () => spawn(process.execPath, [path.resolve('tests/fixtures/codex-chat-server.mjs')], {
-  windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, AGENT_DOCK_MODEL_CASE: modelCase },
+  windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, AGENT_TANDEM_MODEL_CASE: modelCase },
 });
 const launch = launchWithModel();
 describe('Codex chat transport', () => {

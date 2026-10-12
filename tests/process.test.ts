@@ -6,7 +6,7 @@ import { it, expect } from 'vitest';
 import { terminateProcessTree } from '../src/providers/process';
 
 it('Stop kills the owned tree, stops descendant writes, and keeps an unrelated sibling running', async () => {
-  const folder = await mkdtemp(path.join(tmpdir(), 'agent-dock-stop-'));
+  const folder = await mkdtemp(path.join(tmpdir(), 'agent-tandem-stop-'));
   const children: ChildProcess[] = [];
   const launch = (mode: string, target: string) => {
     const child = spawn(process.execPath, [path.resolve('tests/fixtures/process-tree.mjs'), mode, target], { windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });

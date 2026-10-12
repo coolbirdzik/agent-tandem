@@ -11,7 +11,7 @@ const execute = promisify(execFile);
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(folder => rm(folder, { recursive: true, force: true }))); });
 async function fixture() {
-  const parent = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-review-')); directories.push(parent);
+  const parent = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-review-')); directories.push(parent);
   const project = path.join(parent, 'project'), storage = path.join(parent, 'reviews'); await mkdir(project);
   const store = new ReviewStore(storage);
   await writeFile(path.join(project, 'source.ts'), 'user work\r\n');

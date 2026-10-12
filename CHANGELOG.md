@@ -6,15 +6,15 @@
 
 - Persist a token-only native history cache across reloads, reparse only changed files and reapply account evidence on every aggregation. Skip unrelated settings updates during chat/review activity, preserve dashboard history tables on quota updates and reuse numeric formatters.
 
-- Open AgentDock as a Review companion for native Codex/Claude chat. Add collapsible conversation groups, passive pending badges and a status-bar shortcut to the latest conversation diff. Preview file/group Revert before confirmation; persist Undo for the latest file/group/hunk Revert with scope guards, interrupted-decision recovery and cleanup protection.
+- Open AgentTandem as a Review companion for native Codex/Claude chat. Add collapsible conversation groups, passive pending badges and a status-bar shortcut to the latest conversation diff. Preview file/group Revert before confirmation; persist Undo for the latest file/group/hunk Revert with scope guards, interrupted-decision recovery and cleanup protection.
 
-- Show the actual pending file list on Changes, grouped by native conversation. Persist AgentDock turn identity and bind draft sessions; verify timestamped successful Claude Edit/Write/MultiEdit and Codex apply_patch history against captured content before linking external edits. Keep unknown and shared edits explicit. Scope chat review, group decisions and native diff navigation to their conversation, and protect intermediate evidence blobs during cleanup. Avoid creating workspace settings files merely by opening a review diff.
+- Show the actual pending file list on Changes, grouped by native conversation. Persist AgentTandem turn identity and bind draft sessions; verify timestamped successful Claude Edit/Write/MultiEdit and Codex apply_patch history against captured content before linking external edits. Keep unknown and shared edits explicit. Scope chat review, group decisions and native diff navigation to their conversation, and protect intermediate evidence blobs during cleanup. Avoid creating workspace settings files merely by opening a review diff.
 
 - Add Settings → Storage with the runtime data path, category sizes, folder reveal and exact cleanup previews. Remove only unused snapshots/blobs older than 24 hours, revalidate references before deletion, and coordinate snapshot writers/cleanup across windows. Preserve tracking baselines, pending file/hunk Revert, message checkpoints, Undo and demo history; keep native conversation history and usage/account records intact. Report changed targets, failures and blocked cleanup.
 
-- Automatically track trusted local workspaces, remember an explicit pause per workspace, and expose colored Tracking on/off with pending counts beside quota in the bottom status bar. Keep AgentDock chat available while tracking. Show a native four-step getting started walkthrough once, with manual access from commands and menus.
+- Automatically track trusted local workspaces, remember an explicit pause per workspace, and expose colored Tracking on/off with pending counts beside quota in the bottom status bar. Keep AgentTandem chat available while tracking. Show a native four-step getting started walkthrough once, with manual access from commands and menus.
 
-- Add persistent external change tracking for Codex/Claude used outside AgentDock. Capture disk edits from a workspace baseline, auto-refresh pending review, flush on stop, and rebase file/hunk decisions to prevent recapturing own reverts. Label external changes without guessing their writer.
+- Add persistent external change tracking for Codex/Claude used outside AgentTandem. Capture disk edits from a workspace baseline, auto-refresh pending review, flush on stop, and rebase file/hunk decisions to prevent recapturing own reverts. Label external changes without guessing their writer.
 
 - Read Codex server token activity through account/usage/read and display account-bound lifetime metrics and daily/weekly/monthly buckets separately from Local counts. Label API, Local and Estimate sources; preserve missing metrics, expose unavailable API reasons, and never add API and Local totals together. Use native workspace identity when reported.
 - Separate usage and API equivalent cost by account with an account filter and breakdown. Persist native account evidence per response/turn across resume, forks and reload; keep unattributed historical/external usage under Unknown account. Match tokens per quota percentage point only to the exact current provider/account/organization.
@@ -26,7 +26,7 @@
 
 - Estimate local tokens per percentage point of each provider's current 5-hour and weekly quota. Match recent timestamped usage to native reset windows, project total/remaining capacity and explain unavailable or stale data; keep estimates independent of history filters.
 
-- Give each pending block a themed action card above it: a Block i/n chip, its added/removed line counts and Accept, Reject and Next change buttons with keyboard hints. Fall back to an Accept | Reject | Next change code lens row wherever the proposed inset API is unavailable, so released VS Code builds and installed VSIX packages keep per-block review; never render both styles at once. Enable `diffEditor.codeLens` when opening a review, add `Alt+Y`/`Alt+N`/`Alt+Down`/`Alt+Up` keybindings, keep every action bound to its own immutable hunk and revision, and drop stale actions without writing files. Add `agentDock.blockActionsStyle` (`auto`, `lens`, `off`).
+- Give each pending block a themed action card above it: a Block i/n chip, its added/removed line counts and Accept, Reject and Next change buttons with keyboard hints. Fall back to an Accept | Reject | Next change code lens row wherever the proposed inset API is unavailable, so released VS Code builds and installed VSIX packages keep per-block review; never render both styles at once. Enable `diffEditor.codeLens` when opening a review, add `Alt+Y`/`Alt+N`/`Alt+Down`/`Alt+Up` keybindings, keep every action bound to its own immutable hunk and revision, and drop stale actions without writing files. Add `agentTandem.blockActionsStyle` (`auto`, `lens`, `off`).
 
 - Open native reviews in inline mode, with old/new lines in one pane, and present a compact Accept | Reject action row for each pending block, styled like conflict-resolution links. Use the workspace's native diff layout setting for single and multi-file views.
 
@@ -40,9 +40,9 @@
 
 - Resolve Windows npm Codex binaries in both the current vendor/bin and legacy vendor/codex layouts, including nested platform packages and changing NVM junctions. Preserve terminal PATH selection and report genuinely missing binaries.
 
-- Add floating Previous/Next change buttons inside native single-file and multi-file diff editors, with native hunk navigation and wrapping. Scope menus to AgentDock comparisons and enable the proposed content menus for the local VSIX install; preserve and back up existing runtime arguments. Verify rendered menus and actual mouse clicks in an isolated VS Code renderer.
+- Add floating Previous/Next change buttons inside native single-file and multi-file diff editors, with native hunk navigation and wrapping. Scope menus to AgentTandem comparisons and enable the proposed content menus for the local VSIX install; preserve and back up existing runtime arguments. Verify rendered menus and actual mouse clicks in an isolated VS Code renderer.
 
-- Open changed-file links directly in the native VS Code diff editor and View changes/Cumulative in the multi-file changes editor. Preserve immutable snapshots through Accept/reload, added/deleted empty sides and complete large-file content; keep review decisions in AgentDock.
+- Open changed-file links directly in the native VS Code diff editor and View changes/Cumulative in the multi-file changes editor. Preserve immutable snapshots through Accept/reload, added/deleted empty sides and complete large-file content; keep review decisions in AgentTandem.
 
 - Discover versioned Windows Codex desktop binaries and app-server daemon releases, including custom CODEX_HOME and current junctions. Rescan refreshes versions and repaired errors while preserving names, enabled flags and selections.
 
@@ -50,7 +50,7 @@
 
 - Give user messages a quiet theme-derived surface and compact, visible edit/restore actions. Add persistent before-send checkpoints for Codex and Claude, native-history message matching, branch inheritance, affected-file previews, stale/dirty/link/blob guards, interrupted-restore journalling and Undo restore. Restoring code preserves chat history and reconciles pending review.
 
-- Isolate all native live-test provider histories with per-run CODEX_HOME/CLAUDE_CONFIG_DIR, seed login/config only and refuse shared-history legacy reopens. Exclude known old AgentDock test run directories from parent-project conversation lists for both providers, preserving normal nested chats and literal pasted test prompts.
+- Isolate all native live-test provider histories with per-run CODEX_HOME/CLAUDE_CONFIG_DIR, seed login/config only and refuse shared-history legacy reopens. Exclude known old AgentTandem test run directories from parent-project conversation lists for both providers, preserving normal nested chats and literal pasted test prompts.
 
 - Share one themed dropdown component across model, reasoning, access, CLI management, agent questions and diff selection; preserve native value/form validation with custom listbox navigation, descriptions, selected checks and viewport-aware placement.
 - Show latest context tokens/capacity/cache reads for both CLIs. Estimate Claude cache expiry only from reported TTLs, retain the original measurement across sync/reopen and invalidate on model changes. Codex cache TTL remains explicitly unavailable.
@@ -110,7 +110,7 @@
 - Automatic transcript sync, provider isolation, project boundaries and selection persistence.
 - Bundled official Claude Agent SDK session history reader; no inference required to read history.
 
-- Named AgentDock — Claude Code & Codex UI for VS Code.
+- Named AgentTandem — Claude Code & Codex Chat, Code Review & Usage.
 - Native step tree and preview panel.
 - Immutable content-addressed snapshots for serialized local operations.
 - Per-step and cumulative diffs, multi-file changes editor and single-file fallback.

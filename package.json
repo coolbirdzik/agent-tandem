@@ -1,10 +1,13 @@
 {
-  "name": "agent-dock",
-  "displayName": "AgentDock — Claude Code & Codex UI for VS Code",
-  "description": "A companion for Claude Code and Codex: review changes, restore checkpoints, resume conversations and understand your usage in VS Code.",
+  "name": "agent-tandem",
+  "displayName": "AgentTandem — Claude Code & Codex Chat, Code Review & Usage",
+  "description": "Chat with Claude Code and Codex, review code changes, restore checkpoints, resume conversations and track usage in VS Code.",
   "version": "0.1.1",
-  "publisher": "agent-dock-local",
+  "publisher": "agent-tandem-local",
   "private": true,
+  "repository": { "type": "git", "url": "https://github.com/coolbirdzik/agent-tandem.git" },
+  "homepage": "https://github.com/coolbirdzik/agent-tandem#readme",
+  "bugs": { "url": "https://github.com/coolbirdzik/agent-tandem/issues" },
   "license": "UNLICENSED",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -13,11 +16,15 @@
   },
   "keywords": [
     "claude",
+    "claude code",
     "codex",
+    "codex cli",
+    "ai agents",
     "ai",
     "code review",
     "checkpoints",
-    "chat"
+    "chat",
+    "usage"
   ],
   "engines": {
     "vscode": "^1.100.0"
@@ -47,167 +54,167 @@
   "contributes": {
     "commands": [
       {
-        "command": "agentDock.acceptCurrentChange",
+        "command": "agentTandem.acceptCurrentChange",
         "title": "Accept change",
         "icon": "$(check)",
-        "enablement": "agentDock.canDecideHunk"
+        "enablement": "agentTandem.canDecideHunk"
       },
       {
-        "command": "agentDock.revertCurrentChange",
+        "command": "agentTandem.revertCurrentChange",
         "title": "Revert change",
         "icon": "$(discard)",
-        "enablement": "agentDock.canDecideHunk"
+        "enablement": "agentTandem.canDecideHunk"
       },
       {
-        "command": "agentDock.acceptHunk",
+        "command": "agentTandem.acceptHunk",
         "title": "Accept this change block",
         "icon": "$(check)"
       },
       {
-        "command": "agentDock.rejectHunk",
+        "command": "agentTandem.rejectHunk",
         "title": "Reject this change block",
         "icon": "$(discard)"
       },
       {
-        "command": "agentDock.previousChange",
+        "command": "agentTandem.previousChange",
         "title": "Previous change",
         "icon": "$(arrow-up)"
       },
       {
-        "command": "agentDock.nextChange",
+        "command": "agentTandem.nextChange",
         "title": "Next change",
         "icon": "$(arrow-down)"
       },
       {
-        "command": "agentDock.open",
-        "title": "AgentDock: Open Conversations"
+        "command": "agentTandem.open",
+        "title": "AgentTandem: Open Conversations"
       },
       {
-        "command": "agentDock.openSettings",
-        "title": "AgentDock: Open Settings and Usage Dashboard",
+        "command": "agentTandem.openSettings",
+        "title": "AgentTandem: Open Settings and Usage Dashboard",
         "icon": "$(dashboard)"
       },
       {
-        "command": "agentDock.openStorage",
-        "title": "AgentDock: Manage Storage",
+        "command": "agentTandem.openStorage",
+        "title": "AgentTandem: Manage Storage",
         "icon": "$(database)"
       },
       {
-        "command": "agentDock.runDemo",
-        "title": "AgentDock: Run Step Demo",
+        "command": "agentTandem.runDemo",
+        "title": "AgentTandem: Run Step Demo",
         "icon": "$(play)"
       },
       {
-        "command": "agentDock.stop",
-        "title": "AgentDock: Stop Demo",
+        "command": "agentTandem.stop",
+        "title": "AgentTandem: Stop Demo",
         "icon": "$(debug-stop)"
       },
       {
-        "command": "agentDock.openStep",
-        "title": "AgentDock: View Step Changes",
+        "command": "agentTandem.openStep",
+        "title": "AgentTandem: View Step Changes",
         "icon": "$(diff)"
       },
       {
-        "command": "agentDock.openCumulative",
-        "title": "AgentDock: View Cumulative Changes"
+        "command": "agentTandem.openCumulative",
+        "title": "AgentTandem: View Cumulative Changes"
       },
       {
-        "command": "agentDock.openFile",
-        "title": "AgentDock: View File Changes"
+        "command": "agentTandem.openFile",
+        "title": "AgentTandem: View File Changes"
       },
       {
-        "command": "agentDock.checkProviders",
-        "title": "AgentDock: Check Providers",
+        "command": "agentTandem.checkProviders",
+        "title": "AgentTandem: Check Providers",
         "icon": "$(plug)"
       },
       {
-        "command": "agentDock.syncConversations",
-        "title": "AgentDock: Refresh Project Conversations",
+        "command": "agentTandem.syncConversations",
+        "title": "AgentTandem: Refresh Project Conversations",
         "icon": "$(refresh)"
       },
       {
-        "command": "agentDock.openConversation",
-        "title": "AgentDock: Open Conversation"
+        "command": "agentTandem.openConversation",
+        "title": "AgentTandem: Open Conversation"
       },
       {
-        "command": "agentDock.openInTab",
-        "title": "AgentDock: Open in Editor Tab",
+        "command": "agentTandem.openInTab",
+        "title": "AgentTandem: Open in Editor Tab",
         "icon": "$(link-external)"
       },
       {
-        "command": "agentDock.openStepInEditor",
-        "title": "AgentDock: Open Step Diff in Editor"
+        "command": "agentTandem.openStepInEditor",
+        "title": "AgentTandem: Open Step Diff in Editor"
       },
       {
-        "command": "agentDock.openFileInEditor",
-        "title": "AgentDock: Open File Diff in Editor"
+        "command": "agentTandem.openFileInEditor",
+        "title": "AgentTandem: Open File Diff in Editor"
       },
       {
-        "command": "agentDock.openCumulativeInEditor",
-        "title": "AgentDock: Open Cumulative Diff in Editor"
+        "command": "agentTandem.openCumulativeInEditor",
+        "title": "AgentTandem: Open Cumulative Diff in Editor"
       },
       {
-        "command": "agentDock.manageCLIs",
-        "title": "AgentDock: Manage CLIs"
+        "command": "agentTandem.manageCLIs",
+        "title": "AgentTandem: Manage CLIs"
       },
       {
-        "command": "agentDock.toggleExternalReview",
-        "title": "AgentDock: Toggle External Change Tracking",
+        "command": "agentTandem.toggleExternalReview",
+        "title": "AgentTandem: Toggle External Change Tracking",
         "icon": "$(eye)"
       },
       {
-        "command": "agentDock.captureExternalChanges",
-        "title": "AgentDock: Capture External Changes Now",
+        "command": "agentTandem.captureExternalChanges",
+        "title": "AgentTandem: Capture External Changes Now",
         "icon": "$(refresh)"
       },
       {
-        "command": "agentDock.reviewLatest",
-        "title": "AgentDock: Review Latest Changes"
+        "command": "agentTandem.reviewLatest",
+        "title": "AgentTandem: Review Latest Changes"
       },
       {
-        "command": "agentDock.undoRevert",
-        "title": "AgentDock: Undo Last Revert"
+        "command": "agentTandem.undoRevert",
+        "title": "AgentTandem: Undo Last Revert"
       },
       {
-        "command": "agentDock.trackingControls",
-        "title": "AgentDock: Change Tracking Controls",
+        "command": "agentTandem.trackingControls",
+        "title": "AgentTandem: Change Tracking Controls",
         "icon": "$(eye)"
       },
       {
-        "command": "agentDock.gettingStarted",
-        "title": "AgentDock: Getting Started",
+        "command": "agentTandem.gettingStarted",
+        "title": "AgentTandem: Getting Started",
         "icon": "$(book)"
       },
       {
-        "command": "agentDock.refreshStorage",
-        "title": "AgentDock: Refresh Storage Usage"
+        "command": "agentTandem.refreshStorage",
+        "title": "AgentTandem: Refresh Storage Usage"
       },
       {
-        "command": "agentDock.previewStorageCleanup",
-        "title": "AgentDock: Preview Storage Cleanup"
+        "command": "agentTandem.previewStorageCleanup",
+        "title": "AgentTandem: Preview Storage Cleanup"
       },
       {
-        "command": "agentDock.cleanupStorage",
-        "title": "AgentDock: Clean Unused Snapshots"
+        "command": "agentTandem.cleanupStorage",
+        "title": "AgentTandem: Clean Unused Snapshots"
       },
       {
-        "command": "agentDock.revealStorage",
-        "title": "AgentDock: Reveal Data Folder"
+        "command": "agentTandem.revealStorage",
+        "title": "AgentTandem: Reveal Data Folder"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "agentDock",
-          "title": "AgentDock",
-          "icon": "media/dock.svg"
+          "id": "agentTandem",
+          "title": "AgentTandem",
+          "icon": "media/tandem.svg"
         }
       ]
     },
     "views": {
-      "agentDock": [
+      "agentTandem": [
         {
-          "id": "agentDock.panel",
+          "id": "agentTandem.panel",
           "name": "Review",
           "type": "webview"
         }
@@ -217,86 +224,86 @@
       "view/title": [],
       "editor/content": [
         {
-          "command": "agentDock.previousChange",
-          "when": "editorFocus && isInDiffEditor && activeEditor != multiDiffEditor && resource in agentDock.changeModifiedResources",
+          "command": "agentTandem.previousChange",
+          "when": "editorFocus && isInDiffEditor && activeEditor != multiDiffEditor && resource in agentTandem.changeModifiedResources",
           "group": "navigation@1"
         },
         {
-          "command": "agentDock.nextChange",
-          "when": "editorFocus && isInDiffEditor && activeEditor != multiDiffEditor && resource in agentDock.changeModifiedResources",
+          "command": "agentTandem.nextChange",
+          "when": "editorFocus && isInDiffEditor && activeEditor != multiDiffEditor && resource in agentTandem.changeModifiedResources",
           "group": "navigation@2"
         }
       ],
       "multiDiffEditor/content": [
         {
-          "command": "agentDock.previousChange",
-          "when": "agentDock.changeNavigation",
+          "command": "agentTandem.previousChange",
+          "when": "agentTandem.changeNavigation",
           "group": "navigation@1"
         },
         {
-          "command": "agentDock.nextChange",
-          "when": "agentDock.changeNavigation",
+          "command": "agentTandem.nextChange",
+          "when": "agentTandem.changeNavigation",
           "group": "navigation@2"
         }
       ],
       "commandPalette": [
         {
-          "command": "agentDock.acceptCurrentChange",
+          "command": "agentTandem.acceptCurrentChange",
           "when": "false"
         },
         {
-          "command": "agentDock.revertCurrentChange",
+          "command": "agentTandem.revertCurrentChange",
           "when": "false"
         },
         {
-          "command": "agentDock.acceptHunk",
+          "command": "agentTandem.acceptHunk",
           "when": "false"
         },
         {
-          "command": "agentDock.rejectHunk",
+          "command": "agentTandem.rejectHunk",
           "when": "false"
         },
         {
-          "command": "agentDock.previousChange",
-          "when": "agentDock.changeNavigation"
+          "command": "agentTandem.previousChange",
+          "when": "agentTandem.changeNavigation"
         },
         {
-          "command": "agentDock.nextChange",
-          "when": "agentDock.changeNavigation"
+          "command": "agentTandem.nextChange",
+          "when": "agentTandem.changeNavigation"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "agentDock.acceptCurrentChange",
+        "command": "agentTandem.acceptCurrentChange",
         "key": "alt+y",
-        "when": "agentDock.canDecideHunk && editorTextFocus"
+        "when": "agentTandem.canDecideHunk && editorTextFocus"
       },
       {
-        "command": "agentDock.revertCurrentChange",
+        "command": "agentTandem.revertCurrentChange",
         "key": "alt+n",
-        "when": "agentDock.canDecideHunk && editorTextFocus"
+        "when": "agentTandem.canDecideHunk && editorTextFocus"
       },
       {
-        "command": "agentDock.nextChange",
+        "command": "agentTandem.nextChange",
         "key": "alt+down",
-        "when": "agentDock.changeNavigation && editorTextFocus && isInDiffEditor"
+        "when": "agentTandem.changeNavigation && editorTextFocus && isInDiffEditor"
       },
       {
-        "command": "agentDock.previousChange",
+        "command": "agentTandem.previousChange",
         "key": "alt+up",
-        "when": "agentDock.changeNavigation && editorTextFocus && isInDiffEditor"
+        "when": "agentTandem.changeNavigation && editorTextFocus && isInDiffEditor"
       }
     ],
     "configuration": {
-      "title": "AgentDock",
+      "title": "AgentTandem",
       "properties": {
-        "agentDock.showQuotaInStatusBar": {
+        "agentTandem.showQuotaInStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show the current provider's remaining quota in the VS Code status bar. Click to open the AgentDock usage dashboard."
+          "description": "Show the current provider's remaining quota in the VS Code status bar. Click to open the AgentTandem usage dashboard."
         },
-        "agentDock.usageDashboardDefaultGrouping": {
+        "agentTandem.usageDashboardDefaultGrouping": {
           "type": "string",
           "enum": [
             "day",
@@ -304,9 +311,9 @@
             "month"
           ],
           "default": "day",
-          "description": "Default calendar grouping for the AgentDock usage dashboard. Weeks start on Monday."
+          "description": "Default calendar grouping for the AgentTandem usage dashboard. Weeks start on Monday."
         },
-        "agentDock.blockActionsStyle": {
+        "agentTandem.blockActionsStyle": {
           "type": "string",
           "enum": [
             "auto",
@@ -316,41 +323,41 @@
           "enumDescriptions": [
             "Show a card with Accept, Reject and Next change buttons above each pending block, falling back to the code lens row when the editor-inset API is unavailable.",
             "Always use the compact Accept | Reject | Next change code lens row.",
-            "No in-editor block actions; review files from the AgentDock sidebar."
+            "No in-editor block actions; review files from the AgentTandem sidebar."
           ],
           "default": "auto",
-          "description": "In-editor actions above each pending change block in AgentDock diff editors. Opening a review enables diffEditor.codeLens so the fallback row renders."
+          "description": "In-editor actions above each pending change block in AgentTandem diff editors. Opening a review enables diffEditor.codeLens so the fallback row renders."
         },
-        "agentDock.showFileCounterInEditor": {
+        "agentTandem.showFileCounterInEditor": {
           "type": "boolean",
           "default": true,
-          "description": "Show a File i/n button at the top of AgentDock native diff editors. Click to choose a changed file. The button scrolls with the code."
+          "description": "Show a File i/n button at the top of AgentTandem native diff editors. Click to choose a changed file. The button scrolls with the code."
         },
-        "agentDock.codexCLIId": {
+        "agentTandem.codexCLIId": {
           "type": "string",
           "default": "",
           "scope": "resource",
           "description": "Managed Codex CLI entry selected for this project. Set through Manage CLIs; follows executable path edits. Takes precedence over codexExecutable."
         },
-        "agentDock.claudeCLIId": {
+        "agentTandem.claudeCLIId": {
           "type": "string",
           "default": "",
           "scope": "resource",
           "description": "Managed Claude CLI entry selected for this project. Set through Manage CLIs; follows executable path edits. Takes precedence over claudeExecutable."
         },
-        "agentDock.codexExecutable": {
+        "agentTandem.codexExecutable": {
           "type": "string",
           "default": "",
           "description": "Optional absolute path to an enabled native Codex executable in Manage CLIs. Uses the managed default or terminal PATH order when empty. A managed project entry ID takes precedence.",
           "scope": "resource"
         },
-        "agentDock.claudeExecutable": {
+        "agentTandem.claudeExecutable": {
           "type": "string",
           "default": "",
           "description": "Optional absolute path to an enabled Claude executable in Manage CLIs. A managed project entry ID takes precedence.",
           "scope": "resource"
         },
-        "agentDock.codexCLISelection": {
+        "agentTandem.codexCLISelection": {
           "type": "string",
           "enum": [
             "default",
@@ -360,7 +367,7 @@
           "scope": "resource",
           "description": "Use the managed default/explicit executable, or the enabled terminal CLI on PATH. Configure this in Manage CLIs."
         },
-        "agentDock.claudeCLISelection": {
+        "agentTandem.claudeCLISelection": {
           "type": "string",
           "enum": [
             "default",
@@ -370,7 +377,7 @@
           "scope": "resource",
           "description": "Use the managed default/explicit executable, or the enabled terminal CLI on PATH. Configure this in Manage CLIs."
         },
-        "agentDock.autoTrackExternalChanges": {
+        "agentTandem.autoTrackExternalChanges": {
           "type": "boolean",
           "default": true,
           "description": "Automatically start change tracking in trusted local workspaces that have no saved tracking choice. Pause/resume is remembered separately per workspace."
@@ -380,51 +387,51 @@
     "walkthroughs": [
       {
         "id": "gettingStarted",
-        "title": "Welcome to AgentDock",
+        "title": "Welcome to AgentTandem",
         "description": "Use Codex and Claude your way. Track saved changes, review code and understand your usage.",
         "steps": [
           {
             "id": "tracking",
             "title": "1. Find change tracking in the status bar",
-            "description": "Tracking starts automatically in trusted local workspaces. Click Tracking in the bottom status bar to control it. Manual saves are included.\n[Open tracking controls](command:agentDock.trackingControls)",
+            "description": "Tracking starts automatically in trusted local workspaces. Click Tracking in the bottom status bar to control it. Manual saves are included.\n[Open tracking controls](command:agentTandem.trackingControls)",
             "media": {
               "markdown": "docs/onboarding/tracking.md"
             },
             "completionEvents": [
-              "onCommand:agentDock.trackingControls"
+              "onCommand:agentTandem.trackingControls"
             ]
           },
           {
             "id": "review",
             "title": "2. Review files and individual change blocks",
-            "description": "Keep applied code with Accept, or restore a saved baseline with Revert.\n[Open AgentDock](command:agentDock.open)",
+            "description": "Keep applied code with Accept, or restore a saved baseline with Revert.\n[Open AgentTandem](command:agentTandem.open)",
             "media": {
               "markdown": "docs/onboarding/review.md"
             },
             "completionEvents": [
-              "onCommand:agentDock.previewReview"
+              "onCommand:agentTandem.previewReview"
             ]
           },
           {
             "id": "chat",
             "title": "3. Connect your native CLIs",
-            "description": "Use the original Codex/Claude tools or chat here. Tracking works with both workflows.\n[Manage CLIs](command:agentDock.manageCLIs)",
+            "description": "Use the original Codex/Claude tools or chat here. Tracking works with both workflows.\n[Manage CLIs](command:agentTandem.manageCLIs)",
             "media": {
               "markdown": "docs/onboarding/chat.md"
             },
             "completionEvents": [
-              "onCommand:agentDock.manageCLIs"
+              "onCommand:agentTandem.manageCLIs"
             ]
           },
           {
             "id": "usage",
             "title": "4. Check account, quota and token usage",
-            "description": "See where every number comes from: API, Local or Estimate.\n[Open dashboard](command:agentDock.openSettings)",
+            "description": "See where every number comes from: API, Local or Estimate.\n[Open dashboard](command:agentTandem.openSettings)",
             "media": {
               "markdown": "docs/onboarding/usage.md"
             },
             "completionEvents": [
-              "onCommand:agentDock.openSettings"
+              "onCommand:agentTandem.openSettings"
             ]
           }
         ]
@@ -458,7 +465,7 @@
     "test:cli:live": "npm run build && node scripts/test-cli-manager-live.mjs",
     "test:context:history": "npm run build && node scripts/test-context-history.mjs",
     "probe:providers": "node scripts/probe-providers.mjs",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links --skip-license --out artifacts/agent-dock-0.1.0.vsix",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links --skip-license --out artifacts/agent-tandem-0.1.1.vsix",
     "package:marketplace": "node scripts/package-marketplace.mjs",
     "test:marketplace": "node scripts/test-marketplace.mjs",
     "bump:patch": "node scripts/release.mjs bump patch",

@@ -6,8 +6,8 @@ let mode = '', turnId = 'turn-fixture';
 let threadSpeed;
 createInterface({ input: process.stdin }).on('line', line => {
   const message = JSON.parse(line), p = message.params;
-  if (process.env.AGENT_DOCK_RPC_LOG) appendFileSync(process.env.AGENT_DOCK_RPC_LOG, JSON.stringify(message) + '\n');
-  const modelCase = process.env.AGENT_DOCK_MODEL_CASE;
+  if (process.env.AGENT_TANDEM_RPC_LOG) appendFileSync(process.env.AGENT_TANDEM_RPC_LOG, JSON.stringify(message) + '\n');
+  const modelCase = process.env.AGENT_TANDEM_MODEL_CASE;
   if (message.method === 'initialize' && modelCase !== 'hung-init') write({ id: message.id, result: {} });
   if (message.method === 'account/read' && modelCase === 'hung-model') return;
   if (['thread/start', 'thread/resume', 'thread/fork'].includes(message.method)) { access = { approvalPolicy: p.approvalPolicy, sandbox: p.sandbox }; threadModel = p.model; }

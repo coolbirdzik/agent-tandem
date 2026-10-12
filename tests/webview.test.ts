@@ -24,7 +24,7 @@ beforeEach(async () => {
   await import('../src/webview.js');
 });
 afterEach(() => { for (const item of listeners.splice(0)) window.removeEventListener(item.type, item.listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
-describe('Single dock webview', () => {
+describe('Single tandem webview', () => {
   it('previews a scoped Revert, blocks a stale confirmation and exposes Undo even with no pending files', () => {
     const file = { path: 'source.ts', kind: 'modified' as const, binary: false };
     const review = { revision: 'r1', busy: false, externalTracking: true, files: [file] };
@@ -289,10 +289,10 @@ describe('Single dock webview', () => {
   it.each(['Claude', 'Codex'] as const)('renders all %s questions with descriptions and sends all selections', provider => {
     const questions = agentQuestions([
       { question: 'How should Accept/Reject appear on each change block?', header: 'Rendering', options: [
-        { label: 'CodeLens per hunk (Recommended)', description: "Use CodeLensProvider for the agentdock-review scheme: one row per hunk '✓ Accept · ✗ Reject · ↓ Next' directly above the change block." },
+        { label: 'CodeLens per hunk (Recommended)', description: "Use CodeLensProvider for the agenttandem-review scheme: one row per hunk '✓ Accept · ✗ Reject · ↓ Next' directly above the change block." },
         { label: 'Keep insets with larger Cursor-style buttons', description: 'Keep webview insets and restyle them as pill buttons with icons.' },
         { label: 'Inset + CodeLens fallback', description: 'Prefer insets when the proposed API is available; otherwise fall back to CodeLens.' },
-        { label: 'Render the diff in the panel webview', description: 'Build a custom inline diff in the AgentDock sidebar.' },
+        { label: 'Render the diff in the panel webview', description: 'Build a custom inline diff in the AgentTandem sidebar.' },
       ], multiSelect: false },
       { question: 'How should Next/Previous buttons work?', header: 'Next/Prev', options: [
         { label: 'Next in the CodeLens row plus shortcuts (Recommended)', description: 'Each hunk includes ↓ Next change, with Alt+Down/Alt+Up keybindings.' },
@@ -451,7 +451,7 @@ describe('Single dock webview', () => {
     render(effortState); postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#model-trigger')!.click();
     const slider = document.querySelector<HTMLInputElement>('#reasoning-slider')!;
     expect(slider.closest('#model-popover')).toBeNull();
-    expect(document.querySelector('.dock-footer')).toBeNull();
+    expect(document.querySelector('.tandem-footer')).toBeNull();
     expect(slider.max).toBe('2'); expect(slider.value).toBe('2');
     slider.value = '1'; slider.dispatchEvent(new Event('input'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'setReasoningEffort', selection: expect.objectContaining({ effort: 'low' }) });
@@ -1002,7 +1002,7 @@ describe('Single dock webview', () => {
     render({ ...state, conversation: { ...state.conversation!, conversation: { ...conversation, revision: '2' } } });
     expect(document.querySelector<HTMLDetailsElement>('.message.tool details')!.open).toBe(true);
   });
-  it('selects a conversation inside the dock; tab commands require a separate click', () => {
+  it('selects a conversation inside the tandem; tab commands require a separate click', () => {
     render(state); postMessage.mockClear();
     document.querySelector<HTMLButtonElement>('.conversation-link')!.click();
     expect(postMessage.mock.calls).toEqual([[{ type: 'conversation', selection: 'Claude:c1' }]]);

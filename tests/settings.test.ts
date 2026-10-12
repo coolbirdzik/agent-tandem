@@ -69,7 +69,7 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#model-breakdown tbody tr')).not.toBe(row);
   });
   it('shows storage location, cleanup preview and failures, and sends only the approved preview token', () => {
-    render({ ...value, storage: { status: 'ready', root: 'C:/profile/globalStorage/agent-dock', total: 4096, categories: [{ label: 'Review snapshots & tracking', bytes: 4096, files: 3 }], cleanable: { bytes: 1024, files: 1 }, plan: { token: 'preview', createdAt: Date.now(), bytes: 1024, files: [{ relative: 'reviews/history/blobs/old', bytes: 1024, modified: 0, changed: 0, inode: 1 }] } } });
+    render({ ...value, storage: { status: 'ready', root: 'C:/profile/globalStorage/agent-tandem', total: 4096, categories: [{ label: 'Review snapshots & tracking', bytes: 4096, files: 3 }], cleanable: { bytes: 1024, files: 1 }, plan: { token: 'preview', createdAt: Date.now(), bytes: 1024, files: [{ relative: 'reviews/history/blobs/old', bytes: 1024, modified: 0, changed: 0, inode: 1 }] } } });
     postMessage.mockClear(); document.querySelector<HTMLButtonElement>('[data-page="storage"]')!.click();
     expect(document.querySelector<HTMLElement>('#storage')!.hidden).toBe(false); expect(postMessage).toHaveBeenLastCalledWith({ type: 'storage', value: undefined });
     expect(document.querySelector('#storage-path')!.textContent).toContain('globalStorage');

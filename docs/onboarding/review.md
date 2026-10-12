@@ -1,8 +1,8 @@
 # Review at your own pace
 
-AgentDock opens to **Review**. Continue chatting in native Codex or Claude; saved edits appear here without another model request. Each conversation group collapses independently. New pending changes update the view badge and **Review · N files** in the status bar without taking focus from your editor or chat.
+AgentTandem opens to **Review**. Continue chatting in native Codex or Claude; saved edits appear here without another model request. Each conversation group collapses independently. New pending changes update the view badge and **Review · N files** in the status bar without taking focus from your editor or chat.
 
-Click the status bar to open the most recently captured conversation's first file directly in the native VS Code diff. Next/Previous stays within that group. Open a different file or a group's **View changes** from the sidebar. **+** and History still open AgentDock chat when you need it.
+Click the status bar to open the most recently captured conversation's first file directly in the native VS Code diff. Next/Previous stays within that group. Open a different file or a group's **View changes** from the sidebar. **+** and History still open AgentTandem chat when you need it.
 
 The chat review box shows pending files belonging to the current conversation. **Browse workspace changes** opens the full list. **Accept group** and **Revert group** affect only that group, and editor navigation stays within it. Shared or unassigned files remain visible as separate groups.
 

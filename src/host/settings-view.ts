@@ -15,7 +15,7 @@ export class SettingsView implements vscode.Disposable {
   open(page: 'dashboard' | 'storage' = 'dashboard') {
     this.page = page;
     if (this.panel) { this.panel.reveal(); void this.panel.webview.postMessage(page === 'storage' ? { type: 'page', page } : { type: 'dashboard' }); this.update(true); return; }
-    const panel = vscode.window.createWebviewPanel('agentDock.settings', 'AgentDock Settings', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
+    const panel = vscode.window.createWebviewPanel('agentTandem.settings', 'AgentTandem Settings', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
     this.panel = panel;
     const webview = panel.webview;
     webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist'), vscode.Uri.joinPath(this.extensionUri, 'media')] };
@@ -26,7 +26,7 @@ export class SettingsView implements vscode.Disposable {
       try {
         if (!data || typeof data !== 'object') throw new Error('Invalid settings request.');
         if (data.type === 'ready') { this.update(true); if (this.page === 'storage') await webview.postMessage({ type: 'page', page: 'storage' }); return; }
-        const commands: Record<string, string> = { refresh: 'agentDock.refreshUsageDashboard', preferences: 'agentDock.setDashboardPreferences', chat: 'agentDock.open', clis: 'agentDock.manageCLIs', vscodeSettings: 'agentDock.openVSCodeSettings', storage: 'agentDock.refreshStorage', previewCleanup: 'agentDock.previewStorageCleanup', cleanup: 'agentDock.cleanupStorage', revealStorage: 'agentDock.revealStorage', previewHistoryDeletion: 'agentDock.previewHistoryDeletion', deleteHistory: 'agentDock.deleteHistory' };
+        const commands: Record<string, string> = { refresh: 'agentTandem.refreshUsageDashboard', preferences: 'agentTandem.setDashboardPreferences', chat: 'agentTandem.open', clis: 'agentTandem.manageCLIs', vscodeSettings: 'agentTandem.openVSCodeSettings', storage: 'agentTandem.refreshStorage', previewCleanup: 'agentTandem.previewStorageCleanup', cleanup: 'agentTandem.cleanupStorage', revealStorage: 'agentTandem.revealStorage', previewHistoryDeletion: 'agentTandem.previewHistoryDeletion', deleteHistory: 'agentTandem.deleteHistory' };
         if (!Object.hasOwn(commands, data.type)) throw new Error('Unsupported settings request.');
         await this.invoke(commands[data.type]!, data.value);
       } catch (error) { this.report(error); }

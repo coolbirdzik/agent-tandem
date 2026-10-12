@@ -42,7 +42,7 @@ export async function verifyFloatingNavigation(runtime, port) {
     const point = { x: frame.x + badge.rect.x + badge.rect.width / 2, y: frame.y + badge.rect.y + badge.rect.height / 2 };
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point });
     await call('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
-    await until(() => evaluate(`document.querySelector('.quick-input-widget')?.textContent?.includes('AgentDock · Changed files')`), 'count button opens changed-file picker');
+    await until(() => evaluate(`document.querySelector('.quick-input-widget')?.textContent?.includes('AgentTandem · Changed files')`), 'count button opens changed-file picker');
     // The rendered list takes focus after the widget text, so keystrokes must wait for a row.
     await until(() => evaluate(`!!document.querySelector('.quick-input-widget .monaco-list-row') && document.activeElement?.closest('.quick-input-widget')!==null`), 'changed-file picker takes focus');
     await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });

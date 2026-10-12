@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { ExtensionAPI } from '../../src/extension';
 
 export async function run() {
-  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-dock-local.agent-dock')!.activate();
+  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-tandem-local.agent-tandem')!.activate();
   const project = vscode.workspace.workspaceFolders![0]!.uri.fsPath;
   const file = (name: string) => path.join(project, name);
   const checks: string[] = [];
@@ -16,12 +16,12 @@ export async function run() {
     finally { if (timer) clearTimeout(timer); }
   };
   for (const provider of ['Codex', 'Claude']) {
-    await vscode.commands.executeCommand('agentDock.newChat', provider);
+    await vscode.commands.executeCommand('agentTandem.newChat', provider);
     const answerPrompts = setInterval(() => {
-      for (const prompt of api.viewState().chat?.prompts ?? []) void vscode.commands.executeCommand('agentDock.answerAgent', { id: prompt.id, allow: true }).then(undefined, () => undefined);
+      for (const prompt of api.viewState().chat?.prompts ?? []) void vscode.commands.executeCommand('agentTandem.answerAgent', { id: prompt.id, allow: true }).then(undefined, () => undefined);
     }, 100);
-    const timeout = setTimeout(() => void vscode.commands.executeCommand('agentDock.stopChat'), 90_000);
-    const run = Promise.resolve(vscode.commands.executeCommand('agentDock.sendChat', { requestId: randomUUID(), project, provider,
+    const timeout = setTimeout(() => void vscode.commands.executeCommand('agentTandem.stopChat'), 90_000);
+    const run = Promise.resolve(vscode.commands.executeCommand('agentTandem.sendChat', { requestId: randomUUID(), project, provider,
       text: 'In this disposable workspace, run `node stop-tool.mjs` once in the foreground and wait for it to exit. The script writes test heartbeat files and sleeps for 60 seconds. Do not modify any other files, do not run in the background and do not delegate. Use your terminal tool.' }));
     void run.catch(() => undefined);
     try {
@@ -33,7 +33,7 @@ export async function run() {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       const stoppedAt = Date.now();
-      await vscode.commands.executeCommand('agentDock.stopChat');
+      await vscode.commands.executeCommand('agentTandem.stopChat');
       assert.ok(['stopping', 'finishing'].includes(api.viewState().chat?.phase ?? ''), 'Stop gives immediate state feedback');
       await bounded(run, 8000);
       const stopMilliseconds = Date.now() - stoppedAt; clearTimeout(timeout);
@@ -45,16 +45,16 @@ export async function run() {
       await assert.rejects(readFile(file('finished.txt')), { code: 'ENOENT' });
       assert.ok(api.viewState().review?.files.some(change => change.path === 'partial.txt'), 'Partial edits remain pending review');
       const conversationKey = api.viewState().conversation!.conversation.key;
-      await bounded(vscode.commands.executeCommand('agentDock.sendChat', { requestId: randomUUID(), project, provider, conversationKey, text: 'Reply only STOP_RESUME_OK. Do not use tools or modify files.' }), 60_000);
+      await bounded(vscode.commands.executeCommand('agentTandem.sendChat', { requestId: randomUUID(), project, provider, conversationKey, text: 'Reply only STOP_RESUME_OK. Do not use tools or modify files.' }), 60_000);
       assert.equal(api.viewState().chat?.status, 'completed', api.viewState().error);
       assert.equal(api.viewState().conversation?.conversation.key, conversationKey);
       assert.ok(api.viewState().conversation?.messages.some(message => message.role === 'assistant' && message.text?.includes('STOP_RESUME_OK')));
-      await vscode.commands.executeCommand('agentDock.revertChanges', { project, revision: api.viewState().review!.revision });
+      await vscode.commands.executeCommand('agentTandem.revertChanges', { project, revision: api.viewState().review!.revision });
       await assert.rejects(readFile(file('partial.txt')), { code: 'ENOENT' });
       await assert.rejects(readFile(file('heartbeat.txt')), { code: 'ENOENT' });
       checks.push(`${provider}: Stop interrupts real foreground tool, descendant heartbeat stops, partial edits stay reviewable, same conversation resumes and Revert succeeds (Stop ${stopMilliseconds} ms).`);
-    } finally { clearTimeout(timeout); clearInterval(answerPrompts); await vscode.commands.executeCommand('agentDock.stopChat'); await bounded(run, 8000); }
+    } finally { clearTimeout(timeout); clearInterval(answerPrompts); await vscode.commands.executeCommand('agentTandem.stopChat'); await bounded(run, 8000); }
   }
   const report = { success: true, vscode: vscode.version, checks };
-  await writeFile(process.env.AGENT_DOCK_STOP_REPORT!, JSON.stringify(report, null, 2)); console.log(`AGENT_DOCK_STOP_LIVE ${JSON.stringify(report)}`);
+  await writeFile(process.env.AGENT_TANDEM_STOP_REPORT!, JSON.stringify(report, null, 2)); console.log(`AGENT_TANDEM_STOP_LIVE ${JSON.stringify(report)}`);
 }

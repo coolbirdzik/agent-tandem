@@ -56,7 +56,7 @@ for (const provider of ['Codex', 'Claude']) {
     if (documentsOnly) { check.documentRead = true; if (provider === 'Claude') check.historyDocumentPreserved = true; }
     else { check.visionRecognized = true; check.historyImagePreserved = true; }
   } catch (error) { check.status = 'failed'; check.error = error.message; }
-  finally { console.log(`AGENT_DOCK_ATTACHMENTS_LIVE ${JSON.stringify(check)}`); }
+  finally { console.log(`AGENT_TANDEM_ATTACHMENTS_LIVE ${JSON.stringify(check)}`); }
 }
 const success = checks.every(check => check.status === 'completed');
 await mkdir(path.join(root, 'artifacts'), { recursive: true }); await writeFile(path.join(root, 'artifacts', documentsOnly ? 'attachments-documents-live.json' : 'attachments-live.json'), JSON.stringify({ success, checks }, null, 2));

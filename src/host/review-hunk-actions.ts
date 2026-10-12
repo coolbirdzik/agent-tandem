@@ -39,16 +39,16 @@ export class ReviewHunkActions implements vscode.Disposable {
       vscode.window.onDidChangeTextEditorSelection(() => this.update()),
       vscode.window.tabGroups.onDidChangeTabs(() => this.update()),
       vscode.workspace.onDidChangeConfiguration(event => {
-        if (!event.affectsConfiguration('agentDock.blockActionsStyle')) return;
+        if (!event.affectsConfiguration('agentTandem.blockActionsStyle')) return;
         this.clearCards(); this.lenses.refresh(); this.update();
       }),
       // One lens click decides exactly the block it was rendered for.
-      ...([['acceptHunk', false], ['rejectHunk', true]] as const).map(([name, revert]) => vscode.commands.registerCommand(`agentDock.${name}`, async (value: unknown) => {
+      ...([['acceptHunk', false], ['rejectHunk', true]] as const).map(([name, revert]) => vscode.commands.registerCommand(`agentTandem.${name}`, async (value: unknown) => {
         const request = this.request(value);
         if (request) await this.actOnBlock(request, revert);
       })),
       // Keyboard review keeps acting on the block under the cursor.
-      ...(['accept', 'revert'] as const).map(action => vscode.commands.registerCommand(`agentDock.${action}CurrentChange`, async () => {
+      ...(['accept', 'revert'] as const).map(action => vscode.commands.registerCommand(`agentTandem.${action}CurrentChange`, async () => {
         const target = this.target, editor = vscode.window.activeTextEditor;
         if (!target || !editor || target.uri !== editor.document.uri.toString() || target.line !== editor.selection.active.line) return;
         await this.act(editor, target, action === 'revert');
@@ -117,7 +117,7 @@ export class ReviewHunkActions implements vscode.Disposable {
     clearTimeout(this.pending);
     const version = ++this.version;
     this.target = undefined;
-    void vscode.commands.executeCommand('setContext', 'agentDock.canDecideHunk', false);
+    void vscode.commands.executeCommand('setContext', 'agentTandem.canDecideHunk', false);
     const state = this.state();
     if (!state.project || !state.review || state.busy || this.deciding) { this.clear(); return; }
     const project = state.project, review = state.review;
@@ -126,7 +126,7 @@ export class ReviewHunkActions implements vscode.Disposable {
       return file && this.current(project, review.revision, file.path, editor) ? [{ editor, file: file.path }] : [];
     });
     for (const editor of this.editors.keys()) if (!candidates.some(item => item.editor === editor)) this.removeEditor(editor);
-    void vscode.commands.executeCommand('setContext', 'agentDock.reviewChange', candidates.length > 0);
+    void vscode.commands.executeCommand('setContext', 'agentTandem.reviewChange', candidates.length > 0);
     this.publish(`${project}:${review.revision}:${candidates.map(item => item.file).sort().join('|')}`);
     if (!candidates.length) return;
     this.pending = setTimeout(() => {
@@ -147,7 +147,7 @@ export class ReviewHunkActions implements vscode.Disposable {
       const line = editor.selection.active.line;
       const hunk = hunks.find(item => { const start = Math.min(item.newLine, editor.document.lineCount - 1); return line >= start && line < start + Math.max(1, item.newLines); });
       this.target = hunk ? { project, revision: review.revision, file, hunk: hunk.id, line, uri: editor.document.uri.toString() } : undefined;
-      void vscode.commands.executeCommand('setContext', 'agentDock.canDecideHunk', !!hunk);
+      void vscode.commands.executeCommand('setContext', 'agentTandem.canDecideHunk', !!hunk);
     } catch {
       // Binary/large/stale files retain the existing file-level sidebar actions.
       this.removeEditor(editor);
@@ -167,7 +167,7 @@ export class ReviewHunkActions implements vscode.Disposable {
       const collection = blocks;
       try {
         const card = new ReviewBlockCard(editor, hunk, hunks.indexOf(hunk), hunks.length, hunks.length > 1 || review.files.length > 1,
-          action => { if (action === 'next') void vscode.commands.executeCommand('agentDock.nextChange'); else void this.act(editor, request, action === 'revert'); },
+          action => { if (action === 'next') void vscode.commands.executeCommand('agentTandem.nextChange'); else void this.act(editor, request, action === 'revert'); },
           () => collection.cards.delete(hunk.id));
         blocks.cards.set(hunk.id, card);
       } catch {
@@ -184,8 +184,8 @@ export class ReviewHunkActions implements vscode.Disposable {
   private clear() {
     clearTimeout(this.pending); this.version++; this.target = undefined;
     this.clearCards(); this.publish('');
-    void vscode.commands.executeCommand('setContext', 'agentDock.reviewChange', false);
-    void vscode.commands.executeCommand('setContext', 'agentDock.canDecideHunk', false);
+    void vscode.commands.executeCommand('setContext', 'agentTandem.reviewChange', false);
+    void vscode.commands.executeCommand('setContext', 'agentTandem.canDecideHunk', false);
   }
   dispose() {
     this.clear(); this.cache.clear();

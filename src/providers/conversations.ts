@@ -36,7 +36,7 @@ export function belongsToProject(cwd: string, project: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${windows ? '\\' : '/'}`);
 }
 function object(value: unknown): Record<string, any> { return value && typeof value === 'object' ? value as Record<string, any> : {}; }
-/** Keep AgentDock's old test runs out of their parent project's chat list.
+/** Keep AgentTandem's old test runs out of their parent project's chat list.
  * Opening a test workspace itself still shows that workspace's conversations.
  * Match the run directory, never the prompt text (a user can paste MODEL_OK).
  */

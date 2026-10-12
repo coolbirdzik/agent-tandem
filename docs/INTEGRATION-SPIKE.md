@@ -64,7 +64,7 @@ Chat now captures the workspace before/after a turn, displays a fixed pending ch
 
 Sidebar chat supports send/resume using the original session ID, streaming, Stop and permission requests. `artifacts/chat-smoke.json` records four successful real inference cases: creation and resume for both Codex/Claude, with follow-up questions verifying earlier context. Native Codex runtime 0.147.0 on PATH takes priority over the older npm CLI 0.99.0, whose selected model was no longer supported by the ChatGPT account. If a model is outside the ChatGPT catalog, the adapter retrieves the default through `model/list` and overrides the outgoing turn without changing CLI configuration. Catalog-based model selection follows [OpenAI Docs: app-server](https://learn.chatgpt.com/docs/app-server#list-models-modellist).
 
-Typecheck and 66 unit/integration/DOM tests passed. VS Code 1.140.0 ran 14 check groups, including preserving new chat through sync, host receipt of chat content, provider error reporting and provider switching in the dock. A second host verified reopening history/snapshots. Reports: `artifacts/extension-test.json`, `artifacts/extension-restart-test.json`. The October 7 results below are the pre-chat investigation milestone; agent-turn checkpoint/apply/revert had not yet been implemented at that point.
+Typecheck and 66 unit/integration/DOM tests passed. VS Code 1.140.0 ran 14 check groups, including preserving new chat through sync, host receipt of chat content, provider error reporting and provider switching in the tandem. A second host verified reopening history/snapshots. Reports: `artifacts/extension-test.json`, `artifacts/extension-restart-test.json`. The October 7 results below are the pre-chat investigation milestone; agent-turn checkpoint/apply/revert had not yet been implemented at that point.
 
 Verification date: October 7, 2026. Scope: local conversation synchronization, the step diff prototype and process/provider checks; the MVP integration spike was not complete.
 
@@ -86,7 +86,7 @@ The verified environment had no `ANTHROPIC_API_KEY`. Claude Agent SDK/inference 
 Development Host tests passed 13 check groups, including conversation synchronization and the single-panel flow:
 
 1. Native diff and changes commands were available.
-2. Opening AgentDock, conversations and diffs during an active demo did not create an editor tab.
+2. Opening AgentTandem, conversations and diffs during an active demo did not create an editor tab.
 3. Two steps editing the same file retained separate before/after snapshots.
 4. Snapshot buffers returned historical content after an external WorkspaceEdit.
 5. Multi-file steps and cumulative changes displayed inline; only Open diff in editor opened the native changes editor.
@@ -96,7 +96,7 @@ Development Host tests passed 13 check groups, including conversation synchroniz
 
 Tests ran in the real editor, rather than only mocking executeCommand. Observing `onDidChangeTabs` proved that default actions did not open tabs, even temporarily; Open in tab and Open diff in editor were checked separately. Pending snapshot reads did not overwrite newer navigation. The machine-readable report is `artifacts/extension-test.json`.
 
-41 unit/integration/DOM tests passed (24 recorder/filesystem, seven conversation, four inline preview and six webview interaction tests). A second Extension Host reopened the selected conversation and correct historical step diff in the dock, and marked unfinished session metadata as interrupted; report: `artifacts/extension-restart-test.json`.
+41 unit/integration/DOM tests passed (24 recorder/filesystem, seven conversation, four inline preview and six webview interaction tests). A second Extension Host reopened the selected conversation and correct historical step diff in the tandem, and marked unfinished session metadata as interrupted; report: `artifacts/extension-restart-test.json`.
 
 UI verification used the same built HTML/CSS at widths of 390px/280px: light/dark themes, chat-first layout, working history/back/search/filter, loaded Codicons and Claude Code/Codex icons, readable Markdown/code blocks, colored additions/deletions and no body overflow. This was a browser preview with fixtures, not a VS Code screenshot; Windows Computer Use could not connect to its native pipe during this verification.
 

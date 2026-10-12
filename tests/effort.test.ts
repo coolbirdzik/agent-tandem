@@ -23,7 +23,7 @@ describe('reasoning effort selection', () => {
     expect(() => effortSelection({ project: '/p', provider: 'wrong', model: 'm', effort: 'high' })).toThrow();
   });
   it('persists per project, provider and model, including Auto and corrupt preference recovery', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'agentdock-effort-')), store = new EffortStore(directory);
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-effort-')), store = new EffortStore(directory);
     await Promise.all([store.save('/one', 'Codex', 'm1', 'low'), store.save('/one', 'Codex', 'm2', 'ultra'), store.save('/one', 'Claude', 'm1', 'high')]);
     expect(await new EffortStore(directory).read('/one')).toEqual({ Codex: { m1: 'low', m2: 'ultra' }, Claude: { m1: 'high' } });
     expect(await store.read('/two')).toEqual({ Codex: {}, Claude: {} });

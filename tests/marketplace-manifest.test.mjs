@@ -13,18 +13,18 @@ describe('Marketplace packaging', () => {
     expect(result).not.toHaveProperty('enableProposedApi');
     expect(result.contributes.menus).not.toHaveProperty('editor/content');
     expect(result.contributes.menus).not.toHaveProperty('multiDiffEditor/content');
-    expect(result.contributes.menus['editor/title'].map(item => item.command)).toContain('agentDock.nextChange');
-    expect(result.contributes.configuration.properties['agentDock.blockActionsStyle'].default).toBe('lens');
-    expect(result.contributes.configuration.properties['agentDock.showFileCounterInEditor'].default).toBe(false);
+    expect(result.contributes.menus['editor/title'].map(item => item.command)).toContain('agentTandem.nextChange');
+    expect(result.contributes.configuration.properties['agentTandem.blockActionsStyle'].default).toBe('lens');
+    expect(result.contributes.configuration.properties['agentTandem.showFileCounterInEditor'].default).toBe(false);
     expect(result).not.toHaveProperty('scripts');
     expect(result).not.toHaveProperty('dependencies');
   });
   it('sets public content URLs and rejects invalid publisher or repository values', () => {
-    const result = marketplaceManifest(source, { repositoryUrl: 'https://github.com/example/agent-dock.git/' });
-    expect(result.repository.url).toBe('https://github.com/example/agent-dock.git');
-    expect(result.bugs.url).toBe('https://github.com/example/agent-dock/issues');
+    const result = marketplaceManifest(source, { repositoryUrl: 'https://github.com/example/agent-tandem.git/' });
+    expect(result.repository.url).toBe('https://github.com/example/agent-tandem.git');
+    expect(result.bugs.url).toBe('https://github.com/example/agent-tandem/issues');
     expect(() => marketplaceManifest(source, { publisher: 'Display Name' })).toThrow();
-    expect(() => marketplaceManifest(source, { repositoryUrl: 'http://github.com/example/agent-dock' })).toThrow();
+    expect(() => marketplaceManifest(source, { repositoryUrl: 'http://github.com/example/agent-tandem' })).toThrow();
     expect(() => marketplaceManifest(source, { repositoryUrl: 'https://example.com/repo' })).toThrow();
   });
 });
