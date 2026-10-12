@@ -34,7 +34,7 @@ try {
   const artifacts = path.join(root, 'artifacts');
   await mkdir(artifacts, { recursive: true });
   const stage = await mkdtemp(path.join(artifacts, 'marketplace-stage-'));
-  for (const file of ['README.md', 'CHANGELOG.md', 'LICENSE.txt', '.vscodeignore', 'media', 'docs']) {
+  for (const file of ['README.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'LICENSE.txt', '.vscodeignore', 'media', 'docs']) {
     await cp(path.join(root, file), path.join(stage, file), { recursive: true });
   }
   // Only ship runtime bundles and their notices, never test bundles or source maps.

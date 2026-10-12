@@ -10,6 +10,8 @@ To regenerate the PNG, render `icon.svg` at its native 256 × 256 size, preservi
 
 `screenshots/history.jpg` uses the same panel fixture with conversation history open. `screenshots/dashboard.jpg` and `screenshots/storage.jpg` use `scripts/preview-settings.mjs --demo` with `?accounts=1` and `?storage=1`. The `--demo` option generates synthetic usage and never loads the user's local token records.
 
+`screenshots/editor-diff.png` is an actual VS Code Development Host capture from `artifacts/inline-layout.png`, produced by `scripts/verify-floating-navigation.mjs`. It shows the local development build's native multi-file inline diff with experimental per-block action cards and navigation. The stable Marketplace build uses CodeLens instead. All source files in the image are navigation test fixtures.
+
 ## Provider assets
 
 `codex.svg` is an unchanged copy of `resources/blossom-black.svg` from the installed OpenAI Codex VS Code extension (`openai.chatgpt`, version `26.1002.51308`). That extension uses its matching white SVG for the Codex activity bar. Source: [OpenAI Codex extension](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt). AgentDock switches the monochrome mark to white in VS Code dark/high contrast themes through CSS.

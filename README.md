@@ -78,7 +78,7 @@ Inspect local storage by category and conversation. Filter restore history by pr
 
 **Manage CLIs** keeps installations separate from the project: choose enabled native executables, set provider defaults or project overrides, scan for installations, and inspect diagnostics. The Getting Started walkthrough links tracking, review, CLI setup and usage in one place.
 
-*All screenshots use demonstration conversations, accounts and usage values rendered by the actual AgentDock interface.*
+*Screenshots use demonstration files, conversations, accounts and usage values rendered by the actual AgentDock interface and VS Code Development Host.*
 
 ## Get started
 
@@ -92,6 +92,10 @@ Use **AgentDock: Getting Started** for the in-editor walkthrough. **AgentDock: O
 To install a downloaded package, use **Extensions → … → Install from VSIX…**, then select the `.vsix` file.
 
 ## A review loop that stays close to your code
+
+![AgentDock native multi-file diff in the VS Code editor with block review actions](media/screenshots/editor-diff.png)
+
+*Actual VS Code Development Host capture with demonstration files. This local build shows experimental in-editor action cards; the Marketplace build uses CodeLens for block actions.*
 
 1. **Work.** Continue in your native agent, or send a turn through AgentDock.
 2. **Inspect.** Open a changed file in VS Code's inline diff. Review one block, one file or the entire group.
@@ -118,21 +122,30 @@ The Marketplace build uses **CodeLens** for block actions, editor-title navigati
 
 AgentDock is an independent companion. It is not affiliated with OpenAI or Anthropic. Provider names and marks identify the tools it connects to.
 
-## Build and release
+## Contributing
+
+Help improve AgentDock's review workflow, provider integrations and VS Code experience. See the [contributor guide](CONTRIBUTING.md) for project structure, local development, testing and pull request expectations.
+
+Start a local development session with **Node.js 24**:
 
 ```powershell
 npm ci
-npm run typecheck
-npm test -- --maxWorkers=2 --testTimeout=15000
-npm run package:marketplace -- --publisher coolbirdv --repository-url https://github.com/YOUR_ACCOUNT/YOUR_REPO
+npm run build
 ```
 
-The package and SHA-256 checksum are written to `artifacts/`. **Build Marketplace VSIX** in GitHub Actions runs the checks, tests the stable build in a separate VS Code profile, and uploads a downloadable artifact. Enter your Publisher ID when running it manually, or set the `MARKETPLACE_PUBLISHER` repository variable for version tags.
+Open this folder in VS Code and press **F5** with **Run AgentDock**. In the Development Host, open a separate test project and use **AgentDock: Open Conversations**.
 
-The pipeline builds the file for you to upload manually. It does not require a Marketplace token.
+Before opening a pull request, run:
 
-- [Publisher setup and VSIX submission guide](docs/PUBLISHING.md)
+```powershell
+npm run typecheck
+npm test -- --maxWorkers=2 --testTimeout=15000
+```
+
+- Include a focused regression test for behavior changes and screenshots for visible UI changes.
+- Explain the problem, the resulting behavior and the checks you ran in the pull request.
+- Keep provider transcripts, credentials, personal usage records and generated test workspaces out of commits and screenshots.
+
+- [Contributor guide](CONTRIBUTING.md)
 - [Development, advanced behavior and verification](docs/DEVELOPMENT.md)
 - [Release notes](CHANGELOG.md)
-
-For local development with experimental controls, use `npm run dev` to build and install into your existing VS Code, or `npm run build` and launch the Development Host with **F5**.
