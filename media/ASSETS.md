@@ -2,7 +2,7 @@
 
 ## AgentDock icon
 
-`icon.svg` is the editable source for `icon.png` (256 × 256), used by the extension manifest. The original six-petal mark uses soft radial shapes and a central opening, in charcoal green on warm ivory. `dock.svg` is the matching 24 × 24 monochrome Activity Bar icon; `currentColor` lets VS Code apply the theme color. It is an AgentDock mark, not a modified provider logo.
+`icon.svg` is the editable source for `icon.png` (256 × 256), used by the extension manifest. The original companion mark combines a six-petal rosette suggesting Codex, a muted terracotta burst suggesting Claude, a history arrow around both agents, and three dashboard bars. Charcoal green and terracotta sit on warm ivory. `dock.svg` is the matching 24 × 24 monochrome Activity Bar icon; `currentColor` lets VS Code apply the theme color. It is an independent AgentDock composition, not an official joint provider logo.
 
 To regenerate the PNG, render `icon.svg` at its native 256 × 256 size, preserving transparency at the rounded corners.
 
