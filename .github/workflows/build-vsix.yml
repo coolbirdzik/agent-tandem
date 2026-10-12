@@ -1,0 +1,56 @@
+name: Build Marketplace VSIX
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publisher:
+        description: Marketplace publisher ID (the ID, not the display name)
+        required: true
+        default: coolbirdv
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      MARKETPLACE_PUBLISHER: ${{ inputs.publisher || vars.MARKETPLACE_PUBLISHER || 'coolbirdv' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- --maxWorkers=2 --testTimeout=15000
+      - name: Build upload package or preview
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -or '${{ github.event_name }}' -eq 'workflow_dispatch') {
+            if (-not $env:MARKETPLACE_PUBLISHER) { throw 'Set the MARKETPLACE_PUBLISHER repository variable or provide the workflow input.' }
+            npm run package:marketplace
+          } else {
+            npm run package:marketplace -- --preview
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test the stable staged extension in VS Code
+        run: npm run test:marketplace
+      - uses: actions/upload-artifact@v6
+        with:
+          name: agent-dock-vsix-${{ github.run_number }}
+          path: |
+            artifacts/*.vsix
+            artifacts/*.vsix.sha256
+            artifacts/marketplace-build.json
+            artifacts/packaged/extension-test.json
+            artifacts/packaged/extension-restart-test.json
+          if-no-files-found: error
+          retention-days: 30

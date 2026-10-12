@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>AgentDock</title>
+  <rect width="256" height="256" rx="56" fill="#F4F0E8"/>
+  <g transform="translate(128 128)" fill="#30362F">
+    <path transform="rotate(0)" d="M0-29C-18-51-17-76 1-85C19-94 40-84 40-65C40-47 19-34 0-29Z"/>
+    <path transform="rotate(60)" d="M0-29C-18-51-17-76 1-85C19-94 40-84 40-65C40-47 19-34 0-29Z"/>
+    <path transform="rotate(120)" d="M0-29C-18-51-17-76 1-85C19-94 40-84 40-65C40-47 19-34 0-29Z"/>
+    <path transform="rotate(180)" d="M0-29C-18-51-17-76 1-85C19-94 40-84 40-65C40-47 19-34 0-29Z"/>
+    <path transform="rotate(240)" d="M0-29C-18-51-17-76 1-85C19-94 40-84 40-65C40-47 19-34 0-29Z"/>
+    <path transform="rotate(300)" d="M0-29C-18-51-17-76 1-85C19-94 40-84 40-65C40-47 19-34 0-29Z"/>
+  </g>
+</svg>

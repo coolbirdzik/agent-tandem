@@ -1,0 +1,478 @@
+{
+  "name": "agent-dock",
+  "displayName": "AgentDock — Claude Code & Codex UI for VS Code",
+  "description": "A companion for Claude Code and Codex: review changes, restore checkpoints, resume conversations and understand your usage in VS Code.",
+  "version": "0.1.0",
+  "publisher": "agent-dock-local",
+  "private": true,
+  "license": "UNLICENSED",
+  "icon": "media/icon.png",
+  "galleryBanner": { "color": "#242623", "theme": "dark" },
+  "keywords": ["claude", "codex", "ai", "code review", "checkpoints", "chat"],
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "enabledApiProposals": [
+    "contribEditorContentMenu",
+    "editorInsets"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": {
+      "supported": "limited",
+      "description": "Snapshot review works; local provider processes require a local workspace."
+    },
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "View saved steps. Running the demo or provider probes requires workspace trust."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentDock.acceptCurrentChange",
+        "title": "Accept change",
+        "icon": "$(check)",
+        "enablement": "agentDock.canDecideHunk"
+      },
+      {
+        "command": "agentDock.revertCurrentChange",
+        "title": "Revert change",
+        "icon": "$(discard)",
+        "enablement": "agentDock.canDecideHunk"
+      },
+      {
+        "command": "agentDock.acceptHunk",
+        "title": "Accept this change block",
+        "icon": "$(check)"
+      },
+      {
+        "command": "agentDock.rejectHunk",
+        "title": "Reject this change block",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "agentDock.previousChange",
+        "title": "Previous change",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "agentDock.nextChange",
+        "title": "Next change",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "agentDock.open",
+        "title": "AgentDock: Open Conversations"
+      },
+      {
+        "command": "agentDock.openSettings",
+        "title": "AgentDock: Open Settings and Usage Dashboard",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "agentDock.openStorage",
+        "title": "AgentDock: Manage Storage",
+        "icon": "$(database)"
+      },
+      {
+        "command": "agentDock.runDemo",
+        "title": "AgentDock: Run Step Demo",
+        "icon": "$(play)"
+      },
+      {
+        "command": "agentDock.stop",
+        "title": "AgentDock: Stop Demo",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "agentDock.openStep",
+        "title": "AgentDock: View Step Changes",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "agentDock.openCumulative",
+        "title": "AgentDock: View Cumulative Changes"
+      },
+      {
+        "command": "agentDock.openFile",
+        "title": "AgentDock: View File Changes"
+      },
+      {
+        "command": "agentDock.checkProviders",
+        "title": "AgentDock: Check Providers",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "agentDock.syncConversations",
+        "title": "AgentDock: Refresh Project Conversations",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentDock.openConversation",
+        "title": "AgentDock: Open Conversation"
+      },
+      {
+        "command": "agentDock.openInTab",
+        "title": "AgentDock: Open in Editor Tab",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "agentDock.openStepInEditor",
+        "title": "AgentDock: Open Step Diff in Editor"
+      },
+      {
+        "command": "agentDock.openFileInEditor",
+        "title": "AgentDock: Open File Diff in Editor"
+      },
+      {
+        "command": "agentDock.openCumulativeInEditor",
+        "title": "AgentDock: Open Cumulative Diff in Editor"
+      },
+      {
+        "command": "agentDock.manageCLIs",
+        "title": "AgentDock: Manage CLIs"
+      },
+      {
+        "command": "agentDock.toggleExternalReview",
+        "title": "AgentDock: Toggle External Change Tracking",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "agentDock.captureExternalChanges",
+        "title": "AgentDock: Capture External Changes Now",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentDock.reviewLatest",
+        "title": "AgentDock: Review Latest Changes"
+      },
+      {
+        "command": "agentDock.undoRevert",
+        "title": "AgentDock: Undo Last Revert"
+      },
+      {
+        "command": "agentDock.trackingControls",
+        "title": "AgentDock: Change Tracking Controls",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "agentDock.gettingStarted",
+        "title": "AgentDock: Getting Started",
+        "icon": "$(book)"
+      },
+      {
+        "command": "agentDock.refreshStorage",
+        "title": "AgentDock: Refresh Storage Usage"
+      },
+      {
+        "command": "agentDock.previewStorageCleanup",
+        "title": "AgentDock: Preview Storage Cleanup"
+      },
+      {
+        "command": "agentDock.cleanupStorage",
+        "title": "AgentDock: Clean Unused Snapshots"
+      },
+      {
+        "command": "agentDock.revealStorage",
+        "title": "AgentDock: Reveal Data Folder"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentDock",
+          "title": "AgentDock",
+          "icon": "media/dock.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentDock": [
+        {
+          "id": "agentDock.panel",
+          "name": "Review",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [],
+      "editor/content": [
+        {
+          "command": "agentDock.previousChange",
+          "when": "editorFocus && isInDiffEditor && activeEditor != multiDiffEditor && resource in agentDock.changeModifiedResources",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentDock.nextChange",
+          "when": "editorFocus && isInDiffEditor && activeEditor != multiDiffEditor && resource in agentDock.changeModifiedResources",
+          "group": "navigation@2"
+        }
+      ],
+      "multiDiffEditor/content": [
+        {
+          "command": "agentDock.previousChange",
+          "when": "agentDock.changeNavigation",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentDock.nextChange",
+          "when": "agentDock.changeNavigation",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "agentDock.acceptCurrentChange",
+          "when": "false"
+        },
+        {
+          "command": "agentDock.revertCurrentChange",
+          "when": "false"
+        },
+        {
+          "command": "agentDock.acceptHunk",
+          "when": "false"
+        },
+        {
+          "command": "agentDock.rejectHunk",
+          "when": "false"
+        },
+        {
+          "command": "agentDock.previousChange",
+          "when": "agentDock.changeNavigation"
+        },
+        {
+          "command": "agentDock.nextChange",
+          "when": "agentDock.changeNavigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "agentDock.acceptCurrentChange",
+        "key": "alt+y",
+        "when": "agentDock.canDecideHunk && editorTextFocus"
+      },
+      {
+        "command": "agentDock.revertCurrentChange",
+        "key": "alt+n",
+        "when": "agentDock.canDecideHunk && editorTextFocus"
+      },
+      {
+        "command": "agentDock.nextChange",
+        "key": "alt+down",
+        "when": "agentDock.changeNavigation && editorTextFocus && isInDiffEditor"
+      },
+      {
+        "command": "agentDock.previousChange",
+        "key": "alt+up",
+        "when": "agentDock.changeNavigation && editorTextFocus && isInDiffEditor"
+      }
+    ],
+    "configuration": {
+      "title": "AgentDock",
+      "properties": {
+        "agentDock.showQuotaInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the current provider's remaining quota in the VS Code status bar. Click to open the AgentDock usage dashboard."
+        },
+        "agentDock.usageDashboardDefaultGrouping": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week",
+            "month"
+          ],
+          "default": "day",
+          "description": "Default calendar grouping for the AgentDock usage dashboard. Weeks start on Monday."
+        },
+        "agentDock.blockActionsStyle": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "lens",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Show a card with Accept, Reject and Next change buttons above each pending block, falling back to the code lens row when the editor-inset API is unavailable.",
+            "Always use the compact Accept | Reject | Next change code lens row.",
+            "No in-editor block actions; review files from the AgentDock sidebar."
+          ],
+          "default": "auto",
+          "description": "In-editor actions above each pending change block in AgentDock diff editors. Opening a review enables diffEditor.codeLens so the fallback row renders."
+        },
+        "agentDock.showFileCounterInEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a File i/n button at the top of AgentDock native diff editors. Click to choose a changed file. The button scrolls with the code."
+        },
+        "agentDock.codexCLIId": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Managed Codex CLI entry selected for this project. Set through Manage CLIs; follows executable path edits. Takes precedence over codexExecutable."
+        },
+        "agentDock.claudeCLIId": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Managed Claude CLI entry selected for this project. Set through Manage CLIs; follows executable path edits. Takes precedence over claudeExecutable."
+        },
+        "agentDock.codexExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to an enabled native Codex executable in Manage CLIs. Uses the managed default or terminal PATH order when empty. A managed project entry ID takes precedence.",
+          "scope": "resource"
+        },
+        "agentDock.claudeExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to an enabled Claude executable in Manage CLIs. A managed project entry ID takes precedence.",
+          "scope": "resource"
+        },
+        "agentDock.codexCLISelection": {
+          "type": "string",
+          "enum": [
+            "default",
+            "terminal"
+          ],
+          "default": "default",
+          "scope": "resource",
+          "description": "Use the managed default/explicit executable, or the enabled terminal CLI on PATH. Configure this in Manage CLIs."
+        },
+        "agentDock.claudeCLISelection": {
+          "type": "string",
+          "enum": [
+            "default",
+            "terminal"
+          ],
+          "default": "default",
+          "scope": "resource",
+          "description": "Use the managed default/explicit executable, or the enabled terminal CLI on PATH. Configure this in Manage CLIs."
+        },
+        "agentDock.autoTrackExternalChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start change tracking in trusted local workspaces that have no saved tracking choice. Pause/resume is remembered separately per workspace."
+        }
+      }
+    },
+    "walkthroughs": [
+      {
+        "id": "gettingStarted",
+        "title": "Welcome to AgentDock",
+        "description": "Use Codex and Claude your way. Track saved changes, review code and understand your usage.",
+        "steps": [
+          {
+            "id": "tracking",
+            "title": "1. Find change tracking in the status bar",
+            "description": "Tracking starts automatically in trusted local workspaces. Click Tracking in the bottom status bar to control it. Manual saves are included.\n[Open tracking controls](command:agentDock.trackingControls)",
+            "media": {
+              "markdown": "docs/onboarding/tracking.md"
+            },
+            "completionEvents": [
+              "onCommand:agentDock.trackingControls"
+            ]
+          },
+          {
+            "id": "review",
+            "title": "2. Review files and individual change blocks",
+            "description": "Keep applied code with Accept, or restore a saved baseline with Revert.\n[Open AgentDock](command:agentDock.open)",
+            "media": {
+              "markdown": "docs/onboarding/review.md"
+            },
+            "completionEvents": [
+              "onCommand:agentDock.previewReview"
+            ]
+          },
+          {
+            "id": "chat",
+            "title": "3. Connect your native CLIs",
+            "description": "Use the original Codex/Claude tools or chat here. Tracking works with both workflows.\n[Manage CLIs](command:agentDock.manageCLIs)",
+            "media": {
+              "markdown": "docs/onboarding/chat.md"
+            },
+            "completionEvents": [
+              "onCommand:agentDock.manageCLIs"
+            ]
+          },
+          {
+            "id": "usage",
+            "title": "4. Check account, quota and token usage",
+            "description": "See where every number comes from: API, Local or Estimate.\n[Open dashboard](command:agentDock.openSettings)",
+            "media": {
+              "markdown": "docs/onboarding/usage.md"
+            },
+            "completionEvents": [
+              "onCommand:agentDock.openSettings"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:watch": "node scripts/dev.mjs --watch",
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:extension": "npm run build && node scripts/test-extension.mjs",
+    "test:changes:navigation": "npm run build && node scripts/test-change-navigation.mjs",
+    "test:checkpoints": "npm run build && node scripts/test-checkpoints.mjs",
+    "test:review:live": "npm run build && node scripts/test-review-live.mjs",
+    "test:review:large": "npm run build && node scripts/test-review-live.mjs --large",
+    "test:review:large-file": "npm run build && node scripts/test-review-live.mjs --large-file",
+    "test:stop:live": "npm run build && node scripts/test-stop-live.mjs",
+    "test:edit:live": "npm run build && node scripts/test-edit-live.mjs",
+    "test:access:live": "npm run build && node scripts/test-access-live.mjs",
+    "test:models:live": "npm run build && node scripts/test-models-live.mjs",
+    "test:accounts:live": "npm run build && node scripts/test-accounts-live.mjs",
+    "test:usage:accounts:live": "node scripts/test-usage-accounts-live.mjs",
+    "test:cache:live": "npm run build && node scripts/test-cache-live.mjs",
+    "test:attachments:live": "node scripts/test-attachments-live.mjs",
+    "test:usage:local": "node scripts/test-usage-local.mjs",
+    "test:settings:host": "npm run build && node scripts/test-settings-host.mjs",
+    "test:queue:host": "npm run build && node scripts/test-queue-host.mjs",
+    "test:cli:live": "npm run build && node scripts/test-cli-manager-live.mjs",
+    "test:context:history": "npm run build && node scripts/test-context-history.mjs",
+    "probe:providers": "node scripts/probe-providers.mjs",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links --skip-license --out artifacts/agent-dock-0.1.0.vsix",
+    "package:marketplace": "node scripts/package-marketplace.mjs",
+    "test:marketplace": "node scripts/test-marketplace.mjs",
+    "vscode:prepublish": "npm run build",
+    "sync:conversations": "node scripts/sync-conversations.mjs",
+    "test:external-review:host": "npm run build && node scripts/test-external-review-host.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.100.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "jsdom": "29.1.1",
+    "jsonc-parser": "^3.3.1",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.7",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.292",
+    "@vscode/codicons": "0.0.46-24",
+    "diff": "9.0.0",
+    "dompurify": "3.4.16",
+    "ignore": "^7.0.5",
+    "marked": "18.1.0"
+  }
+}

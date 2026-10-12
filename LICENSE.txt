@@ -1,0 +1,8 @@
+AgentDock
+
+All rights reserved.
+
+This repository does not grant a license to copy, modify, redistribute or
+sublicense AgentDock. Separate written permission from the rights holder is
+required. Third-party components retain their own licenses; their notices are
+included with the extension.

@@ -1,0 +1,12 @@
+import { build } from 'esbuild';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+await mkdir('artifacts', { recursive: true });
+await build({ entryPoints: ['src/providers/probe.ts'], outfile: 'artifacts/provider-probe.cjs', bundle: true, platform: 'node', format: 'cjs', target: 'node20' });
+const require = createRequire(import.meta.url);
+const { probeProviders } = require('../artifacts/provider-probe.cjs');
+const providers = await probeProviders();
+const report = { checkedAt: new Date().toISOString(), providers };
+await writeFile('artifacts/provider-probe.json', JSON.stringify(report, null, 2));
+console.log(JSON.stringify(report, null, 2));
+if (providers.some(provider => !provider.available)) process.exitCode = 1;

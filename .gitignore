@@ -1,0 +1,7 @@
+node_modules/
+dist/
+media/codicons/
+artifacts/
+.test-runtime/
+.vscode-test/
+*.vsix
