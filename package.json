@@ -2,12 +2,17 @@
   "name": "agent-tandem",
   "displayName": "AgentTandem — Claude Code & Codex Chat, Code Review & Usage",
   "description": "Chat with Claude Code and Codex, review code changes, restore checkpoints, resume conversations and track usage in VS Code.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "agent-tandem-local",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/coolbirdzik/agent-tandem.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/coolbirdzik/agent-tandem.git"
+  },
   "homepage": "https://github.com/coolbirdzik/agent-tandem#readme",
-  "bugs": { "url": "https://github.com/coolbirdzik/agent-tandem/issues" },
+  "bugs": {
+    "url": "https://github.com/coolbirdzik/agent-tandem/issues"
+  },
   "license": "UNLICENSED",
   "icon": "media/icon.png",
   "galleryBanner": {
