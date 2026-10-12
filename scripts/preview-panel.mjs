@@ -40,7 +40,7 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1'), pathname = url.pathname;
     if (pathname === '/') {
       const port = server.address().port, base = `http://127.0.0.1:${port}`;
-      const phase = url.searchParams.get('activity'), preview = ['preparing', 'working', 'waiting', 'finishing', 'stopping'].includes(phase) ? { ...state, chat: { requestId: 'preview', provider: 'Codex', conversationKey: state.conversation.conversation.key, status: 'running', phase: phase === 'waiting' ? 'working' : phase, prompts: phase === 'waiting' ? [{ id: 'preview-prompt', title: 'Allow reading the attached file?', detail: 'Preview approval' }] : [] } } : state;
+      const phase = url.searchParams.get('activity'), preview = ['preparing', 'working', 'waiting', 'finishing', 'stopping'].includes(phase) ? { ...structuredClone(state), chat: { requestId: 'preview', provider: 'Codex', conversationKey: state.conversation.conversation.key, status: 'running', phase: phase === 'waiting' ? 'working' : phase, prompts: phase === 'waiting' ? [{ id: 'preview-prompt', title: 'Allow reading the attached file?', detail: 'Preview approval' }] : [] } } : structuredClone(state);
       if (url.searchParams.get('external') === '1') { preview.review = { ...preview.review, externalTracking: true, notice: 'External changes: saved workspace edits from any app are tracked. The writer is not inferred.' }; preview.screen = 'changes'; }
       if (url.searchParams.get('groups') === '1') {
         const claude = { ...conversation, key: 'Claude:preview-claude', id: 'preview-claude', provider: 'Claude', title: 'Fix authentication redirects' };

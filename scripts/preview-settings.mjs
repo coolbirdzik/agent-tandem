@@ -1,11 +1,22 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';
+await mkdir('artifacts', { recursive: true });
 await build({ entryPoints: ['src/host/settings-html.ts'], outfile: 'artifacts/settings-html.cjs', bundle: true, platform: 'node', format: 'cjs' });
 const { settingsHtml } = createRequire(import.meta.url)('../artifacts/settings-html.cjs');
-const data = JSON.parse(await readFile('artifacts/usage-local.json', 'utf8'));
+const demo = process.argv.includes('--demo');
+const demoDate = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Saigon' }).format(Date.now());
+const data = demo ? {
+  days: Array.from({ length: 7 }, (_, index) => ['Codex', 'Claude'].map(provider => ({
+    day: new Date(`${demoDate}T12:00:00Z`).setUTCDate(new Date(`${demoDate}T12:00:00Z`).getUTCDate() - 6 + index),
+    provider, model: provider === 'Codex' ? 'Codex demo model' : 'Claude demo model',
+    input: 80000 + index * 12000, output: 4000 + index * 1000, cacheRead: 50000 + index * 8000,
+    cacheWrite: 0, reasoning: 0, total: 84000 + index * 13000, requests: 8 + index * 2,
+  }))).flat().map(row => ({ ...row, day: new Date(row.day).toISOString().slice(0, 10) })),
+  updatedAt: Date.now(), files: 12, unreadableFiles: 0, malformedLines: 0, undatedRecords: 0, duplicates: 0, oversizedLines: 0, timezone: 'Asia/Saigon',
+} : JSON.parse(await readFile('artifacts/usage-local.json', 'utf8'));
 // Demo identities and quota percentages; real token counts remain local-only.
 const now = Date.now(); data.updatedAt = now;
 const windows = (fiveHour, weekly) => [{ id: '5h', label: '5h', usedPercent: fiveHour, resetsAt: now + 3600000 }, { id: '7d', label: '7d', usedPercent: weekly, resetsAt: now + 3 * 86400000 }];

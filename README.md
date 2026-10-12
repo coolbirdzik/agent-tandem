@@ -41,6 +41,45 @@ Choose **Codex** or **Claude Code**, pick an available model, and send a message
 
 The composer keeps model, reasoning and access controls together. Tool output stays in the conversation, pending changes stay reviewable, and scrolling up while a reply streams keeps your reading position.
 
+### Models, permissions and attachments
+
+- Switch between Codex and Claude Code and select models exposed by your local CLI. Adjust reasoning effort and use Codex Fast mode on supported models/accounts.
+- Choose an access mode and answer tool approvals in the panel. Provider-supported remembered permissions disclose their scope before you apply them.
+- Paste or drag images into the composer, or use the attachment picker. Preview and remove attachments before sending. PDFs and other file types follow each provider's capabilities.
+- Stop an active turn, keep drafts separate for each conversation, or queue your next instructions. Queued messages can be edited, removed, paused and resumed; they remain paused after a reload until you resume them.
+
+## Pick up any project conversation
+
+![Project history with Codex and Claude conversations](media/screenshots/history.jpg)
+
+Find conversations by workspace, provider or search text. AgentDock reads native Codex and Claude history, refreshes as sessions change, and remembers your selection. Open a conversation in the sidebar or reuse an editor tab when you want more room.
+
+**Edit and resend** branches an earlier message while preserving the original conversation. **Restore** previews a checkpoint recorded before an AgentDock turn. Code restore and conversation branching are separate actions, so you can decide which context and which files to keep.
+
+## Understand usage, accounts and quota
+
+![AgentDock dashboard showing provider account activity](media/screenshots/dashboard.jpg)
+
+The dashboard separates three kinds of evidence:
+
+| Label | What it means |
+| --- | --- |
+| **API** | Activity or current quota returned by the provider when supported. |
+| **Local** | Token records observed on this machine, broken down by account, provider, model and date. |
+| **Estimate** | API equivalent cost or observed token-to-quota trends; these are not subscription billing statements. |
+
+Filter by date range, account, provider and model; group daily, weekly or monthly activity. Inspect input/output tokens, cache reads/writes, reasoning tokens when reported, account limits and reset times. The composer shows context usage and cache TTL, and the optional status-bar quota indicator opens the dashboard directly.
+
+## Keep restore history under control
+
+![AgentDock Storage with snapshot categories and restore history](media/screenshots/storage.jpg)
+
+Inspect local storage by category and conversation. Filter restore history by project and type, select the history you no longer need, then review its deletion preview. Snapshot cleanup targets unreferenced data older than 24 hours and protects pending review, active captures, checkpoints and Undo.
+
+**Manage CLIs** keeps installations separate from the project: choose enabled native executables, set provider defaults or project overrides, scan for installations, and inspect diagnostics. The Getting Started walkthrough links tracking, review, CLI setup and usage in one place.
+
+*All screenshots use demonstration conversations, accounts and usage values rendered by the actual AgentDock interface.*
+
 ## Get started
 
 1. Install AgentDock in VS Code **1.100 or newer** and open a local project folder.
