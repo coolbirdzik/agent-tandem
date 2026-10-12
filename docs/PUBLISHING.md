@@ -38,18 +38,22 @@ Pushes to `main` and pull requests targeting `main` create **preview** artifacts
 
 Pushing a semantic version tag such as `v0.1.1` creates a GitHub Release after the unit tests and stable VS Code host tests pass. The tag must match the version in `package.json` and point to a commit reachable from `origin/main`. Tags on unmerged feature branches are rejected. The workflow never bumps versions or pushes commits on your behalf.
 
-For example, when preparing version 0.1.1:
+Start from a clean, up-to-date `main`, choose one bump command, then release:
 
 ```powershell
 git switch main
 git pull --ff-only
-npm version 0.1.1 --no-git-tag-version
-git add package.json package-lock.json
-git commit -m "chore: bump version to 0.1.1"
-git tag -a v0.1.1 -m "AgentDock 0.1.1"
-git push origin main
-git push origin v0.1.1
+npm run bump:patch
+npm run release
 ```
+
+| Command | Example starting at `0.1.0` |
+| --- | --- |
+| `npm run bump:patch` | `0.1.1` — fixes |
+| `npm run bump:minor` | `0.2.0` — features |
+| `npm run bump:major` | `1.0.0` — breaking changes |
+
+Each bump updates `package.json` and `package-lock.json`, creates a version commit and an annotated `vX.Y.Z` tag locally. `npm run release` checks that the tag points to HEAD and local main includes the latest remote main, then atomically pushes main and only that version tag to origin. Both commands require a clean `main`. Run release immediately after bump; do not insert another commit. If a network failure interrupts the push, run `npm run release` again without bumping again.
 
 The workflow checks out the complete history and generates release notes from the preceding reachable version tag to the tagged commit, following the [CB-File-Hub release workflow](https://github.com/coolbirdzik/CB-File-Hub/blob/main/.github/workflows/release.yml). The first release includes the initial commit history. Merge commits, `ci:` housekeeping and release-version bump commits are omitted. Notes contain commit links and a full compare link when a preceding tag exists.
 

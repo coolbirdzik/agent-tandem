@@ -451,6 +451,10 @@
     "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links --skip-license --out artifacts/agent-dock-0.1.0.vsix",
     "package:marketplace": "node scripts/package-marketplace.mjs",
     "test:marketplace": "node scripts/test-marketplace.mjs",
+    "bump:patch": "node scripts/release.mjs bump patch",
+    "bump:minor": "node scripts/release.mjs bump minor",
+    "bump:major": "node scripts/release.mjs bump major",
+    "release": "node scripts/release.mjs push",
     "vscode:prepublish": "npm run build",
     "sync:conversations": "node scripts/sync-conversations.mjs",
     "test:external-review:host": "npm run build && node scripts/test-external-review-host.mjs"
