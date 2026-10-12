@@ -2,13 +2,23 @@
   "name": "agent-dock",
   "displayName": "AgentDock — Claude Code & Codex UI for VS Code",
   "description": "A companion for Claude Code and Codex: review changes, restore checkpoints, resume conversations and understand your usage in VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "agent-dock-local",
   "private": true,
   "license": "UNLICENSED",
   "icon": "media/icon.png",
-  "galleryBanner": { "color": "#242623", "theme": "dark" },
-  "keywords": ["claude", "codex", "ai", "code review", "checkpoints", "chat"],
+  "galleryBanner": {
+    "color": "#242623",
+    "theme": "dark"
+  },
+  "keywords": [
+    "claude",
+    "codex",
+    "ai",
+    "code review",
+    "checkpoints",
+    "chat"
+  ],
   "engines": {
     "vscode": "^1.100.0"
   },
