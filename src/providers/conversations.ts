@@ -287,6 +287,17 @@ export class ProjectConversations {
   }
   belongs(cwd: string, project: string) { return (this.scope.get(project) ?? [project]).some(root => belongsToProject(cwd, root)); }
   private allowed(cwd: string, project: string) { return (this.scope.get(project) ?? [project]).some(root => projectHistoryAllowed(cwd, root)); }
+  private async allowedCanonical(cwd: string, project: string) {
+    if (this.allowed(cwd, project)) return true;
+    // Native metadata can use an 8.3 path or a different junction from the
+    // selected workspace. Compare both canonical directories on a scope miss.
+    let canonical: string;
+    try { canonical = await realpath(cwd); } catch { return false; }
+    if (!this.allowed(canonical, project)) return false;
+    const roots = this.scope.get(project);
+    if (roots && !roots.includes(cwd)) roots.push(cwd);
+    return true;
+  }
   private async listCodex(project: string): Promise<Conversation[]> {
     this.codexErrors = [];
     const native = await codexSessionMetadata(this.codexHome);
@@ -307,7 +318,7 @@ export class ProjectConversations {
         }
       }
       const saved = native.get(metadata.id), cwd = saved?.cwd ?? metadata.cwd;
-      if (saved?.archived || !this.allowed(cwd, project)) return;
+      if (saved?.archived || !await this.allowedCanonical(cwd, project)) return;
       try {
         const details = await stat(file), key = `Codex:${metadata.id}`;
         const revision = `${details.mtimeMs}:${details.size}`;
@@ -333,7 +344,7 @@ export class ProjectConversations {
       const cwd = session.cwd ?? (index === 0 ? project : undefined);
       // Scoped lookup knows where the transcript was stored. A later cwd inside
       // the session must not redirect message lookup to another project bucket.
-      if (cwd && this.allowed(cwd, project) && !sessions.has(session.sessionId)) sessions.set(session.sessionId, { session: { ...session, cwd }, dir: index === 0 ? project : cwd });
+      if (cwd && await this.allowedCanonical(cwd, project) && !sessions.has(session.sessionId)) sessions.set(session.sessionId, { session: { ...session, cwd }, dir: index === 0 ? project : cwd });
     }
     this.claudeDirs.clear();
     return [...sessions.values()].map(({ session, dir }) => {

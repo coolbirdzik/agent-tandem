@@ -50,6 +50,8 @@ When changing VS Code integration, run the matching host scenario:
 
 The host scenarios launch isolated VS Code profiles. Reports are written to `artifacts/`; generated workspaces live under `.test-runtime/`. Both folders are ignored by Git. Refer to [Development](docs/DEVELOPMENT.md) for provider-specific live tests and detailed behavior.
 
+CI targets `main`. Its test diagnostics remain available after a failure. Maintainers can create a GitHub Release by pushing a matching `vX.Y.Z` tag on main's history; see the [publishing guide](docs/PUBLISHING.md) for versioning and git-history release notes.
+
 ## Preserve the review contract
 
 - Accept keeps already-applied code and marks it reviewed. Revert and Restore preview their scope and preserve newer edits or unsaved buffers when a conflict is detected.

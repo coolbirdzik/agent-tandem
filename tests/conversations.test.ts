@@ -75,6 +75,21 @@ describe('Project conversation sync', () => {
     expect(index.conversations).toHaveLength(1);
     expect((await reader.read(index.conversations[0]!, '/repo')).messages[0]?.text).toBe('Original workspace conversation');
   });
+  it('matches different native and workspace junctions without including another project', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agentdock-native-alias-')); roots.push(root);
+    const canonical = path.join(root, 'canonical'), nativeAlias = path.join(root, 'native'), workspaceAlias = path.join(root, 'workspace');
+    const other = path.join(root, 'other'), home = path.join(root, 'codex');
+    await mkdir(canonical); await mkdir(other); await mkdir(path.join(home, 'sessions'), { recursive: true });
+    for (const alias of [nativeAlias, workspaceAlias]) await symlink(canonical, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    await writeFile(path.join(home, 'sessions/native.jsonl'), line('session_meta', { id: 'native', cwd: nativeAlias }) + line('event_msg', { type: 'user_message', message: 'Native alias' }));
+    const sdk: ClaudeHistoryAPI = { listSessions: async () => [
+      { sessionId: 'native', cwd: nativeAlias, summary: 'Native alias', lastModified: 1 },
+      { sessionId: 'other', cwd: other, summary: 'Unrelated', lastModified: 2 },
+    ], getSessionMessages: async () => [] };
+    const reader = new ProjectConversations(async () => sdk, home), index = await reader.list(workspaceAlias);
+    expect(index.conversations.map(row => row.key).sort()).toEqual(['Claude:native', 'Codex:native']);
+    for (const conversation of index.conversations) await expect(reader.read(conversation, workspaceAlias)).resolves.toBeDefined();
+  });
   const plugins = '<recommended_plugins>\nHere is a list of plugins that are available but not installed.\n\n- Dropbox (app-69b31dc2110c8191b8b47dc98fe5a052@openai-curated-remote)\n- GitHub (github@openai-curated-remote)\n</recommended_plugins>';
   const environment = '<environment_context>\n  <cwd>H:\\Code\\aot-new</cwd>\n  <shell>powershell</shell>\n  <current_date>2026-10-08</current_date>\n  <timezone>Asia/Saigon</timezone>\n  <filesystem><workspace_roots><root>H:\\Code\\aot-new</root></workspace_roots><permission_profile type="managed"><file_system type="restricted" /></permission_profile></filesystem>\n</environment_context>';
   const response = (text: string, id: string) => ({ type: 'response_item', payload: { type: 'message', role: 'user', id, content: [{ type: 'input_text', text }] } });

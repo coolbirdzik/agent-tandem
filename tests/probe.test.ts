@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, unlink, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, unlink, symlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,7 +8,7 @@ const temporary: string[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(temporary.splice(0).map(folder => rm(folder, { recursive: true, force: true }))); });
 describe.skipIf(process.platform !== 'win32')('Windows provider discovery', () => {
   async function executables() {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agent-dock-provider-')); temporary.push(root);
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'agent-dock-provider-'))); temporary.push(root);
     const wrapperFolder = path.join(root, 'npm'), nativeFolder = path.join(root, 'native');
     const architecture = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
     const wrapper = path.join(wrapperFolder, `node_modules/@openai/codex/vendor/${architecture}-pc-windows-msvc/codex/codex.exe`);

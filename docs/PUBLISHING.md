@@ -32,7 +32,32 @@ The workflow derives content URLs from the GitHub repository and the branch or t
 4. Open the completed run and download **agent-dock-vsix-…** from **Artifacts**.
 5. Extract the downloaded ZIP. The `.vsix` inside is the extension package; keep its `.sha256` file for verification.
 
-Pushes to `main`/`master` and pull requests create **preview** artifacts. Use a manual run or a matching version tag for an upload artifact. For a tag release, bump `package.json` and `package-lock.json` first, then push a tag such as `v0.1.1`. The tag must match the manifest version. The configured publisher is `coolbirdv`; the repository variable can override it.
+Pushes to `main` and pull requests targeting `main` create **preview** artifacts. A manual run on `main` builds an upload package without creating a GitHub Release. The configured publisher is `coolbirdv`; the repository variable can override it.
+
+### Automatic GitHub Releases from main tags
+
+Pushing a semantic version tag such as `v0.1.1` creates a GitHub Release after the unit tests and stable VS Code host tests pass. The tag must match the version in `package.json` and point to a commit reachable from `origin/main`. Tags on unmerged feature branches are rejected. The workflow never bumps versions or pushes commits on your behalf.
+
+For example, when preparing version 0.1.1:
+
+```powershell
+git switch main
+git pull --ff-only
+npm version 0.1.1 --no-git-tag-version
+git add package.json package-lock.json
+git commit -m "chore: bump version to 0.1.1"
+git tag -a v0.1.1 -m "AgentDock 0.1.1"
+git push origin main
+git push origin v0.1.1
+```
+
+The workflow checks out the complete history and generates release notes from the preceding reachable version tag to the tagged commit, following the [CB-File-Hub release workflow](https://github.com/coolbirdzik/CB-File-Hub/blob/main/.github/workflows/release.yml). The first release includes the initial commit history. Merge commits, `ci:` housekeeping and release-version bump commits are omitted. Notes contain commit links and a full compare link when a preceding tag exists.
+
+The GitHub Release includes the VSIX and its SHA-256 checksum. The same git-history notes are prepended to the packaged `CHANGELOG.md`; `dist/release.json` records the source commit and tags. Source files are unchanged. Re-running the release job updates the assets/notes for the same release.
+
+Only the release job receives `contents: write`; test/build jobs remain read-only. GitHub Release creation uses the workflow's `GITHUB_TOKEN`, without a separate PAT. Marketplace submission is still manual.
+
+Failed unit or host tests leave a downloadable **agent-dock-test-diagnostics** artifact. It contains the unit JSON report and available VS Code logs/restart reports, so failures can be diagnosed even when packaging or release is skipped.
 
 ### Local PowerShell
 

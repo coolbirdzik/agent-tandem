@@ -2,13 +2,14 @@ name: Build Marketplace VSIX
 
 on:
   pull_request:
+    branches: [main]
   push:
-    branches: [main, master]
-    tags: ['v*']
+    branches: [main]
+    tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
       publisher:
-        description: Marketplace publisher ID (the ID, not the display name)
+        description: Marketplace publisher ID
         required: true
         default: coolbirdv
         type: string
@@ -18,39 +19,94 @@ permissions:
 
 jobs:
   build:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref_type == 'tag'
     runs-on: windows-latest
     timeout-minutes: 20
+    outputs:
+      release_tag: ${{ steps.release.outputs.tag }}
     env:
       MARKETPLACE_PUBLISHER: ${{ inputs.publisher || vars.MARKETPLACE_PUBLISHER || 'coolbirdv' }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: npm
+      - name: Validate main tag and prepare git-history notes
+        if: github.ref_type == 'tag'
+        id: release
+        run: node scripts/prepare-release.mjs
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test -- --maxWorkers=2 --testTimeout=15000
+      - name: Run unit tests and retain machine-readable results
+        run: npm test -- --maxWorkers=2 --testTimeout=15000 --reporter=default --reporter=json --outputFile=artifacts/unit-tests.json
       - name: Build upload package or preview
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -or '${{ github.event_name }}' -eq 'workflow_dispatch') {
-            if (-not $env:MARKETPLACE_PUBLISHER) { throw 'Set the MARKETPLACE_PUBLISHER repository variable or provide the workflow input.' }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -or $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
             npm run package:marketplace
           } else {
             npm run package:marketplace -- --preview
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test the stable staged extension in VS Code
-        run: npm run test:marketplace
-      - uses: actions/upload-artifact@v6
+        shell: pwsh
+        run: |
+          npm run test:marketplace 2>&1 | Tee-Object -FilePath artifacts/marketplace-host.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload VSIX and release notes
+        uses: actions/upload-artifact@v6
         with:
-          name: agent-dock-vsix-${{ github.run_number }}
+          name: agent-dock-vsix
           path: |
             artifacts/*.vsix
             artifacts/*.vsix.sha256
             artifacts/marketplace-build.json
+            artifacts/release-notes.md
+            artifacts/release-history.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Upload test diagnostics even after failure
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: agent-dock-test-diagnostics
+          path: |
+            artifacts/unit-tests.json
+            artifacts/marketplace-host.log
             artifacts/packaged/extension-test.json
             artifacts/packaged/extension-restart-test.json
-          if-no-files-found: error
+          if-no-files-found: warn
+          overwrite: true
           retention-days: 30
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag' && needs.build.outputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: agent-dock-vsix
+          path: artifacts
+      - name: Create or update the tagged GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/*.vsix artifacts/*.vsix.sha256 --clobber
+            gh release edit "$RELEASE_TAG" --title "AgentDock $RELEASE_TAG" --notes-file artifacts/release-notes.md
+          else
+            gh release create "$RELEASE_TAG" artifacts/*.vsix artifacts/*.vsix.sha256 --verify-tag --target main --title "AgentDock $RELEASE_TAG" --notes-file artifacts/release-notes.md
+          fi

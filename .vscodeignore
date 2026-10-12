@@ -6,6 +6,7 @@
 !LICENSE.txt
 !media/**
 !dist/extension.js
+!dist/release.json
 !dist/webview.js
 !dist/settings.js
 !dist/claude-history.mjs
