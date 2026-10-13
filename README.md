@@ -34,13 +34,25 @@ Open **History** to find and resume project conversations. **Edit and resend** b
 
 ![Project history with Codex and Claude conversations](media/screenshots/history.png)
 
+## Manage accounts
+
+Open **AgentTandem: Manage Accounts** for **Codex, Claude Code, Cursor or Antigravity**.
+
+1. Select **Add account**, choose an app, then sign in or **Save current sign-in**. You can also **Import JSON**.
+2. Filter by app or search your saved accounts. Select **Switch account** to change the default CLI/IDE sign-in; finish active turns and close IDE windows first.
+3. Follow the switch modal's loading status and timestamped log. **Hide** keeps the switch running; **View switch log** reopens its result. Reopen the IDE after switching.
+
+![Account management with app filters, search and saved Codex, Claude Code, Cursor and Antigravity profiles using fictional accounts](media/screenshots/accounts.png)
+
+![Account switch progress modal with timestamped steps using a fictional Codex Work profile](media/screenshots/account-switch.png)
+
+Cursor/Antigravity quota stays in their app.
+
 ## Usage and storage
 
 Run **AgentTandem: Open Settings and Usage Dashboard** to view usage **By account**. Select **View usage** for account details or **All accounts** for combined totals. Filter by date, provider or model. Estimates are separate from subscription billing.
 
 Select a **Conversation** to inspect its tokens, cache, models and cost. **Quota burn** shows observed % per hour and projected exhaustion.
-
-Open **Accounts → Add account** for **Codex, Claude Code, Cursor or Antigravity**. Sign in or **Save current sign-in**, then filter or search your saved accounts. **Switch account** updates the default CLI/IDE sign-in; finish active turns and close IDE windows first. Cursor/Antigravity quota stays in their app.
 
 Open **Storage** to inspect snapshots, select restore history and preview cleanup before deleting it.
 
@@ -48,7 +60,7 @@ Open **Storage** to inspect snapshots, select restore history and preview cleanu
 
 ![AgentTandem Storage with snapshot categories and restore history](media/screenshots/storage.png)
 
-*Screenshots show the actual interface with demonstration data.*
+*Screenshots show the actual interface with demonstration data. Account names, emails and switch logs are fictional.*
 
 See [Contributing](CONTRIBUTING.md), [Development](docs/DEVELOPMENT.md) and [Release notes](CHANGELOG.md).
 
