@@ -12,6 +12,7 @@ import { reviewHunks, textSnapshot, encodeSnapshot, type ReviewHunk } from './re
 import { withStorageLock } from './storage-lock';
 import { captureConversations, type ReviewCapture, type ReviewConversation, type ConversationEdit } from './review-conversations';
 import { reviewGroup } from './review-groups';
+import { imageSnapshots, type ImageComparison } from './media-preview';
 
 const execute = promisify(execFile);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -29,6 +30,7 @@ export interface ReviewPreview { path: string; patch?: string; notice?: string; 
 export interface ReviewWebviewFile extends ReviewFile {
   beforeText?: string; afterText?: string; hunks: ReviewHunk[];
   beforeSize: number; afterSize: number; notice?: string;
+  images?: ImageComparison;
 }
 export interface CheckpointPlan { target: string; current: string; revision: string; files: ReviewFile[] }
 
@@ -532,12 +534,14 @@ export class ReviewStore {
     if (!files.length) throw new Error('Choose a pending file change.');
     return files.map(file => ({ ...file }));
   }); }
-  /** Bounded, immutable text for the shared Webview review editor. */
+  /** Bounded, immutable text or images for the shared Webview review editor. */
   webviewFile(request: ReviewRequest) { return this.serial(async (): Promise<ReviewWebviewFile> => {
     if (!request.file) throw new Error('Choose a file change.');
     const value = await this.load(request.project), file = this.selected(value, request)[0]!;
     const [left, right] = await Promise.all([file.before, file.after].map(id => id ? this.history.inspectBlob(id) : { size: 0, binary: false }));
     const result: ReviewWebviewFile = { ...file, beforeSize: left!.size, afterSize: right!.size, hunks: [] };
+    const images = await imageSnapshots(this.history, file.path, file.before, file.after);
+    if (images) return { ...result, images, notice: 'Image snapshots · review the whole file.' };
     if (file.binary || left!.binary || right!.binary) return { ...result, notice: 'Binary file. Review the whole file or open its saved snapshots in the native editor.' };
     if (left!.size + right!.size > 4 * 1024 * 1024) return { ...result, notice: 'Large file. Review the whole file or open its full saved snapshots in the native editor.' };
     try {

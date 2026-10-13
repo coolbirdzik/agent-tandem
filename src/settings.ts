@@ -1,7 +1,7 @@
 import { emptyTotals, localDay, periodKey, usageBreakdown, type TokenTotals, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
 import type { ConversationProvider } from './providers/conversations';
 import { PRICING_CHECKED_AT, PRICING_SOURCES, type ApiCost } from './core/api-pricing';
-import { mergeQuotaObservations, quotaEstimates, quotaObservations, quotaTrends } from './core/quota-estimate';
+import { mergeQuotaObservations, quotaEstimates, quotaMeters, quotaMeterKey, quotaObservations, quotaTrends } from './core/quota-estimate';
 import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-account';
 import { apiActivityBreakdown } from './core/api-token-activity';
 
@@ -182,17 +182,22 @@ function renderQuotaEstimates() {
     heading.append(providerIcon(provider), node('span', provider === 'Claude' ? 'Claude Code' : provider)); item.append(heading);
     const identity = usageAccount(provider, state?.accounts?.[provider]?.account);
     if (identity) item.append(node('p', usageAccountLabel(identity), 'muted quota-estimate-account'));
-    if (!state || (state.status === 'loading' && !state.data && !state.quotaHistory?.length)) { const loading = node('div'); loadingRows(loading, 2); item.append(loading); root.append(item); continue; }
+    if (!state || (state.status === 'loading' && !state.data && !state.quotaHistory?.length && !state.quotaBaselines?.length && !quotaMeters(provider, state.accounts?.[provider]).length)) { const loading = node('div'); loadingRows(loading, 2); item.append(loading); root.append(item); continue; }
     const account = state.accounts?.[provider], estimates = quotaEstimates(provider, account, state.data);
+    const meters = quotaMeters(provider, account);
     const history = mergeQuotaObservations(state.quotaHistory ?? [], quotaObservations(provider, account, state.data));
     for (const trend of quotaTrends(provider, account, history)) {
       const estimate = estimates.find(row => row.label === trend.label)!;
+      const meter = meters.find(row => row.label === trend.label);
+      const baseline = meter && state.quotaBaselines?.find(row => quotaMeterKey(row.start) === quotaMeterKey(meter));
+      const waiting = baseline ? 'API baseline saved · Waiting for tokens and quota usage to increase' : meter ? 'Collecting API baseline · Refresh to start observing quota changes' : estimate.reason === 'No tokens attributed to this account in this window' ? 'No local tokens matched to this account yet. New chats in AgentTandem record account-matched usage.' : estimate.reason;
       const row = node('div', undefined, 'quota-estimate-row'), label = node('div', undefined, 'quota-estimate-label');
       label.append(node('strong', estimate.label), node('span', estimate.usedPercent === undefined ? '—' : `${estimate.usedPercent}% used`, 'muted')); row.append(label);
-      if (trend.tokensPerPercent === undefined) row.append(node('p', estimate.reason, 'muted'));
+      if (trend.tokensPerPercent === undefined) row.append(node('p', waiting, 'muted'));
       else {
         const amount = node('strong', `≈ ${compact(trend.tokensPerPercent)} tokens / 1%`, 'quota-estimate-value'); amount.title = `${number(Math.round(trend.tokensPerPercent))} tokens per percentage point`;
         row.append(amount, node('p', `All observed cycles · ${trend.observations.length} ${trend.observations.length === 1 ? 'cycle' : 'cycles'} · All projects & models`, 'muted'));
+        row.append(node('p', trend.source === 'API' ? 'API counters · token increase ÷ quota percentage-point increase' : 'Local · account-matched token history', 'muted quota-estimate-source'));
         row.append(node('p', `Latest cycle ≈ ${compact(trend.latestTokensPerPercent!)} tokens / 1%`, 'quota-trend-latest'));
         if (trend.changePercent === undefined) row.append(node('p', 'Collecting baseline · Compare after another quota cycle', 'muted'));
         else {
@@ -203,7 +208,13 @@ function renderQuotaEstimates() {
           comparison.title = `Earlier cycles: ${number(Math.round(trend.baselineTokensPerPercent!))} tokens / 1%`;
           row.append(comparison);
         }
-        if (estimate.tokensPerPercent !== undefined) {
+        const latestApi = trend.source === 'API' && meter ? trend.observations.find(sample => sample.resetsAt === meter.resetsAt && (!baseline || sample.from >= baseline.start.to)) : undefined;
+        if (trend.source === 'API') {
+          if (latestApi) {
+            const rate = latestApi.observedTokens / latestApi.usedPercent;
+            row.append(node('p', `Current observed interval · ≈ ${compact(rate * 100)} at 100% · ≈ ${compact(rate * (100 - meter!.usedPercent))} left`, 'muted'));
+          } else row.append(node('p', `Current cycle · ${waiting}`, 'muted'));
+        } else if (estimate.tokensPerPercent !== undefined) {
           const detail = node('p', `Current cycle · ≈ ${compact(estimate.capacityTokens!)} at 100% · ≈ ${compact(estimate.remainingTokens!)} left`, 'muted');
           detail.title = `${number(estimate.observedTokens!)} local tokens from ${new Date(estimate.from!).toLocaleString()} to ${new Date(estimate.to!).toLocaleString()}`;
           row.append(detail);

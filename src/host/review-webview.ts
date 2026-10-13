@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import type { ReviewRequest, ReviewState, ReviewStore } from '../core/review';
-import type { ReviewEditorState } from '../core/review-webview';
+import { reviewContext, type ReviewEditorState } from '../core/review-webview';
 import { reviewGroup } from '../core/review-groups';
 import { reviewWebviewHtml } from './review-webview-html';
 
@@ -17,7 +17,7 @@ export class ReviewWebview implements vscode.Disposable {
   private pending?: ReturnType<typeof setTimeout>;
   private acting = false;
   constructor(private extensionUri: vscode.Uri, private reviews: ReviewStore,
-    private current: () => { project?: string; review?: ReviewState; busy: boolean },
+    private current: () => { project?: string; review?: ReviewState; busy: boolean; conversations?: readonly { key: string }[] },
     private invoke: (command: string, value?: unknown) => Promise<unknown>,
     private native: (request: ReviewRequest) => Promise<void>) {}
   get state(): ReviewEditorState { return this.model; }
@@ -44,7 +44,8 @@ export class ReviewWebview implements vscode.Disposable {
     if (current.project !== this.scope.project) {
       this.version++; this.signature = ''; this.model = { files: [], busy: false, notice: 'The workspace changed. Open its pending changes from Review.' }; this.post(); return;
     }
-    this.model = { ...this.model, busy, undo: current.review?.undo }; this.post();
+    const context = this.model.context;
+    this.model = { ...this.model, busy, undo: current.review?.undo, ...(context ? { context: { ...context, canOpenConversation: !!context.conversation && !!current.conversations?.some(item => item.key === context.conversation!.key) } } : {}) }; this.post();
     if (busy) return;
     const signature = `${current.project}:${current.review?.revision}:${this.scope.group ?? ''}:${this.scope.file ?? ''}`;
     if (signature === this.signature) return;
@@ -65,7 +66,10 @@ export class ReviewWebview implements vscode.Disposable {
     if (version !== this.version || !this.panel || latest.project !== scope.project || latest.review?.revision !== revision) { this.update(); return; }
     this.scope = { ...scope, revision: revision ?? scope.revision, file: selected?.path };
     this.signature = `${scope.project}:${revision}:${scope.group ?? ''}:${selected?.path ?? ''}`;
+    const context = selected ? reviewContext(current.review!.files, selected) : undefined;
+    if (context) context.canOpenConversation = !!context.conversation && !!latest.conversations?.some(item => item.key === context.conversation!.key);
     this.model = { project: scope.project, revision, group: scope.group, files: files.map(({ path, kind, additions, deletions }) => ({ path, kind, additions, deletions })), file, busy: this.acting || latest.busy, undo: latest.review?.undo, navigation,
+      context,
       ...(!files.length ? { notice: 'All changes in this review have been reviewed.' } : {}) };
     this.panel.title = file ? `${file.path.split(/[\\/]/).pop()} · AgentTandem Review` : 'AgentTandem · Review';
     this.post();
@@ -74,7 +78,7 @@ export class ReviewWebview implements vscode.Disposable {
     if (!this.panel) return;
     // Snapshot text is immutable for a revision; unrelated chat/usage updates
     // must not resend megabytes of source or disturb the reading position.
-    const key = JSON.stringify([this.model.project, this.model.revision, this.model.group, this.model.file?.path, this.model.busy, this.model.error, this.model.notice, this.model.undo?.id, this.model.navigation]);
+    const key = JSON.stringify([this.model.project, this.model.revision, this.model.group, this.model.file?.path, this.model.busy, this.model.error, this.model.notice, this.model.undo?.id, this.model.navigation, this.model.context?.canOpenConversation]);
     if (!force && key === this.posted) return;
     this.posted = key; void this.panel.webview.postMessage({ type: 'state', state: this.model });
   }
@@ -94,9 +98,19 @@ export class ReviewWebview implements vscode.Disposable {
       }
       if (data.type === 'refresh') { await this.invoke('agentTandem.refreshReview'); await this.load(); return; }
       if (data.type === 'undo') { if (this.model.undo) await this.invoke('agentTandem.undoRevert', { project: scope.project, id: this.model.undo.id }); await this.load(); return; }
+      if (data.type === 'selectAgentFile') {
+        const context = this.model.context;
+        if (data.file !== this.model.file?.path || !context || typeof data.target !== 'string' || !context.files.some(file => file.path === data.target)) throw new Error('Choose a file in this agent review.');
+        this.scope = { ...scope, group: context.group, file: data.target }; await this.load('first'); return;
+      }
       const file = this.model.file;
       if (!file || data.file !== file.path) throw new Error('Choose the current file change.');
       const request: ReviewRequest = { project: scope.project, revision: this.model.revision!, group: scope.group, file: file.path };
+      if (data.type === 'conversation') {
+        const conversation = this.model.context?.conversation;
+        if (!conversation || !current.conversations?.some(item => item.key === conversation.key)) throw new Error('This review has no available conversation.');
+        await this.invoke('agentTandem.openConversation', conversation.key); return;
+      }
       if (data.type === 'native') { await this.native(request); return; }
       if (data.type !== 'accept' && data.type !== 'reject') throw new Error('Unsupported review action.');
       if (data.hunk !== undefined && (typeof data.hunk !== 'string' || !file.hunks.some(hunk => hunk.id === data.hunk))) throw new Error('This block is no longer pending.');

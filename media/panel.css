@@ -153,10 +153,12 @@ h3{font-size:12px;font-weight:500}
 .message.user .message-author>span{font-weight:600}
 .message.user .message-text{line-height:1.6;color:var(--vscode-foreground)}
 .message-actions{display:flex;align-items:center;gap:4px;margin-left:auto;flex-shrink:0}
-.message-restore{display:inline-flex;align-items:center;gap:4px;padding:3px 5px;font-size:10px;color:var(--tandem-muted);background:transparent;border:0;border-radius:4px}
-.message-restore .codicon{font-size:12px}
-.message-restore:hover,.message-restore:focus-visible{background:var(--tandem-hover);color:var(--vscode-foreground)}
-.message-restore:disabled{opacity:.5}
+.message-restore{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:4px 9px;font-size:11px;font-weight:600;color:var(--tandem-muted);background:var(--tandem-control);border:1px solid var(--tandem-line);border-radius:5px;white-space:nowrap}
+.message-restore .codicon{font-size:14px}
+.message-restore[data-checkpoint-available=true]{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border-color:transparent}
+.message-restore:enabled:hover{background:var(--vscode-button-hoverBackground);color:var(--vscode-button-foreground)}
+.message-restore:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}
+.message-restore:disabled{opacity:.75}
 .checkpoint-undo{margin-top:9px;font-size:10px;padding:3px 0;color:var(--tandem-muted);background:transparent;border:0}
 .checkpoint-hint{margin:9px 0 0;font-size:10px;line-height:1.5;color:var(--tandem-muted)}
 #checkpoint-preview{margin:8px 20px 22px;padding:13px;border:1px solid var(--tandem-line);border-radius:8px;background:var(--tandem-control)}
@@ -246,7 +248,7 @@ summary{cursor:pointer;font-size:12px;color:var(--tandem-muted);padding:8px 0}
 #screen-changes>.section-heading h2{flex:1}
 #screen-changes>.cli-intro{margin:0 16px 15px;line-height:1.5}
 .conversation-change-caption{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.review-chat-link{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;padding:0;background:transparent;color:var(--tandem-muted)}
+.review-chat-link{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex-shrink:0;min-height:28px;padding:4px 8px;border:1px solid var(--tandem-line);border-radius:5px;background:transparent;color:var(--vscode-foreground);font-size:11px}
 .review-chat-link:hover{color:var(--vscode-foreground);background:var(--tandem-hover)}
 .revert-undo{display:flex;align-items:center;gap:7px;margin-bottom:14px;padding:8px 10px;border-radius:4px;background:var(--tandem-hover);font-size:11px}
 .revert-undo>span:not(.codicon){flex:1}

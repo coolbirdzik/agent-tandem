@@ -3,6 +3,7 @@ import { useReviewDiffLayout } from './diff-layout';
 import type { ChangeNavigation } from './change-navigation';
 import { assertPath, decodeText, type HistoryStore } from '../core/history';
 import type { ReviewStore, ReviewRequest } from '../core/review';
+import { imageMime } from '../core/media-preview';
 
 export function reviewSnapshotUri(hash: string | undefined, file: string): vscode.Uri {
   assertPath(file);
@@ -20,11 +21,17 @@ export class ReviewDocuments implements vscode.TextDocumentContentProvider, vsco
   constructor(private history: HistoryStore) {}
   dispose() { this.edits.dispose(); this.emitter.dispose(); }
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+    const hash = this.blob(uri);
+    if (!hash) return '';
+    const bytes = await this.history.readBlob(hash);
+    return decodeText(bytes) ?? `[Binary snapshot]\nFile: ${uri.path.slice(1)}\nSize: ${bytes.length} bytes\nSHA-256: ${hash}\n`;
+  }
+  blob(uri: vscode.Uri): string | undefined {
     assertPath(uri.path.slice(1));
     if (uri.scheme !== 'agenttandem-review' || uri.query || uri.fragment) throw new Error('Invalid review resource.');
-    if (uri.authority === 'empty') return '';
-    const bytes = await this.history.readBlob(uri.authority);
-    return decodeText(bytes) ?? `[Binary snapshot]\nFile: ${uri.path.slice(1)}\nSize: ${bytes.length} bytes\nSHA-256: ${uri.authority}\n`;
+    if (uri.authority === 'empty') return;
+    if (!/^[a-f0-9]{64}$/.test(uri.authority)) throw new Error('Invalid review snapshot.');
+    return uri.authority;
   }
 }
 
@@ -34,7 +41,7 @@ export async function openReviewChanges(reviews: ReviewStore, request: ReviewReq
   if (selectedIndex < 0) throw new Error('Choose a pending file change.');
   const comparisons = files.map(file => ({ file: file.path, original: reviewSnapshotUri(file.before, file.path), modified: reviewSnapshotUri(file.after, file.path), review: { project: request.project, revision: request.revision, ...(request.group ? { group: request.group } : {}) } }));
   if (!current()) return;
-  if (request.file || files.length === 1) {
+  if (request.file || files.length === 1 || files.some(file => imageMime(file.path))) {
     await navigation.openFile(comparisons, 'AgentTandem changes', selectedIndex);
     return;
   }

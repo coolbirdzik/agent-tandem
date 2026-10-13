@@ -82,7 +82,7 @@ The composer keeps model, reasoning and access controls together. Tool output st
 
 ## Pick up any project conversation
 
-![Project history with Codex and Claude conversations](media/screenshots/history.jpg)
+![Project history with Codex and Claude conversations](media/screenshots/history.png)
 
 Find conversations by workspace, provider or search text. AgentTandem reads native Codex and Claude history, refreshes as sessions change, and remembers your selection. Open a conversation in the sidebar or reuse an editor tab when you want more room.
 
@@ -90,7 +90,7 @@ Find conversations by workspace, provider or search text. AgentTandem reads nati
 
 ## Understand usage, accounts and quota
 
-![AgentTandem dashboard showing provider account activity](media/screenshots/dashboard.jpg)
+![AgentTandem dashboard showing provider account activity](media/screenshots/dashboard.png)
 
 The dashboard separates three kinds of evidence:
 
@@ -102,9 +102,11 @@ The dashboard separates three kinds of evidence:
 
 Filter by date range, account, provider and model; group daily, weekly or monthly activity. Inspect input/output tokens, cache reads/writes, reasoning tokens when reported, account limits and reset times. The composer shows context usage and cache TTL, and the optional status-bar quota indicator opens the dashboard directly.
 
+**Tokens per 1% quota** uses paired account API observations when cumulative token counters are available: token increase divided by quota percentage-point increase. The first observation saves a baseline across reloads; the ratio appears after both counters increase. API and account-matched Local measurements stay separate. Native history without account evidence is not assigned to the current login, and past quota cycles cannot be reconstructed without saved observations.
+
 ## Keep restore history under control
 
-![AgentTandem Storage with snapshot categories and restore history](media/screenshots/storage.jpg)
+![AgentTandem Storage with snapshot categories and restore history](media/screenshots/storage.png)
 
 Inspect local storage by category and conversation. Filter restore history by project and type, select the history you no longer need, then review its deletion preview. Snapshot cleanup targets unreferenced data older than 24 hours and protects pending review, active captures, checkpoints and Undo.
 
@@ -116,7 +118,15 @@ Inspect local storage by category and conversation. Filter restore history by pr
 
 ![AgentTandem Monaco diff with syntax highlighting, colored inline buttons and file navigation](media/screenshots/editor-diff.png)
 
-*Actual VS Code Development Host capture using demonstration files and a Marketplace-compatible manifest. The Monaco diff shows syntax highlighting, green Accept and red Reject buttons above each edit, plus separate change and file navigation.*
+*Actual VS Code Development Host capture using demonstration files and a Marketplace-compatible manifest. The Monaco diff shows syntax highlighting, compact green Accept and red Reject actions above each edit, plus separate change and file navigation.*
+
+![AgentTandem image diff showing saved Before and After artwork with whole-file Accept and Reject actions](media/screenshots/image-diff.png)
+
+Images show the saved **Before / After** versions side by side. Added or deleted images have an explicit empty side. **Accept file / Reject file** review the whole image, and file navigation moves between images and code. Image comparisons also work for recorded steps and cumulative changes.
+
+![AgentTandem review with the agent change list and a shortcut to its conversation](media/screenshots/agent-changes.png)
+
+Use **Agent changes** in the review header to open every pending file from the selected conversation. Select a file to keep reviewing within that group, or choose **Open conversation** to return to its chat in AgentTandem. Shared and unassigned edits stay separate from individual conversations.
 
 1. **Work.** Continue in your native agent, or send a turn through AgentTandem.
 2. **Inspect.** Open a changed file in the Monaco inline diff. Read its highlighted source and review one change, one file or the entire group.
@@ -133,7 +143,7 @@ Inspect local storage by category and conversation. Filter restore history by pr
 
 ## Choose your review editor
 
-**Local and Marketplace editions default to the Monaco review editor.** Open a pending file from Review, chat or the status bar to read its saved before/after snapshots. The full file has syntax highlighting, line numbers, red/green diff backgrounds, text selection and **Ctrl+F** search. Green **Accept**, red **Reject**, blue **Next change** and **Next file** buttons sit directly above each pending edit.
+**Local and Marketplace editions default to the Monaco review editor.** Open a pending file from Review, chat or the status bar to read its saved before/after snapshots. The full file has syntax highlighting, line numbers, red/green diff backgrounds, text selection and **Ctrl+F** search. Compact green **Accept** and red **Reject** actions sit directly above each pending edit, separated from the neutral **Next change** and **Next file** controls.
 
 **Next change** (`Alt+Down`, previous: `Alt+Up`) visits individual edits and continues across files. **Next file** (`Alt+PageDown`, previous: `Alt+PageUp`) skips the remaining edits in the current file. Use the filename dropdown to jump directly to a file. Navigation retains the current conversation/group scope and wraps at the ends.
 
@@ -149,7 +159,7 @@ Monaco is bundled inside the extension and works offline. It highlights supporte
 
 The **Native diff** button opens the same snapshots in VS Code's editor. Set `agentTandem.reviewEditor` to `native` to use that editor by default. Native Accept/Reject actions remain CodeLens, styled by VS Code; `agentTandem.blockActionsStyle` controls those actions. Both review modes use the same snapshot decisions, scope checks and Undo. AgentTandem does not override the shared CodeLens font size.
 
-Binary files, combined snapshots over 4 MiB and timed-out snapshot diffs offer file-level decisions and a Native diff action. Monaco virtualizes visible lines while retaining the complete source model for scrolling and searching.
+Image snapshots up to 16 MiB per side are previewed when the browser supports their format, including PNG, JPEG, GIF, WebP and SVG. A missing, oversized or unreadable side shows an explanation while the other version remains visible. Other binary files, combined text snapshots over 4 MiB and timed-out snapshot diffs offer file-level decisions and a Native diff action. Monaco virtualizes visible lines while retaining the complete source model for scrolling and searching.
 
 ## Know what is captured
 

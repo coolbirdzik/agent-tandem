@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { mergeQuotaObservations, quotaTrends, quotaObservations, type QuotaObservation } from '../src/core/quota-estimate';
+import { mergeQuotaObservations, quotaTrends, quotaObservations, quotaMeters, observeQuotaMeters, type QuotaObservation } from '../src/core/quota-estimate';
 import { QuotaHistoryStore } from '../src/core/quota-history-store';
 import { usageAccount } from '../src/core/usage-account';
 import type { ProviderAccountStatus } from '../src/providers/account-status';
@@ -17,6 +17,48 @@ const sample = (cycle: number, observedTokens = 100, usedPercent = 10): QuotaObs
 });
 
 describe('Quota history and capacity trends', () => {
+  const apiStatus = (time: number, total: number, used: number): ProviderAccountStatus => ({ ...account, updatedAt: time,
+    quota: { status: 'available', windows: [{ id: 'weekly', label: '7d', usedPercent: used, resetsAt: now + 3 * 86400000 }] },
+    usage: { source: 'API', status: 'available', accountId, updatedAt: time, summary: { lifetimeTokens: total } } });
+  it('uses paired API increases without local account attribution and persists its baseline across reloads', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-api-'));
+    const first = new QuotaHistoryStore(directory);
+    expect(await first.record([], quotaMeters('Codex', apiStatus(now, 10000000, 16), now))).toEqual([]);
+    expect(first.baselines).toHaveLength(1);
+    const reopened = new QuotaHistoryStore(directory), time = now + 60000;
+    const rows = await reopened.record([], quotaMeters('Codex', apiStatus(time, 10200000, 18), time));
+    expect(rows).toMatchObject([{ source: 'API', label: 'Weekly', observedTokens: 200000, usedPercent: 2, from: now }]);
+    expect(quotaTrends('Codex', account, rows)[1]).toMatchObject({ source: 'API', tokensPerPercent: 100000 });
+    const updated = await reopened.record([], quotaMeters('Codex', apiStatus(time + 60000, 10600000, 20), time + 60000));
+    expect(updated).toHaveLength(1); expect(updated[0]).toMatchObject({ observedTokens: 600000, usedPercent: 4 });
+    expect(await reopened.record([], quotaMeters('Codex', apiStatus(time, 10200000, 18), time))).toEqual(updated);
+  });
+  it('records zero-quota baselines, waits for both meters, and resets after a counter or quota correction', () => {
+    const first = quotaMeters('Codex', apiStatus(now, 1000, 0), now)[0]!;
+    const start = observeQuotaMeters([], [first]);
+    expect(start.baselines).toHaveLength(1);
+    expect(observeQuotaMeters(start.baselines, [{ ...first, to: now + 1, totalTokens: 2000 }]).observations).toEqual([]);
+    expect(observeQuotaMeters(start.baselines, [{ ...first, to: now + 1, usedPercent: 2 }]).observations).toEqual([]);
+    const next = { ...first, to: now + 2, totalTokens: 2000, usedPercent: 2 };
+    const captured = observeQuotaMeters(start.baselines, [next]); expect(captured.observations[0]?.observedTokens).toBe(1000);
+    for (const reset of [{ ...next, totalTokens: 500 }, { ...next, usedPercent: 1 }]) {
+      const result = observeQuotaMeters(captured.baselines, [{ ...reset, to: now + 3 }]);
+      expect(result.observations).toEqual([]); expect(result.baselines[0]?.start.to).toBe(now + 3);
+    }
+  });
+  it('never mixes account-wide API ratios with local subsets, other accounts or quota cycles', () => {
+    const local = sample(0), api = { ...local, source: 'API' as const, observedTokens: 900, usedPercent: 3 };
+    const rows = mergeQuotaObservations([local], [api]); expect(rows).toHaveLength(2);
+    expect(quotaTrends('Codex', account, rows)[0]).toMatchObject({ source: 'API', tokensPerPercent: 300, observations: [api] });
+    const first = quotaMeters('Codex', apiStatus(now, 1000, 16), now)[0]!;
+    const start = observeQuotaMeters([], [first]);
+    for (const changed of [{ ...first, accountId: 'other' }, { ...first, plan: 'pro' }, { ...first, resetsAt: first.resetsAt + 7 * 86400000 }]) {
+      expect(observeQuotaMeters(start.baselines, [{ ...changed, to: now + 1, totalTokens: 2000, usedPercent: 18 }]).observations).toEqual([]);
+    }
+    const mismatch = apiStatus(now, 1000, 16); mismatch.usage!.accountId = 'other';
+    expect(quotaMeters('Codex', mismatch, now)).toEqual([]);
+    const stale = apiStatus(now - 6 * 60000, 1000, 16); expect(quotaMeters('Codex', stale, now)).toEqual([]);
+  });
   it('weights all cycles by used quota and compares the latest cycle with earlier history', () => {
     const [trend] = quotaTrends('Codex', account, [sample(0), sample(1, 900, 30), sample(2, 800, 20)]);
     expect(trend).toMatchObject({ tokensPerPercent: 30, baselineTokensPerPercent: 25, latestTokensPerPercent: 40 });

@@ -16,6 +16,7 @@ export interface UsageHistoryData {
 }
 export interface UsageDashboardState {
   quotaHistory?: import('./quota-estimate').QuotaObservation[]; quotaHistoryError?: string;
+  quotaBaselines?: import('./quota-estimate').QuotaBaseline[];
   storage?: import('./storage').StorageState;
   status: 'idle' | 'loading' | 'ready' | 'error'; data?: UsageHistoryData; error?: string;
   accounts?: Partial<Record<ConversationProvider, ProviderAccountStatus>>;

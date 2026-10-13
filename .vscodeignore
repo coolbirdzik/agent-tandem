@@ -9,6 +9,7 @@
 !dist/release.json
 !dist/webview.js
 !dist/review-webview.js
+!dist/image-diff.js
 !dist/review-webview.css
 !dist/review-editor-worker.js
 !dist/monaco-LICENSE.txt

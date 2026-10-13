@@ -7,6 +7,7 @@ import type { Session, ViewState } from '../core/types';
 import type { Selection } from '../core/change-preview';
 import { panelHtml } from './panel-html';
 import type { ChangeNavigation } from './change-navigation';
+import { imageMime } from '../core/media-preview';
 export type { Selection } from '../core/change-preview';
 
 export function snapshotUri(sessionId: string, snapshotId: string, file: string): vscode.Uri {
@@ -25,18 +26,22 @@ export class SnapshotDocuments implements vscode.TextDocumentContentProvider, vs
   constructor(private history: HistoryStore, private sessions: () => Session[]) {}
   dispose() { this.edits.dispose(); this.emitter.dispose(); }
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+    const hash = await this.blob(uri);
+    const file = uri.path.slice(1).split('/').slice(1).join('/');
+    if (!hash) return '';
+    const bytes = await this.history.readBlob(hash);
+    return decodeText(bytes) ?? `[Binary snapshot]\nFile: ${file}\nSize: ${bytes.length} bytes\nSHA-256: ${hash}\n\nBinary content is preserved; this preview shows metadata only.\n`;
+  }
+  async blob(uri: vscode.Uri): Promise<string | undefined> {
     const session = this.sessions().find(item => item.id === uri.authority);
     const [snapshotId, ...segments] = uri.path.slice(1).split('/');
-    if (!session || !snapshotId || uri.query || uri.fragment) throw new Error('Unknown snapshot resource.');
+    if (uri.scheme !== 'agenttandem-snapshot' || !session || !snapshotId || uri.query || uri.fragment) throw new Error('Unknown snapshot resource.');
     const known = new Set([session.baseline, ...session.steps.flatMap(step => [step.before, ...(step.after ? [step.after] : [])])]);
     if (!known.has(snapshotId)) throw new Error('Snapshot does not belong to this session.');
     const file = segments.join('/');
     assertPath(file);
     const manifest = await this.history.snapshot(snapshotId);
-    const hash = Object.hasOwn(manifest.files, file) ? manifest.files[file] : undefined;
-    if (!hash) return ''; // Empty side of a real add/delete comparison.
-    const bytes = await this.history.readBlob(hash);
-    return decodeText(bytes) ?? `[Binary snapshot]\nFile: ${file}\nSize: ${bytes.length} bytes\nSHA-256: ${hash}\n\nBinary content is preserved; this preview shows metadata only.\n`;
+    return Object.hasOwn(manifest.files, file) ? manifest.files[file] : undefined;
   }
 }
 
@@ -60,7 +65,7 @@ export async function openChanges(history: HistoryStore, sessions: Session[], se
   const title = `${cumulative ? 'Cumulative' : 'Step'} · ${step.title}`;
   const uri = (snapshot: string, file: string) => snapshotUri(session.id, snapshot, file);
   const comparisons = changes.map(file => ({ file: file.path, original: uri(before, file.path), modified: uri(step.after!, file.path) }));
-  if (filtered.length === 1 || forceSingle) {
+  if (filtered.length === 1 || forceSingle || filtered.some(file => imageMime(file.path))) {
     const file = filtered[0]!;
     await navigation.openFile(comparisons, title, changes.findIndex(change => change.path === file.path));
   } else {

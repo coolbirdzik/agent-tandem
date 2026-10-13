@@ -12,6 +12,7 @@ const owns = (uri: vscode.Uri) => uri.scheme === 'agenttandem-review' || uri.sch
 const activeTab = () => vscode.window.tabGroups.activeTabGroup.activeTab;
 const same = (left: vscode.Uri, right: vscode.Uri) => left.toString() === right.toString();
 function kind(tab: vscode.Tab | undefined): 'single' | 'multi' | undefined {
+  if (tab?.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith('agentTandem.imageDiff')) return 'single';
   if (tab?.input instanceof vscode.TabInputTextDiff) return owns(tab.input.original) && owns(tab.input.modified) ? 'single' : undefined;
   const input = tab?.input as { textDiffs?: unknown } | undefined;
   if (tab?.label.startsWith('AgentTandem · ') && (input === undefined || Array.isArray(input?.textDiffs))) return 'multi';
@@ -19,6 +20,7 @@ function kind(tab: vscode.Tab | undefined): 'single' | 'multi' | undefined {
 }
 
 export class ChangeNavigation {
+  imageDiff?: (file: ChangeComparison, title: string) => Promise<boolean>;
   private changes = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changes.event;
   private opening = new vscode.EventEmitter<void>();
@@ -80,6 +82,7 @@ export class ChangeNavigation {
   }
   private index(scope: Scope, tab: vscode.Tab): number {
     const input = tab.input;
+    if (input instanceof vscode.TabInputWebview) return scope.index;
     if (input instanceof vscode.TabInputTextDiff) return scope.files.findIndex(file => same(file.original, input.original) && same(file.modified, input.modified));
     const uri = vscode.window.activeTextEditor?.document.uri;
     const index = uri ? scope.files.findIndex(file => same(file.modified, uri) || same(file.original, uri)) : -1;
@@ -108,7 +111,10 @@ export class ChangeNavigation {
       const scoped = files.filter(file => !scopeGroup || file.review?.group === scopeGroup).map(file => ({ ...file, review: file.review ? { ...file.review, group: scopeGroup } : undefined }));
       const input = tab.input;
       const index = input instanceof vscode.TabInputTextDiff
-        ? scoped.findIndex(file => same(file.original, input.original) && same(file.modified, input.modified)) : -1;
+        ? scoped.findIndex(file => same(file.original, input.original) && same(file.modified, input.modified))
+        : input instanceof vscode.TabInputWebview ? scoped.findIndex(file => {
+          const current = scope.files[scope.index]; return current && same(file.original, current.original) && same(file.modified, current.modified);
+        }) : -1;
       if (index >= 0) this.scopes.set(tab, { files: scoped, title: scope.title, index });
       else if (tab !== preserve) retired.push(tab);
     }
@@ -174,8 +180,24 @@ export class ChangeNavigation {
     if (!file) throw new Error('Choose a changed file.');
     await useReviewDiffLayout();
     this.prepareOpen();
-    await vscode.commands.executeCommand('vscode.diff', file.original, file.modified,
-      `${path.basename(file.file)} · ${scope.title} · File ${index + 1}/${scope.files.length}`, { preview: true });
+    const title = `${path.basename(file.file)} · ${scope.title} · File ${index + 1}/${scope.files.length}`;
+    if (await this.imageDiff?.(file, title)) {
+      // Webview creation/reveal returns before VS Code publishes its active tab.
+      await new Promise<void>(resolve => {
+        const matches = () => activeTab()?.input instanceof vscode.TabInputWebview && activeTab()?.label === title;
+        if (matches()) { resolve(); return; }
+        const finish = () => { clearTimeout(timeout); tabs.dispose(); groups.dispose(); resolve(); };
+        const changed = () => { if (matches()) finish(); };
+        const tabs = vscode.window.tabGroups.onDidChangeTabs(changed);
+        const groups = vscode.window.tabGroups.onDidChangeTabGroups(changed);
+        const timeout = setTimeout(finish, 5000);
+        changed();
+      });
+      const tab = activeTab();
+      if (tab?.input instanceof vscode.TabInputWebview && kind(tab) === 'single' && tab.label === title) { scope.index = index; this.scopes.set(tab, scope); this.update(); await this.persist(); }
+      return;
+    }
+    await vscode.commands.executeCommand('vscode.diff', file.original, file.modified, title, { preview: true });
     const tab = activeTab();
     if (!(tab?.input instanceof vscode.TabInputTextDiff) || !same(tab.input.modified, file.modified)) return;
     scope.index = index; this.scopes.set(tab, scope);
@@ -184,6 +206,9 @@ export class ChangeNavigation {
   private async navigate(direction: 'previous' | 'next') {
     const tab = activeTab(), scope = this.scope(tab);
     if (!tab || !scope) return;
+    if (tab.input instanceof vscode.TabInputWebview) {
+      await this.showFile(scope, (scope.index + (direction === 'next' ? 1 : -1) + scope.files.length) % scope.files.length); return;
+    }
     if (kind(tab) === 'multi') {
       this.prepareOpen();
       await vscode.commands.executeCommand(`multiDiffEditor.goTo${direction === 'next' ? 'Next' : 'Previous'}Change`);

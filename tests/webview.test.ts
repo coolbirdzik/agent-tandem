@@ -395,6 +395,8 @@ describe('Single tandem webview', () => {
     const value: ViewState = { ...state, conversation: { conversation, messages: [{ id: 'u1', role: 'user', text: 'User <script>bad()</script>\nSecond line' }, { id: 'u2', role: 'user', text: 'Older unrecorded message' }] }, checkpoints: [{ id: 'cp1', messageId: 'u1', createdAt: 100 }], checkpointUndo: { id: 'undo', createdAt: 200 } };
     render(value); postMessage.mockClear();
     expect(document.querySelectorAll('.message-restore')).toHaveLength(2);
+    expect(document.querySelector('.message-restore')!.textContent).toBe('Restore code');
+    expect(document.querySelector('[data-focus-key="checkpoint:u1"]')!.getAttribute('data-checkpoint-available')).toBe('true');
     const unavailable = document.querySelector<HTMLButtonElement>('[data-focus-key="checkpoint:u2"]')!;
     expect(unavailable.disabled).toBe(true); expect(unavailable.title).toContain('No saved checkpoint');
     expect(document.querySelector('.checkpoint-hint')!.textContent).toContain('New messages sent here');

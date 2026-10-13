@@ -11,12 +11,54 @@ export interface QuotaEstimate {
 export interface QuotaObservation {
   provider: ConversationProvider; accountId: string; plan: string; label: QuotaEstimate['label'];
   from: number; resetsAt: number; to: number; observedTokens: number; usedPercent: number;
+  source?: 'API' | 'Local';
+}
+export interface QuotaMeter {
+  provider: ConversationProvider; accountId: string; plan: string; label: QuotaEstimate['label'];
+  from: number; resetsAt: number; to: number; totalTokens: number; usedPercent: number;
+}
+export interface QuotaBaseline { start: QuotaMeter; latest: QuotaMeter }
+export const quotaMeterKey = (row: QuotaMeter | QuotaObservation) => JSON.stringify([row.provider, row.accountId, row.plan, row.label, row.resetsAt]);
+/** Account-wide API counters are paired with the same account's quota, never with daily buckets. */
+export function quotaMeters(provider: ConversationProvider, account: ProviderAccountStatus | undefined, now = Date.now()): QuotaMeter[] {
+  const identity = usageAccount(provider, account?.account), usage = account?.usage;
+  const totalTokens = usage?.summary?.lifetimeTokens;
+  if (!identity || account?.status !== 'ready' || account.quota?.status !== 'available' || usage?.status !== 'available' || usage.accountId !== identity.id ||
+    !Number.isSafeInteger(totalTokens) || totalTokens! < 0 || !usage.updatedAt || !account.updatedAt || account.updatedAt > now || usage.updatedAt > now ||
+    now - account.updatedAt > 5 * 60000 || Math.abs(account.updatedAt - usage.updatedAt) > 2 * 60000) return [];
+  const to = Math.min(account.updatedAt, usage.updatedAt);
+  return ([['5h', 5 * 3600000], ['Weekly', 7 * 86400000]] as const).flatMap(([label, duration]) => {
+    const window = account.quota!.windows.find(row => row.label === (label === '5h' ? '5h' : '7d'));
+    if (!window?.resetsAt || window.resetsAt <= now || window.resetsAt - duration >= to || !Number.isFinite(window.usedPercent) || window.usedPercent < 0 || window.usedPercent > 100) return [];
+    return [{ provider, accountId: identity.id, plan: account.account?.plan ?? '', label, from: window.resetsAt - duration, resetsAt: window.resetsAt, to, totalTokens: totalTokens!, usedPercent: window.usedPercent }];
+  });
+}
+export function observeQuotaMeters(previous: QuotaBaseline[], meters: QuotaMeter[]): { baselines: QuotaBaseline[]; observations: QuotaObservation[] } {
+  const baselines = new Map(previous.map(row => [quotaMeterKey(row.start), row])), observations: QuotaObservation[] = [];
+  for (const meter of meters) {
+    const key = quotaMeterKey(meter), baseline = baselines.get(key);
+    if (baseline && meter.to <= baseline.latest.to) continue;
+    if (!baseline || meter.totalTokens < baseline.latest.totalTokens || meter.usedPercent < baseline.latest.usedPercent) {
+      baselines.set(key, { start: meter, latest: meter }); continue;
+    }
+    baselines.set(key, { start: baseline.start, latest: meter });
+    const observedTokens = meter.totalTokens - baseline.start.totalTokens, usedPercent = meter.usedPercent - baseline.start.usedPercent;
+    if (observedTokens > 0 && usedPercent > 0) observations.push({ provider: meter.provider, accountId: meter.accountId, plan: meter.plan, label: meter.label,
+      from: baseline.start.to, resetsAt: meter.resetsAt, to: meter.to, observedTokens, usedPercent, source: 'API' });
+  }
+  // Completed observations are retained separately; obsolete baseline meters are unnecessary.
+  const latest = new Map<string, QuotaBaseline>();
+  for (const row of baselines.values()) {
+    const key = JSON.stringify([row.start.provider, row.start.accountId, row.start.plan, row.start.label]);
+    if (!latest.has(key) || row.latest.to > latest.get(key)!.latest.to) latest.set(key, row);
+  }
+  return { baselines: [...latest.values()], observations };
 }
 /** Refreshes replace the same cycle; cumulative snapshots must never be added together. */
 export function mergeQuotaObservations(previous: QuotaObservation[], incoming: QuotaObservation[]): QuotaObservation[] {
   const rows = new Map<string, QuotaObservation>();
   for (const row of [...previous, ...incoming]) {
-    const key = JSON.stringify([row.provider, row.accountId, row.plan, row.label, row.resetsAt]);
+    const key = JSON.stringify([quotaMeterKey(row), row.source ?? 'Local']);
     const existing = rows.get(key);
     if (!existing || row.to > existing.to) rows.set(key, row);
   }
@@ -33,17 +75,20 @@ export function quotaObservations(provider: ConversationProvider, account: Provi
 }
 export interface QuotaTrend {
   label: QuotaEstimate['label']; observations: QuotaObservation[]; tokensPerPercent?: number;
+  source?: 'API' | 'Local';
   latestTokensPerPercent?: number; baselineTokensPerPercent?: number; changePercent?: number;
 }
 /** Compare like-for-like accounts, plans and windows, across all projects/models. */
 export function quotaTrends(provider: ConversationProvider, account: ProviderAccountStatus | undefined, history: QuotaObservation[]): QuotaTrend[] {
   const identity = usageAccount(provider, account?.account);
   return (['5h', 'Weekly'] as const).map(label => {
-    const observations = mergeQuotaObservations([], history).filter(row => row.provider === provider && row.accountId === identity?.id && row.plan === (account?.account?.plan ?? '') && row.label === label);
+    const matched = mergeQuotaObservations([], history).filter(row => row.provider === provider && row.accountId === identity?.id && row.plan === (account?.account?.plan ?? '') && row.label === label);
+    const source = matched.some(row => row.source === 'API') ? 'API' : 'Local';
+    const observations = matched.filter(row => (row.source ?? 'Local') === source);
     const ratio = (rows: QuotaObservation[]) => rows.length ? rows.reduce((sum, row) => sum + row.observedTokens, 0) / rows.reduce((sum, row) => sum + row.usedPercent, 0) : undefined;
     const latest = observations.at(-1), baselineTokensPerPercent = ratio(observations.slice(0, -1));
     const latestTokensPerPercent = latest ? latest.observedTokens / latest.usedPercent : undefined;
-    return { label, observations, tokensPerPercent: ratio(observations), latestTokensPerPercent, baselineTokensPerPercent,
+    return { label, source, observations, tokensPerPercent: ratio(observations), latestTokensPerPercent, baselineTokensPerPercent,
       ...(latestTokensPerPercent !== undefined && baselineTokensPerPercent ? { changePercent: (latestTokensPerPercent / baselineTokensPerPercent - 1) * 100 } : {}) };
   });
 }

@@ -8,6 +8,8 @@ import { openChanges, TandemView, selectionFrom, SnapshotDocuments } from './hos
 import { openReviewChanges, ReviewDocuments, reviewSnapshotUri } from './host/review-editor';
 import { ReviewWebview } from './host/review-webview';
 import { registerChangeNavigation, type ChangeNavigationState } from './host/change-navigation';
+import { ImageDiff } from './host/image-diff';
+import { imageSnapshots } from './core/media-preview';
 import { ReviewHunkActions } from './host/review-hunk-actions';
 import { probeCodex, probeClaude, findExecutable, cliInfo, installedCLIs } from './providers/probe';
 import { ProjectConversations, claudeMessages, type ClaudeHistoryAPI, type ConversationContent, type ConversationIndex } from './providers/conversations';
@@ -46,7 +48,7 @@ import { SettingsView } from './host/settings-view';
 import { AttachmentStore } from './core/attachment-store';
 import { UsageAccountStore } from './core/usage-account-store';
 import { QuotaHistoryStore } from './core/quota-history-store';
-import { quotaObservations, type QuotaObservation } from './core/quota-estimate';
+import { quotaMeters, quotaObservations, type QuotaObservation } from './core/quota-estimate';
 import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeletionPlan } from './core/storage';
 
 export interface ExtensionAPI {
@@ -185,12 +187,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, storage: storageState, accounts: state.accounts, quotaHistory, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+    return { ...usageState, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day' } };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
     async (command, value) => vscode.commands.executeCommand(command, value), report);
   function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state); trackingBar.update(state); settings.update(); }
+  async function recordQuotaHistory(data = usageState.data) {
+    try {
+      const samples = (['Codex', 'Claude'] as const).flatMap(provider => quotaObservations(provider, state.accounts?.[provider], data));
+      const meters = (['Codex', 'Claude'] as const).flatMap(provider => quotaMeters(provider, state.accounts?.[provider]));
+      quotaHistory = await quotaHistoryStore.record(samples, meters); quotaHistoryError = undefined;
+    } catch { quotaHistoryError = 'Could not save quota history. Refresh to retry.'; }
+  }
   async function refreshUsageDashboard(): Promise<void> {
     if (disposed) return;
     if (usageJob) return usageJob;
@@ -201,10 +210,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         const data = await usageHistory.read(abort.signal);
         if (!disposed && !abort.signal.aborted) {
           usageState = { status: 'ready', data };
-          try {
-            const samples = (['Codex', 'Claude'] as const).flatMap(provider => quotaObservations(provider, state.accounts?.[provider], data));
-            quotaHistory = await quotaHistoryStore.record(samples); quotaHistoryError = undefined;
-          } catch { quotaHistoryError = 'Could not save quota history. Refresh to retry.'; }
+          await recordQuotaHistory(data);
         }
       } catch {
         if (!disposed && !abort.signal.aborted) usageState = { ...usageState, status: 'error', error: 'Could not read local usage history. Refresh to try again.' };
@@ -359,6 +365,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }
   async function refreshAccounts() {
     await Promise.all((['Codex', 'Claude'] as const).map(provider => loadAccount(provider)));
+    await recordQuotaHistory();
     await refreshUsageDashboard();
   }
   function resetAccounts() {
@@ -488,6 +495,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   try { state.sessions = await history.sessions(); } catch (error) { report(error); }
   const documents = new SnapshotDocuments(history, () => state.sessions);
   const reviewDocuments = new ReviewDocuments(reviews.history);
+  const imageDiff = new ImageDiff(context.extensionUri, async file => {
+    if (file.original.scheme === 'agenttandem-review' && file.modified.scheme === 'agenttandem-review') {
+      return imageSnapshots(reviews.history, file.file, reviewDocuments.blob(file.original), reviewDocuments.blob(file.modified));
+    }
+    if (file.original.scheme === 'agenttandem-snapshot' && file.modified.scheme === 'agenttandem-snapshot') {
+      const [before, after] = await Promise.all([documents.blob(file.original), documents.blob(file.modified)]);
+      return imageSnapshots(history, file.file, before, after);
+    }
+  });
+  changeNavigation.imageDiff = (file, title) => imageDiff.open(file, title);
+  context.subscriptions.push(imageDiff);
   context.subscriptions.push(output, preview, settings, quotaBar, trackingBar, documents, reviewDocuments,
     vscode.window.registerWebviewViewProvider('agentTandem.panel', preview, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.workspace.registerTextDocumentContentProvider('agenttandem-snapshot', documents),
@@ -614,7 +632,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.openSettings', async () => { settings.open(); await refreshAccounts(); return dashboardState(); });
   register('agentTandem.openStorage', async () => { settings.open('storage'); await vscode.commands.executeCommand('agentTandem.refreshStorage'); return dashboardState(); });
   register('agentTandem.refreshUsageDashboard', async () => {
-    await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]); await refreshUsageDashboard(); return dashboardState();
+    await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]); await recordQuotaHistory(); await refreshUsageDashboard(); return dashboardState();
   });
   register('agentTandem.openVSCodeSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`));
   register('agentTandem.setDashboardPreferences', async value => {
@@ -1075,7 +1093,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     decideReview, report);
   context.subscriptions.push(hunkActions);
   reviewEditor = new ReviewWebview(context.extensionUri, reviews,
-    () => ({ project: state.project, review: state.review, busy: !!chatAbort || reviewing || !!externalJob || externalSwitching }),
+    () => ({ project: state.project, review: state.review, conversations: state.conversations, busy: !!chatAbort || reviewing || !!externalJob || externalSwitching }),
     async (command, value) => vscode.commands.executeCommand(command, value),
     request => openReviewChanges(reviews, request, changeNavigation, () => !disposed && request.project === state.project && request.revision === state.review?.revision));
   context.subscriptions.push(reviewEditor);

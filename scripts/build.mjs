@@ -12,6 +12,7 @@ await copyFile('node_modules/@vscode/codicons/LICENSE-CODE', 'media/codicons/Lic
 for (const file of ['codicon.css', 'codicon.ttf']) await copyFile(`node_modules/@vscode/codicons/dist/${file}`, `media/codicons/${file}`);
 for (const [source, target] of [['node_modules/@vscode/codicons/LICENSE', 'codicons-LICENSE.txt'], ['node_modules/marked/LICENSE', 'marked-LICENSE.md'], ['node_modules/dompurify/LICENSE', 'dompurify-LICENSE.txt']]) await copyFile(source, `dist/${target}`);
 const configs = [
+  { entryPoints: ['src/image-diff.ts'], outfile: 'dist/image-diff.js', bundle: true, platform: 'browser', format: 'iife', target: 'es2022', minify: true },
   { entryPoints: ['tests/extension/review-webview.ts'], outfile: 'dist/review-webview-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['src/review-webview.ts'], outfile: 'dist/review-webview.js', bundle: true, platform: 'browser', format: 'iife', target: 'es2022', sourcemap: true, minify: true, loader: { '.ttf': 'dataurl' } },
   { entryPoints: ['node_modules/monaco-editor/esm/vs/editor/editor.worker.js'], outfile: 'dist/review-editor-worker.js', bundle: true, platform: 'browser', format: 'iife', target: 'es2022', minify: true },

@@ -41,6 +41,8 @@ describe('Settings host updates', () => {
     await host.receive({ type: 'ready' }); expect(host.post).toHaveBeenCalledTimes(6);
     state = { ...state, quotaHistoryError: 'Could not save quota history.' }; view.update(); expect(host.post).toHaveBeenCalledTimes(7);
     state = { ...state, quotaHistoryError: undefined, quotaHistory: [] }; view.update(); expect(host.post).toHaveBeenCalledTimes(8);
+    const meter = { provider: 'Codex' as const, accountId: 'demo', plan: 'plus', label: '5h' as const, from: 1, to: 2, resetsAt: 3, totalTokens: 100, usedPercent: 0 };
+    state = { ...state, quotaBaselines: [{ start: meter, latest: meter }] }; view.update(); expect(host.post).toHaveBeenCalledTimes(9);
     view.dispose();
   });
 });

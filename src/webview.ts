@@ -429,7 +429,7 @@ function renderConversationChanges(state: ViewState, disabled: boolean) {
     if (named) {
       const caption = create('p', `${source!.provider === 'Claude' ? 'Claude Code' : 'Codex'}${key === selected ? ' · Current conversation' : ''}`, 'review-caption conversation-change-caption'); caption.title = source!.id || 'New conversation';
       if (state.conversations?.some(item => item.key === key)) {
-        const open = button('', () => send('conversation', key)); open.className = 'review-chat-link'; open.title = 'Open this conversation in AgentTandem chat'; open.setAttribute('aria-label', 'Open conversation'); open.append(icon('comment-discussion'), create('span', 'Open conversation', 'sr-only')); caption.append(open);
+        const open = button('', () => send('conversation', key)); open.className = 'review-chat-link'; open.title = 'Open this conversation in AgentTandem chat'; open.setAttribute('aria-label', 'Open conversation'); open.append(icon('comment-discussion'), create('span', 'Open conversation')); caption.append(open);
       }
       body.append(caption);
     } else body.append(create('p', key === 'shared' ? 'Multiple conversations or mixed edits. Review these files together.' : 'Saved edits without a verified conversation match.', 'review-caption'));
@@ -859,7 +859,7 @@ function render(state: ViewState) {
             const actions = create('div', undefined, 'message-actions');
             const checkpoint = state.checkpoints?.find(entry => entry.messageId === message.id);
             const preparing = state.chat?.requestId === message.id && state.chat.phase === 'preparing';
-            const restore = button('Restore', () => { if (checkpoint) send('previewCheckpoint', { project: state.project!, id: checkpoint.id }); }, reviewDisabled || !checkpoint);
+            const restore = button('Restore code', () => { if (checkpoint) send('previewCheckpoint', { project: state.project!, id: checkpoint.id }); }, reviewDisabled || !checkpoint);
             restore.className = 'message-restore'; restore.prepend(icon('history'));
             restore.title = checkpoint ? `Restore code to before this message · ${new Date(checkpoint.createdAt).toLocaleString()}` : preparing ? 'Preparing checkpoint before the agent runs…' : 'No saved checkpoint for this message. Checkpoints are created for new messages sent from AgentTandem.';
             restore.setAttribute('aria-label', checkpoint ? 'Preview checkpoint before this message' : preparing ? 'Restore unavailable: preparing checkpoint' : 'Restore unavailable: no saved checkpoint for this message');

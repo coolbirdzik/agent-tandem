@@ -5,7 +5,7 @@ import { emptyTotals, type UsageDashboardState, type UsageDay } from '../src/cor
 import { apiCost } from '../src/core/api-pricing';
 import { usageAccount, UNKNOWN_ACCOUNT } from '../src/core/usage-account';
 import { codexTokenActivity } from '../src/core/api-token-activity';
-import type { QuotaObservation } from '../src/core/quota-estimate';
+import { quotaMeters, type QuotaObservation } from '../src/core/quota-estimate';
 const postMessage = vi.fn(), listeners: EventListener[] = [];
 const resources = { script: '/settings.js', style: '/settings.css', icons: '/codicon.css', claude: '/claude.svg', codex: '/codex.svg', cspSource: 'https://test.invalid', nonce: 'nonce' };
 const row = (day: string, provider: 'Codex' | 'Claude', model: string, total: number): UsageDay => ({ ...emptyTotals(), day, provider, model, input: total - 20, output: 20, cacheRead: 100, total, requests: 1 });
@@ -25,6 +25,23 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
+  it('shows persisted API baseline progress and then the API ratio without local attribution', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
+    const account = { status: 'ready' as const, account: identity, updatedAt: now,
+      quota: { status: 'available' as const, windows: [{ id: 'weekly', label: '7d', usedPercent: 18, resetsAt: now + 86400000 }] },
+      usage: { source: 'API' as const, status: 'available' as const, accountId: usageAccount('Codex', identity)!.id, updatedAt: now, summary: { lifetimeTokens: 10200000 } } };
+    const latest = quotaMeters('Codex', account, now)[0]!, start = { ...latest, to: now - 60000, totalTokens: 10000000, usedPercent: 16 };
+    const baseline = { start, latest };
+    render({ ...value, data: undefined, accounts: { Codex: account }, quotaBaselines: [baseline] });
+    expect(document.querySelector('#quota-estimates')!.textContent).toContain('API baseline saved');
+    render({ ...value, data: undefined, accounts: { Codex: account }, quotaBaselines: [baseline], quotaHistory: [{ provider: 'Codex', accountId: latest.accountId,
+      plan: 'plus', label: 'Weekly', from: start.to, to: now, resetsAt: latest.resetsAt, observedTokens: 200000, usedPercent: 2, source: 'API' }] });
+    const root = document.querySelector('#quota-estimates')!;
+    expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('100,000 tokens per percentage point');
+    expect(root.textContent).toContain('API counters'); expect(root.textContent).toContain('Current observed interval');
+    const before = root.textContent; choose('filter-provider', 'Claude'); expect(root.textContent).toBe(before);
+  });
   it('filters restore history, selects visible conversations, previews impact and sends only the delete token', () => {
     const group = (id: string, projectId: string, kind: 'checkpoints' | 'undo' = 'checkpoints') => ({ id, projectId, project: `L:/Code/${projectId}`, label: kind === 'undo' ? 'Last restore backup' : `Codex:${id}`, kind, count: 2, bytes: 1024, createdAt: 1000, updatedAt: 2000 });
     const histories = [group('first', 'one'), group('second', 'two'), group('backup', 'one', 'undo')];

@@ -32,6 +32,44 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const [type, listener, options] of listeners.splice(0)) window.removeEventListener(type, listener, options); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Shared Webview review', () => {
+  it('opens the agent file list and binds file/conversation shortcuts to the current review', () => {
+    render({ ...fixture(), context: { group: 'Codex:agent', title: 'Update artwork', conversation: { key: 'Codex:agent', id: 'agent', provider: 'Codex', title: 'Update artwork' }, canOpenConversation: true, files: [fixture().files[1]!] } });
+    document.getElementById('agent-changes')!.click();
+    expect(document.getElementById('agent-changes-panel')!.hidden).toBe(false);
+    expect(document.getElementById('agent-changes')!.getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelectorAll('.agent-change-file')).toHaveLength(1);
+    document.querySelector<HTMLButtonElement>('.agent-change-file')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'selectAgentFile', revision: 'r1', file: 'first.ts', target: 'second.ts' });
+    document.getElementById('open-conversation')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'conversation', revision: 'r1', file: 'first.ts' });
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+    expect(document.getElementById('agent-changes-panel')!.hidden).toBe(true);
+    expect(document.activeElement).toBe(document.getElementById('agent-changes'));
+  });
+  it('disables conversation navigation for shared edits and while review is busy', () => {
+    const context = { group: 'shared', title: 'Shared workspace changes', files: fixture().files };
+    render({ ...fixture(), context });
+    expect(document.querySelector<HTMLButtonElement>('#open-conversation')!.disabled).toBe(true);
+    expect(document.getElementById('agent-changes-label')!.textContent).toBe('Workspace changes');
+    document.getElementById('agent-changes')!.click(); render({ ...fixture(), context, busy: true });
+    expect(document.querySelector<HTMLButtonElement>('.agent-change-file')!.disabled).toBe(true);
+  });
+  it('shows before/after image snapshots and binds whole-file decisions to the revision', () => {
+    render({ ...fixture(), revision: 'image', file: { ...fixture().file!, binary: true, hunks: [], notice: 'Image snapshots', images: { before: { size: 2, src: 'data:image/png;base64,AAE=' }, after: { size: 2, src: 'data:image/png;base64,AAI=' } } } });
+    const images = [...document.querySelectorAll('.image-comparison img')];
+    expect(images.map(image => image.getAttribute('src'))).toEqual(['data:image/png;base64,AAE=', 'data:image/png;base64,AAI=']);
+    expect(document.querySelectorAll('.diff-block')).toHaveLength(0);
+    document.querySelector<HTMLButtonElement>('.reject')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'reject', revision: 'image', file: 'first.ts' });
+  });
+  it('shows missing image sides and decode failures without hiding the other side or file actions', () => {
+    render({ ...fixture(), revision: 'added-image', file: { ...fixture().file!, hunks: [], notice: 'Image snapshots', images: { before: { size: 0, missing: true }, after: { size: 2, src: 'data:image/png;base64,AAI=' } } } });
+    expect(document.querySelector('.image-side')!.textContent).toContain('file added');
+    document.querySelector('img')!.dispatchEvent(new Event('error'));
+    expect(document.querySelectorAll('img')).toHaveLength(0);
+    expect(document.querySelector('.image-comparison')!.textContent).toContain('could not be displayed');
+    expect(document.querySelector<HTMLButtonElement>('.accept')!.disabled).toBe(false);
+  });
   it('renders code as text and binds an action to its own block, independently of the active block', () => {
     expect(document.querySelectorAll('.diff-block')).toHaveLength(2);
     expect(editors.at(-1)!.file!.beforeText).toBe(before);
