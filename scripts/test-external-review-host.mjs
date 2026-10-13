@@ -9,6 +9,10 @@ const root = process.cwd(), runtime = path.join(root, '.test-runtime', `external
 const workspace = path.join(runtime, 'workspace'), profile = path.join(runtime, 'profile');
 for (const folder of [workspace, path.join(profile, 'User'), path.join(root, 'artifacts')]) await mkdir(folder, { recursive: true });
 await promisify(execFile)('git', ['init', '-q'], { cwd: workspace, windowsHide: true });
+// Git exposes a submodule as a directory in ls-files; it must not stop tracking.
+await mkdir(path.join(workspace, 'MemOS'));
+await promisify(execFile)('git', ['init', '-q'], { cwd: path.join(workspace, 'MemOS'), windowsHide: true });
+await promisify(execFile)('git', ['update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},MemOS`], { cwd: workspace, windowsHide: true });
 await writeFile(path.join(workspace, 'source.ts'), 'user edits before tracking\n');
 await writeFile(path.join(workspace, 'deleted.ts'), 'original deleted file\n');
 await writeFile(path.join(profile, 'User/settings.json'), JSON.stringify({ 'files.hotExit': 'off', 'window.restoreWindows': 'none', 'agentTandem.reviewEditor': 'native', 'agentTandem.codexExecutable': path.join(runtime, 'missing-codex.exe'), 'agentTandem.claudeExecutable': path.join(runtime, 'missing-claude.exe') }));

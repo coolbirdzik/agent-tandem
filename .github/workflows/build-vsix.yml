@@ -110,3 +110,41 @@ jobs:
           else
             gh release create "$RELEASE_TAG" artifacts/*.vsix artifacts/*.vsix.sha256 --verify-tag --target main --title "AgentTandem $RELEASE_TAG" --notes-file artifacts/release-notes.md
           fi
+
+  publish:
+    name: Publish to VS Code Marketplace
+    needs: [build, release]
+    if: github.event_name == 'push' && github.ref_type == 'tag' && needs.build.outputs.release_tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: marketplace-publish-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v6
+        with:
+          name: agent-tandem-vsix
+          path: artifacts
+      - name: Verify and publish the tested VSIX
+        working-directory: artifacts
+        env:
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        shell: bash
+        run: |
+          vsix="agent-tandem-${RELEASE_TAG#v}.vsix"
+          sha256sum --check "$vsix.sha256"
+          auth_args=()
+          if [[ -z "$VSCE_PAT" ]]; then
+            auth_args+=(--oidc)
+          fi
+          npx --no-install vsce publish --packagePath "$vsix" --skip-duplicate "${auth_args[@]}"

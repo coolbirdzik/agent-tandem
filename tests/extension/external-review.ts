@@ -29,6 +29,7 @@ export async function run() {
     assert.equal(api.viewState().review?.externalTracking, true, 'Paused tracking can be resumed');
     await vscode.commands.executeCommand('agentTandem.toggleExternalReview');
     const report = { success: true, vscode: vscode.version, checks: ['Review companion is the default view', 'Automatic tracking and first-run guide', 'Passive capture preserves editor focus', 'Status-bar shortcut opens the latest conversation diff', 'Native filesystem watcher captures external add/modify/delete without chat', 'Accept/revert are independent and not recaptured', 'Claude/Codex local edit history groups pending files by conversation', 'Revert preview leaves files unchanged until confirmation', 'Undo restores only its scope and pending conversation identity', 'Undo survives window restart and preserves unrelated changes', 'Stop flushes changes and preserves review', 'Explicit pause survives window restart', 'Onboarding opens once and can be reopened manually'] };
+    report.checks.push('Tracking starts and the watcher keeps capturing beside a MemOS Git submodule');
     await writeFile(path.join(process.env.AGENT_TANDEM_REPORT_DIR!, 'external-review-host.json'), JSON.stringify(report, null, 2));
     console.log(`AGENT_TANDEM_EXTERNAL_REVIEW ${JSON.stringify(report)}`); return;
   }
@@ -44,6 +45,7 @@ export async function run() {
   const native = process.env.AGENT_TANDEM_TEST_NODE!;
   const writer = async (script: string) => execute(native, ['-e', script, project], { windowsHide: true });
   assert.equal(api.viewState().review?.externalTracking, true);
+  assert.ok(api.viewState().review?.notice?.includes('MemOS'), 'The skipped submodule is reported while tracking remains active');
   assert.equal(api.viewState().chat, undefined);
   await writer("const fs=require('fs'),p=require('path'),root=process.argv[1];fs.writeFileSync(p.join(root,'source.ts'),'external one\\n');fs.writeFileSync(p.join(root,'new.ts'),'created outside\\n');fs.unlinkSync(p.join(root,'deleted.ts'));");
   await waitFor(() => api.viewState().review?.files.length === 3 && !api.viewState().reviewBusy, 'Filesystem watcher automatically captures changes from an external process');

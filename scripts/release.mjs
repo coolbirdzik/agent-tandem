@@ -46,7 +46,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     const [command, level] = process.argv.slice(2);
     if (command === 'bump') console.log(`${await bumpVersion({ cwd: process.cwd(), level })}\nVersion commit and tag created. Run npm run release to push them.`);
-    else if (command === 'push') console.log(`Pushed main and ${await pushRelease({ cwd: process.cwd() })}. GitHub Actions will test, build the VSIX and create the release.`);
+    else if (command === 'push') console.log(`Pushed main and ${await pushRelease({ cwd: process.cwd() })}. GitHub Actions will test, build the VSIX, create the release and publish to VS Code Marketplace.`);
     else throw new Error('Use npm run bump:patch, bump:minor, bump:major or release.');
   } catch (error) {
     console.error(error.stderr?.trim() || error.message);

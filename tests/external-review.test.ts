@@ -1,11 +1,20 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, unlink, rm } from 'node:fs/promises';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, readFile, writeFile, unlink, rm, symlink } from 'node:fs/promises';
+import * as fs from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import os from 'node:os';
 import { ReviewStore } from '../src/core/review';
 
+vi.mock('node:fs/promises', async importOriginal => {
+  const original = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...original, readFile: vi.fn(original.readFile) };
+});
+
 const folders: string[] = [];
-afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
+const execute = promisify(execFile);
+afterEach(async () => { vi.restoreAllMocks(); vi.mocked(fs.readFile).mockReset(); for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
 async function fixture() {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-external-')); folders.push(directory);
   const project = path.join(directory, 'project'); await mkdir(project);
@@ -17,6 +26,90 @@ async function fixture() {
 }
 
 describe('External change tracking', () => {
+  it('starts and keeps capturing alongside a Git submodule directory such as MemOS', async () => {
+    const f = await fixture();
+    const git = (...args: string[]) => execute('git', args, { cwd: f.project, windowsHide: true });
+    await git('init', '-q');
+    await mkdir(path.join(f.project, 'MemOS'));
+    await git('-C', 'MemOS', 'init', '-q');
+    await f.set('MemOS/private.txt', 'nested repository contents\n');
+    await git('update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},MemOS`);
+    const started = await f.store.initializeExternalTracking(f.project);
+    expect(started.externalTracking).toBe(true);
+    expect(started.notice).toContain('MemOS');
+    await f.set('source.ts', 'first edit\n'); await f.set('new.ts', 'new file\n');
+    const captured = await f.store.scanExternal(f.project);
+    expect(captured.files.map(file => file.path)).toEqual(['new.ts', 'source.ts']);
+    const reloaded = new ReviewStore(f.store.directory);
+    await f.set('source.ts', 'second edit\n');
+    const next = await reloaded.scanExternal(f.project);
+    expect(next.externalTracking).toBe(true);
+    expect((await reloaded.preview({ project: f.project, revision: next.revision, file: 'source.ts' })).before).toBe('existing user edits\n');
+    await reloaded.begin(f.project, 'chat-with-submodule');
+    expect((await reloaded.finish(f.project, 'chat-with-submodule')).files).toEqual(next.files);
+    await reloaded.revert({ project: f.project, revision: (await reloaded.read(f.project)).revision });
+    expect(await f.get('MemOS/private.txt')).toBe('nested repository contents\n');
+  });
+  it('keeps prior bytes when a captured file becomes a directory and still captures other files', async () => {
+    const f = await fixture(); await f.set('blocked.ts', 'before\n');
+    await f.store.initializeExternalTracking(f.project);
+    await unlink(path.join(f.project, 'blocked.ts')); await mkdir(path.join(f.project, 'blocked.ts'));
+    await f.set('source.ts', 'healthy edit\n');
+    const captured = await f.store.scanExternal(f.project);
+    expect(captured.files.map(file => file.path)).toEqual(['source.ts']);
+    expect(captured.notice).toContain('blocked.ts');
+    await rm(path.join(f.project, 'blocked.ts'), { recursive: true }); await f.set('blocked.ts', 'recovered\n');
+    const next = await f.store.scanExternal(f.project);
+    expect((await f.store.preview({ project: f.project, revision: next.revision, file: 'blocked.ts' })).before).toBe('before\n');
+    expect(next.notice).not.toContain('Skipped');
+  });
+  it('continues around a workspace read error, preserves pending bytes and retries the path', async () => {
+    const f = await fixture(); await f.set('blocked.ts', 'before\n');
+    await f.store.initializeExternalTracking(f.project);
+    await f.set('blocked.ts', 'pending\n'); const pending = await f.store.scanExternal(f.project);
+    await f.set('blocked.ts', 'after recovery\n'); await f.set('source.ts', 'healthy edit\n');
+    const original = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const read = vi.mocked(fs.readFile).mockImplementation((...args: Parameters<typeof fs.readFile>) => {
+      if (String(args[0]) === path.join(f.project, 'blocked.ts')) return Promise.reject(Object.assign(new Error('Access denied'), { code: 'EACCES', path: String(args[0]) }));
+      return original.readFile(...args);
+    });
+    const captured = await f.store.scanExternal(f.project);
+    expect(captured.externalTracking).toBe(true);
+    expect(captured.files.find(file => file.path === 'blocked.ts')).toEqual(pending.files[0]);
+    expect(captured.files.map(file => file.path)).toEqual(['blocked.ts', 'source.ts']);
+    expect(captured.notice).toContain('Access denied');
+    read.mockRestore();
+    const next = await f.store.scanExternal(f.project);
+    const preview = await f.store.preview({ project: f.project, revision: next.revision, file: 'blocked.ts' });
+    expect(preview).toMatchObject({ before: 'before\n', after: 'after recovery\n' });
+    expect(next.notice).not.toContain('Skipped');
+  });
+  it('skips linked paths during tracking while retaining strict safety on review decisions', async () => {
+    const f = await fixture(); await f.store.initializeExternalTracking(f.project);
+    await f.set('source.ts', 'pending edit\n'); const pending = await f.store.scanExternal(f.project);
+    const outside = path.join(path.dirname(f.project), 'outside'); await mkdir(outside); await writeFile(path.join(outside, 'private.txt'), 'outside\n');
+    await symlink(outside, path.join(f.project, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+    await unlink(path.join(f.project, 'source.ts')); await mkdir(path.join(f.project, 'source.ts'));
+    await f.set('healthy.ts', 'new file\n');
+    const captured = await f.store.scanExternal(f.project);
+    expect(captured.externalTracking).toBe(true);
+    expect(captured.files.find(file => file.path === 'source.ts')).toEqual(pending.files[0]);
+    expect(captured.files.map(file => file.path)).toEqual(['healthy.ts', 'source.ts']);
+    await expect(f.store.revert({ project: f.project, revision: captured.revision, file: 'source.ts' })).rejects.toThrow('not a file');
+    expect(await readFile(path.join(outside, 'private.txt'), 'utf8')).toBe('outside\n');
+    await f.store.setExternalTracking(f.project, false);
+    const resumed = await f.store.setExternalTracking(f.project, true);
+    expect(resumed.externalTracking).toBe(true);
+    expect(resumed.files).toEqual(captured.files);
+  });
+  it.each([false, true])('still fails when snapshot storage cannot be written (inside workspace: %s)', async inside => {
+    const f = await fixture();
+    const store = inside ? new ReviewStore(path.join(f.project, 'node_modules', 'reviews')) : f.store;
+    await store.initializeExternalTracking(f.project); await f.set('source.ts', 'new edit\n');
+    vi.spyOn(store.history, 'putBlob').mockRejectedValue(Object.assign(new Error('Storage unavailable'), { code: 'EACCES', path: path.join(store.history.directory, 'blobs') }));
+    await expect(store.scanExternal(f.project)).rejects.toThrow('Storage unavailable');
+    expect((await store.read(f.project)).externalTracking).toBe(true);
+  });
   it('starts automatically once, resumes its baseline and preserves an explicit pause after reload', async () => {
     const f = await fixture();
     expect((await f.store.initializeExternalTracking(f.project, false)).externalTracking).toBeUndefined();

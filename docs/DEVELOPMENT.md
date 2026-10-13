@@ -201,6 +201,8 @@ The **Changes** screen displays the actual pending file list, grouped by convers
 
 Tracking does not reconstruct edits made before its baseline. Unsaved editor buffers are not captured, and stale or unsaved target edits block Revert. Changes made while VS Code is closed are compared on resume. Stop the external writer before making final decisions to avoid continual new revisions.
 
+Tracking skips directory entries (including Git submodules), linked paths and temporary workspace read errors while continuing to capture other files. The tracking tooltip reports skipped paths. Previously captured bytes remain the baseline until the path can be read again, so an unreadable file is not reported as deleted. Skipped paths are retried on the next capture. Review decisions still reject unsafe targets; snapshot storage failures remain errors.
+
 The **Welcome to AgentTandem** walkthrough opens once on first activation. Its four steps explain tracking, file/block review, native CLI/chat setup and usage sources. Reopen it anytime with **AgentTandem: Getting Started**, the tracking status menu or **… → Getting started**.
 
 ### Storage and cleanup

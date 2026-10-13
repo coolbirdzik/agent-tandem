@@ -8,7 +8,7 @@
 4. Choose an **ID**, for example a personal or studio identifier. This is the value the build needs; it is different from the display name. Marketplace publisher IDs cannot be changed after creation.
 5. Enter the publisher's display name and complete the required fields. Save the publisher.
 
-You can upload a VSIX manually through this page. The build workflow does not need a personal access token or an automated publishing credential. See [Microsoft's publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension).
+You can upload a VSIX manually through this page, or configure automatic publishing for release tags below. See [Microsoft's publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension).
 
 ## 2. Put the project on GitHub
 
@@ -19,6 +19,13 @@ Open **Settings → Secrets and variables → Actions → Variables**, and add:
 | Variable | Value |
 | --- | --- |
 | `MARKETPLACE_PUBLISHER` | `coolbirdv` (already configured as the workflow default) |
+
+Configure one publishing credential before pushing a release tag:
+
+- **Personal access token:** add the repository Actions **secret** `VSCE_PAT`. Follow the [Vietnamese step-by-step guide](PUBLISHING-PAT.vi.md) for the Azure DevOps screens, publisher check and GitHub secret form. This global-PAT method is temporary: Microsoft retires global PATs on **December 1, 2026**; use identity-based publishing for continued automation. See [Microsoft's retirement notice](https://devblogs.microsoft.com/devops/retirement-of-global-personal-access-tokens-in-azure-devops/).
+- **Trusted publishing (OIDC):** leave `VSCE_PAT` unset and configure a trusted publishing policy in Visual Studio Marketplace for your publisher, this GitHub repository and `.github/workflows/build-vsix.yml`. The publish job has `id-token: write` and uses `vsce publish --oidc`. See [VSCE's trusted publishing instructions](https://github.com/microsoft/vscode-vsce#trusted-publishing).
+
+The workflow uses `VSCE_PAT` when supplied; otherwise it uses OIDC. Missing or invalid authorization fails the publish job. Build and manual-download workflows do not need publishing credentials.
 
 The workflow derives content URLs from the GitHub repository and the branch or tag being built. Local builds default to `main`; pass `--branch YOUR_BRANCH` if needed. Commit the screenshots before submitting.
 
@@ -34,9 +41,9 @@ The workflow derives content URLs from the GitHub repository and the branch or t
 
 Pushes to `main` and pull requests targeting `main` create **preview** artifacts. A manual run on `main` builds an upload package without creating a GitHub Release. The configured publisher is `coolbirdv`; the repository variable can override it.
 
-### Automatic GitHub Releases from main tags
+### Automatic GitHub Releases and Marketplace publishing from main tags
 
-Pushing a semantic version tag such as `v0.1.1` creates a GitHub Release after the unit tests and stable VS Code host tests pass. The tag must match the version in `package.json` and point to a commit reachable from `origin/main`. Tags on unmerged feature branches are rejected. The workflow never bumps versions or pushes commits on your behalf.
+Pushing a semantic version tag such as `v0.1.1` creates a GitHub Release after the unit tests and stable VS Code host tests pass, then publishes the same tested VSIX to VS Code Marketplace. The tag must match the version in `package.json` and point to a commit reachable from `origin/main`. Tags on unmerged feature branches are rejected. The workflow never bumps versions or pushes commits on your behalf.
 
 Start from a clean, up-to-date `main`, choose one bump command, then release:
 
@@ -59,7 +66,9 @@ The workflow checks out the complete history and generates release notes from th
 
 The GitHub Release includes the VSIX and its SHA-256 checksum. The same git-history notes are prepended to the packaged `CHANGELOG.md`; `dist/release.json` records the source commit and tags. Source files are unchanged. Re-running the release job updates the assets/notes for the same release.
 
-Only the release job receives `contents: write`; test/build jobs remain read-only. GitHub Release creation uses the workflow's `GITHUB_TOKEN`, without a separate PAT. Marketplace submission is still manual.
+Only the release job receives `contents: write`; test/build and publish jobs have read-only repository access. GitHub Release creation uses the workflow's `GITHUB_TOKEN`. The Marketplace job downloads the build artifact, verifies its SHA-256 checksum and publishes it with the locked VSCE CLI, without rebuilding. Publishing runs are serialized, and `--skip-duplicate` allows a failed workflow to be retried when the version already exists. PRs, main branch pushes and manual workflow runs do not publish.
+
+If publishing fails after the GitHub Release is created, fix the publishing credential or policy and re-run the failed job in GitHub Actions. There is no need to bump the version again; the GitHub Release remains available.
 
 Failed unit or host tests leave a downloadable **agent-tandem-test-diagnostics** artifact. It contains the unit JSON report and available VS Code logs/restart reports, so failures can be diagnosed even when packaging or release is skipped.
 
@@ -82,14 +91,14 @@ npm run package:marketplace -- --preview
 
 This creates `agent-tandem-VERSION-preview.vsix` with the local publisher. Rebuild with your real ID and repository URL before uploading. Renaming the file cannot change its embedded publisher.
 
-## 4. Test and submit
+## 4. Test and submit manually (optional)
 
 1. Install the upload VSIX in a separate VS Code profile using **Extensions → … → Install from VSIX…**.
 2. Open a trusted test project, verify Review, Monaco syntax highlighting, colored inline buttons, native diff fallback, next/previous navigation, History and the usage dashboard. Connect an authenticated CLI to check live chat.
 3. Return to [publisher management](https://marketplace.visualstudio.com/manage/publishers/), select your publisher and choose **New extension → Visual Studio Code**.
 4. Upload the `.vsix`, review the listing and complete submission. For later releases, update the existing extension with a higher version.
 
-Marketplace performs its own validation. A successful local package build does not mean the listing has been accepted or published.
+Tag releases submit automatically when publishing is configured; the steps above are also available for a manual upload. Marketplace performs its own validation. A successful local package build does not mean the listing has been accepted or published.
 
 ## Why there are two build paths
 

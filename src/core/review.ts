@@ -16,6 +16,9 @@ import { imageSnapshots, type ImageComparison } from './media-preview';
 
 const execute = promisify(execFile);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+class ReviewTargetError extends Error {
+  constructor(message: string, readonly nonFile = false) { super(message); }
+}
 export interface ReviewFile extends FileChange { additions?: number; deletions?: number; captures?: ReviewCapture[] }
 export interface ReviewState { revision: string; files: ReviewFile[]; busy: boolean; notice?: string; externalTracking?: boolean; undo?: { id: string; createdAt: number; files: string[] } }
 export interface ReviewRequest { project: string; revision: string; file?: string; group?: string }
@@ -105,8 +108,8 @@ export class ReviewStore {
       current = path.join(current, segment);
       let info;
       try { info = await lstat(current); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
-      if (info.isSymbolicLink() || (info.isFile() && info.nlink > 1)) throw new Error(`Linked file cannot be reviewed: ${name}`);
-      if (current === target && !info.isFile()) throw new Error(`Review target is not a file: ${name}`);
+      if (info.isSymbolicLink() || (info.isFile() && info.nlink > 1)) throw new ReviewTargetError(`Linked file cannot be reviewed: ${name}`);
+      if (current === target && !info.isFile()) throw new ReviewTargetError(`Review target is not a file: ${name}`, true);
     }
     return target;
   }
@@ -114,9 +117,26 @@ export class ReviewStore {
     const full = await this.safePath(project, name);
     try { return (await streamFile(full)).hash; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   }
-  private async capture(project: string, known: string[] = [], previous?: Snapshot, signal?: AbortSignal): Promise<Snapshot> {
+  private async capture(project: string, known: string[] = [], previous?: Pick<Snapshot, 'files'>, signal?: AbortSignal, tolerateFileErrors = false): Promise<Snapshot & { notice?: string }> {
     signal?.throwIfAborted();
     const root = await realpath(project);
+    const skipped = new Map<string, string>();
+    const canSkip = (error: unknown) => {
+      if (error instanceof ReviewTargetError) return error.nonFile || tolerateFileErrors;
+      if (!tolerateFileErrors) return false;
+      const failure = error as NodeJS.ErrnoException;
+      // A workspace read failure must not hide a failure to write snapshot storage.
+      const changedPrefix = 'File changed while preparing review: ';
+      const changed = error instanceof Error && error.message.startsWith(changedPrefix);
+      const file = failure.path ?? (changed ? error.message.slice(changedPrefix.length) : undefined);
+      if (!file || (!changed && !['EACCES', 'EPERM', 'EBUSY', 'EISDIR', 'ENOTDIR'].includes(failure.code ?? ''))) return false;
+      const within = (directory: string) => {
+        const relative = path.relative(directory, path.resolve(root, file));
+        return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+      };
+      return within(root) && !within(path.resolve(this.history.directory));
+    };
+    const skip = (name: string, error: unknown) => skipped.set(name, error instanceof Error ? error.message : String(error));
     let names: string[];
     try {
       const { stdout } = await execute('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: project, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
@@ -137,7 +157,10 @@ export class ReviewStore {
           signal?.throwIfAborted();
           const name = `${prefix}${entry.name}`;
           if (local.ignores(name + (entry.isDirectory() ? '/' : ''))) continue;
-          if (entry.isDirectory()) await scan(path.join(folder, entry.name), `${name}/`, local);
+          if (entry.isDirectory()) {
+            try { await scan(path.join(folder, entry.name), `${name}/`, local); }
+            catch (error) { if (!canSkip(error)) throw error; skip(name, error); }
+          }
           else names.push(name);
         }
       };
@@ -158,41 +181,56 @@ export class ReviewStore {
       try { while (next < names.length && !failed) {
         signal?.throwIfAborted();
         const name = names[next++]!;
-        const full = await this.safePath(project, name, root);
-        let info;
-        try { info = await lstat(full); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
-        if (info.size > 512 * 1024) {
-          if (previous?.files[name]) {
-            const current = await streamFile(full, { signal });
-            if (current.hash === previous.files[name]) { files[name] = current.hash; continue; }
+        try {
+          const full = await this.safePath(project, name, root);
+          let info;
+          try { info = await lstat(full); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+          if (info.size > 512 * 1024) {
+            if (previous?.files[name]) {
+              const current = await streamFile(full, { signal });
+              if (current.hash === previous.files[name]) { files[name] = current.hash; continue; }
+            }
+            files[name] = await this.history.putFileBlob(full, signal);
+            continue;
           }
-          files[name] = await this.history.putFileBlob(full, signal);
-          continue;
-        }
-        const content = await readFile(full);
-        if (content.length !== info.size) throw new Error(`File changed while preparing review: ${name}`);
-        const id = hash(content);
-        if (previous?.files[name] === id) files[name] = id;
-        else {
-          let blob = blobs.get(id);
-          if (!blob) { blob = this.history.putBlob(content); blobs.set(id, blob); }
-          files[name] = await blob;
+          const content = await readFile(full);
+          if (content.length !== info.size) throw new Error(`File changed while preparing review: ${name}`);
+          const id = hash(content);
+          if (previous?.files[name] === id) files[name] = id;
+          else {
+            let blob = blobs.get(id);
+            if (!blob) { blob = this.history.putBlob(content); blobs.set(id, blob); }
+            files[name] = await blob;
+          }
+        } catch (error) {
+          signal?.throwIfAborted();
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT'
+            && (error as NodeJS.ErrnoException).path === path.resolve(root, ...name.split('/'))) continue;
+          if (!canSkip(error)) throw error;
+          skip(name, error);
+          // Preserve the last captured bytes while a path is unreadable or has
+          // become a directory/link; omitting it would invent a deletion.
+          if (previous?.files[name]) files[name] = previous.files[name]!;
         }
       } } catch (error) { failed = true; throw error; }
     }));
     for (const worker of workers) if (worker.status === 'rejected') throw worker.reason;
+    signal?.throwIfAborted();
     const snapshot = { id: randomUUID(), files };
     const directory = path.join(this.history.directory, 'snapshots'); await mkdir(directory, { recursive: true });
     await writeFile(path.join(directory, `${snapshot.id}.json`), JSON.stringify(snapshot), { flag: 'wx' });
-    return snapshot;
+    const issues = [...skipped].sort(([a], [b]) => a.localeCompare(b));
+    const notice = issues.length ? `Skipped ${issues.length} review ${issues.length === 1 ? 'path' : 'paths'}: ${issues.slice(0, 5).map(([name, reason]) => `${name} (${reason})`).join('; ')}${issues.length > 5 ? '; …' : ''}. Other files are still captured; skipped paths are checked again on the next capture.` : undefined;
+    return { ...snapshot, notice };
   }
   begin(project: string, requestId: string, signal?: AbortSignal, conversation?: ReviewConversation) { return this.serial(async () => {
     const value = await this.load(project);
     if (value.active) throw new Error('A change review is still capturing an agent turn.');
     if (value.external) await this.scanExternalValue(value);
-    const before = await this.capture(project, value.files.map(file => file.path), undefined, signal);
+    const previous = value.external ? await this.history.snapshot(value.external) : undefined;
+    const before = await this.capture(project, value.files.map(file => file.path), previous, signal, !!value.external);
     for (const file of value.files) if (before.files[file.path] !== file.after) throw new Error(`Pending ${file.path} changed outside the agent. Accept its review before starting another turn; your edits were kept.`);
-    value.active = { requestId, before: before.id, from: Date.now(), conversation }; value.notice = undefined;
+    value.active = { requestId, before: before.id, from: Date.now(), conversation }; value.notice = before.notice;
     await this.save(value); return this.view(value);
   }); }
   checkpointBefore(project: string, requestId: string) { return this.serial(async () => {
@@ -205,12 +243,12 @@ export class ReviewStore {
     const value = await this.load(project);
     if (!value.active || (requestId && value.active.requestId !== requestId)) return this.view(value);
     const before = await this.history.snapshot(value.active.before);
-    const after = await this.capture(project, [...Object.keys(before.files), ...value.files.map(file => file.path)], before);
+    const after = await this.capture(project, [...Object.keys(before.files), ...value.files.map(file => file.path)], before, undefined, !!value.external);
     const to = Date.now();
     await this.mergeChanges(value, before, after, { from: value.active.from ?? to, to, conversations: value.active.conversation ? [value.active.conversation] : undefined });
     if (value.external) { value.external = after.id; value.externalCapturedAt = to; }
     value.files.sort((a, b) => a.path.localeCompare(b.path)); value.active = undefined; value.revision = randomUUID();
-    value.notice = recovered ? 'Recovered changes from an interrupted agent turn.' : undefined;
+    value.notice = [recovered ? 'Recovered changes from an interrupted agent turn.' : undefined, after.notice].filter(Boolean).join(' ') || undefined;
     await this.save(value); return this.view(value);
   }
   private async mergeChanges(value: PendingReview, before: Snapshot, after: Snapshot, capture?: Omit<ReviewCapture, 'before' | 'after'>) {
@@ -265,11 +303,13 @@ export class ReviewStore {
     const project = value.project;
     if (value.active) throw new Error('Wait for the active agent turn to finish.');
     if (enabled && !value.external) {
-      const before = await this.capture(project, value.files.map(file => file.path));
+      const previous = { files: Object.fromEntries(value.files.filter(file => file.after).map(file => [file.path, file.after!])) };
+      const before = await this.capture(project, value.files.map(file => file.path), previous, undefined, true);
       for (const file of value.files) if (before.files[file.path] !== file.after) throw new Error(`Pending ${file.path} changed outside review. Resolve its pending review first; your edits were kept.`);
       value.external = before.id;
       value.externalCapturedAt = Date.now();
       value.notice = 'Saved workspace changes are tracked. Conversation groups use verified native edit history; other edits remain unassigned. Existing changes are the starting baseline.';
+      if (before.notice) value.notice += ` ${before.notice}`;
     } else if (!enabled && value.external) {
       await this.scanExternalValue(value);
       value.external = undefined;
@@ -286,13 +326,14 @@ export class ReviewStore {
   }); }
   private async scanExternalValue(value: PendingReview) {
     const before = await this.history.snapshot(value.external!);
-    const after = await this.capture(value.project, [...Object.keys(before.files), ...value.files.map(file => file.path)], before);
+    const after = await this.capture(value.project, [...Object.keys(before.files), ...value.files.map(file => file.path)], before, undefined, true);
     const to = Date.now();
     if (await this.mergeChanges(value, before, after, { from: value.externalCapturedAt ?? to, to })) value.revision = randomUUID();
     value.external = after.id;
     value.externalCapturedAt = to;
     value.externalDecidedAt = undefined;
     value.notice = 'Already applied · Conversation groups use verified native edit history. Other saved edits remain unassigned.';
+    if (after.notice) value.notice += ` ${after.notice}`;
   }
   bindConversation(project: string, previous: string, conversation: ReviewConversation) { return this.serial(async () => {
     const value = await this.load(project);
