@@ -11,6 +11,13 @@ vi.mock('vscode', () => ({
 import { SettingsView } from '../src/host/settings-view';
 
 describe('Settings host updates', () => {
+  it('opens Accounts directly and forwards account actions through the host allowlist', async () => {
+    const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } }, invoke = vi.fn();
+    const view = new SettingsView({} as any, () => state, invoke, vi.fn()); view.open('accounts');
+    await host.receive({ type: 'ready' }); expect(host.post).toHaveBeenLastCalledWith({ type: 'page', page: 'accounts' });
+    await host.receive({ type: 'accountAction', value: { action: 'switch', id: 'selected' } });
+    expect(invoke).toHaveBeenLastCalledWith('agentTandem.accountAction', { action: 'switch', id: 'selected' }); view.dispose();
+  });
   it('opens Storage directly, including when the webview becomes ready after creation', async () => {
     const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } };
     const view = new SettingsView({} as any, () => state, vi.fn(), vi.fn()); view.open('storage');

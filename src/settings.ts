@@ -1,9 +1,12 @@
-import { emptyTotals, localDay, periodKey, usageBreakdown, type TokenTotals, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
+import { dashboardAccountGroups, emptyTotals, localDay, periodKey, usageBreakdown, type TokenTotals, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
+import type { ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
 import { PRICING_CHECKED_AT, PRICING_SOURCES, type ApiCost } from './core/api-pricing';
-import { mergeQuotaObservations, quotaEstimates, quotaMeters, quotaMeterKey, quotaObservations, quotaTrends } from './core/quota-estimate';
+import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates, quotaMeters, quotaMeterKey, quotaObservations, quotaTrends } from './core/quota-estimate';
 import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-account';
 import { apiActivityBreakdown } from './core/api-token-activity';
+import { quotaPace, quotaTicks } from './core/quota-pace';
+import { ACCOUNT_PROVIDERS, accountProviderName, accountProviderDetail, isChatAccount, type AccountProvider } from './core/account-providers';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 const api = acquireVsCodeApi(), send = (type: string, value?: unknown) => api.postMessage({ type, value });
@@ -20,6 +23,18 @@ const money = (value: number) => moneyFormat.format(value);
 const costLabel = (cost: ApiCost) => !cost.pricedTokens && cost.unpricedTokens ? 'Unpriced' : `${money(cost.usd)}${cost.unpricedTokens ? ' + unpriced' : ''}`;
 let state: UsageDashboardState | undefined, initialized = false, currentPage = 'dashboard';
 let periodLimit = 60, modelSignature = '', accountSignature = '';
+let conversationLimit = 20, selectedUsageConversation: string | undefined;
+let accountPlatform: AccountProvider | '' = '';
+let observedSwitchId: string | undefined;
+function showSwitchDialog() {
+  const dialog = el<HTMLDialogElement>('account-switch-dialog');
+  if (!dialog.open) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
+}
+function hideSwitchDialog() {
+  const dialog = el<HTMLDialogElement>('account-switch-dialog');
+  if (typeof dialog.close === 'function') dialog.close(); else dialog.removeAttribute('open');
+  el('account-switch-view').focus();
+}
 function skeleton(kind = 'line') {
   const item = node('span', undefined, `skeleton skeleton-${kind}`); item.setAttribute('aria-hidden', 'true'); return item;
 }
@@ -45,14 +60,35 @@ function renderLoading() {
   for (let i = 0; i < 9; i++) bars.append(skeleton('bar')); chart.append(bars);
   el('chart-max').textContent = ''; el('chart-mid').textContent = '';
   el('chart-caption').replaceChildren(skeleton('caption')); loadingRows(el('provider-breakdown'), 2);
-  loadingRows(el('period-breakdown')); loadingRows(el('model-breakdown')); loadingRows(el('account-breakdown'));
+  loadingRows(el('period-breakdown')); loadingRows(el('model-breakdown')); loadingRows(el('account-breakdown')); loadingRows(el('conversation-breakdown'));
+  el('conversation-detail').hidden = true;
 }
 function page(value: string) {
   currentPage = value;
   el('dashboard').hidden = value !== 'dashboard'; el('preferences').hidden = value !== 'preferences'; el('storage').hidden = value !== 'storage';
+  el('managed-accounts').hidden = value !== 'accounts';
   document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.page === value)));
 }
-document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(button => { button.onclick = () => { page(button.dataset.page!); if (button.dataset.page === 'storage') send('storage'); }; });
+document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(button => { button.onclick = () => { page(button.dataset.page!); if (button.dataset.page === 'storage') send('storage'); if (button.dataset.page === 'accounts') send('accountAction', { action: 'refresh' }); }; });
+el('accounts-refresh').onclick = () => send('accountAction', { action: 'refresh' });
+el('account-switch-view').onclick = showSwitchDialog;
+el('account-switch-close').onclick = hideSwitchDialog;
+el('account-switch-dialog').addEventListener('cancel', event => { event.preventDefault(); hideSwitchDialog(); });
+function accountConnection(open: boolean) {
+  el('account-connection').hidden = !open; el('account-connect').setAttribute('aria-expanded', String(open));
+  if (open) { if (accountPlatform) el<HTMLSelectElement>('account-provider').value = accountPlatform; renderAccountConnection(); el('account-provider').focus(); }
+}
+el('account-connect').onclick = () => accountConnection(el('account-connection').hidden);
+el('account-connect-close').onclick = () => { accountConnection(false); el('account-connect').focus(); };
+el('account-provider').onchange = renderAccountConnection;
+el('account-search').oninput = renderManagedAccounts;
+for (const [id, action] of [['account-add', 'add'], ['account-save', 'importCurrent'], ['account-import', 'importFile']]) el(id!).onclick = () => send('accountAction', { action, provider: el<HTMLSelectElement>('account-provider').value });
+el('conversation-close').onclick = () => { selectedUsageConversation = undefined; el('conversation-detail').hidden = true; };
+el('conversation-search').oninput = () => { conversationLimit = 20; renderConversations(usageFilters()); };
+el('dashboard-view').onchange = () => {
+  for (const id of ['filter-account', 'filter-provider', 'filter-model']) el<HTMLSelectElement>(id).value = '';
+  renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
+};
 el('storage-refresh').onclick = () => send('storage'); el('storage-reveal').onclick = () => send('revealStorage');
 el('storage-preview').onclick = () => send('previewCleanup'); el('storage-cancel').onclick = () => send('storage');
 el('storage-clean').onclick = () => { if (state?.storage?.plan) send('cleanup', { token: state.storage.plan.token }); };
@@ -72,11 +108,12 @@ el<HTMLSelectElement>('default-grouping').onchange = () => {
   const grouping = el<HTMLSelectElement>('default-grouping').value;
   el<HTMLSelectElement>('filter-group').value = grouping; renderUsage(); send('preferences', { grouping });
 };
-for (const id of ['filter-provider', 'filter-account', 'filter-model', 'filter-range', 'filter-group', 'filter-from', 'filter-to']) el(id).onchange = () => { periodLimit = 60; renderUsage(); };
+for (const id of ['filter-provider', 'filter-account', 'filter-model', 'filter-range', 'filter-group', 'filter-from', 'filter-to']) el(id).onchange = () => { periodLimit = 60; renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); };
 el('reset-filters').onclick = () => {
   for (const id of ['filter-provider', 'filter-account', 'filter-model', 'filter-from', 'filter-to']) el<HTMLInputElement>(id).value = '';
   el<HTMLSelectElement>('filter-range').value = 'today'; el<HTMLSelectElement>('filter-group').value = state?.preferences.grouping ?? 'day';
-  periodLimit = 60; renderUsage();
+  el<HTMLSelectElement>('dashboard-view').value = 'accounts';
+  periodLimit = 60; renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
 };
 function dateRange(): { from?: string; to?: string } {
   const range = el<HTMLSelectElement>('filter-range').value, today = localDay(Date.now());
@@ -94,7 +131,7 @@ function metric(label: string, value: number, detail: string) {
 }
 function renderApiActivity(filters: UsageFilters) {
   const root = el('api-activity'); root.replaceChildren();
-  const account = state?.accounts?.Codex;
+  const account = dashboardAccountStatus('Codex');
   if (!state || (filters.provider !== 'Claude' && ((!account && state.status === 'loading') || (account?.status === 'loading' && !account.usage)))) {
     loadingRows(root, 2); return;
   }
@@ -113,19 +150,23 @@ function renderApiActivity(filters: UsageFilters) {
   ] as const) {
     const item = node('div', undefined, 'api-activity-metric'), amount = node('strong', value === undefined ? '—' : compact(value));
     amount.title = value === undefined ? 'Not reported by API' : number(value);
-    item.append(node('span', label, 'muted'), amount, node('small', value === undefined ? 'Not reported by API' : detail, 'muted')); metrics.append(item);
+    item.title = detail;
+    item.append(node('span', label, 'muted'), amount);
+    if (value === undefined) item.append(node('small', 'Not reported by API', 'muted'));
+    metrics.append(item);
   }
   root.append(metrics);
-  const note = node('p', 'Source: API · account/usage/read. API dates are shown as returned; the API does not specify their timezone. Selected range sums reported buckets only; missing days are not assumed to be zero. Model/input/output/cache breakdowns and API cost are Local estimates below.', 'muted');
-  root.append(note);
-  if (filters.model) root.append(node('p', 'The model filter applies only to Local usage; this API does not report an account-wide model breakdown.', 'muted'));
+  const details = node('details', undefined, 'usage-details'); details.append(node('summary', 'API details'));
+  details.append(node('p', 'Source: API · account/usage/read. Dates use the API timezone, which is unspecified. Missing days are not counted. Model breakdowns and API cost use local history.', 'muted'));
+  root.append(details);
+  if (filters.model) root.append(node('p', 'Model filter: Local only', 'muted'));
   if (usage.detail) root.append(node('p', usage.detail, 'muted'));
   if (result.periods.length) {
     const rows = node('div', undefined, 'table-wrap');
-    table(rows, ['API period', 'Tokens', 'Reported days'], result.periods.slice(-60).reverse().map(row => [row.key, row.tokens, row.days])); root.append(rows);
-    if (result.periods.length > 60) root.append(node('p', `Latest 60 of ${result.periods.length} reported periods; selected range total includes all returned periods.`, 'muted'));
+    table(rows, ['API period', 'Tokens', 'Reported days'], result.periods.slice(-60).reverse().map(row => [row.key, row.tokens, row.days])); details.append(rows);
+    if (result.periods.length > 60) details.append(node('p', 'Latest 60 periods shown.', 'muted'));
   } else root.append(node('p', 'No daily buckets were reported for the selected range.', 'muted'));
-  root.append(node('p', 'Claude personal-account token activity API is not connected. Claude token breakdowns below come from Local history; subscription quota comes from the native usage API.', 'muted'));
+  details.append(node('p', 'Claude: local token history, native API quota.', 'muted'));
 }
 function providerIcon(provider: ConversationProvider) {
   const image = node('img', undefined, 'provider-icon'); image.alt = ''; image.dataset.provider = provider;
@@ -153,7 +194,8 @@ function table(root: HTMLElement, headers: string[], rows: Array<Array<string | 
 function renderAccounts() {
   const root = el('accounts'); root.replaceChildren();
   for (const provider of ['Codex', 'Claude'] as const) {
-    const status = state?.accounts?.[provider], account = status?.account, item = node('article');
+    if (!accountInScope(provider)) continue;
+    const status = dashboardAccountStatus(provider), account = status?.account, item = node('article');
     const heading = node('div', undefined, 'dashboard-account-heading'); heading.append(providerIcon(provider), node('span', provider === 'Claude' ? 'Claude Code' : provider));
     if (account?.plan) heading.append(node('span', account.plan.replace(/_/g, ' '), 'muted'));
     item.append(heading, node('div', account?.email || account?.method || (status?.status === 'error' ? 'Account unavailable' : 'Account not loaded'), 'dashboard-account-identity'));
@@ -174,36 +216,254 @@ function renderAccounts() {
     item.append(windows); root.append(item);
   }
 }
+function dashboardStatuses() {
+  return [...(['Codex', 'Claude'] as const).flatMap(provider => state?.accounts?.[provider] ? [{ provider, status: state.accounts[provider]!, active: true }] : []),
+    ...(state?.managedAccounts ?? []).filter(profile => isChatAccount(profile.provider)).map(profile => ({ provider: profile.provider as ConversationProvider, label: profile.label, active: profile.active, status: profile.status ?? { status: 'loading' as const, account: profile.identity } }))];
+}
+function dashboardGroups(filters: UsageFilters = { grouping: 'day' }) {
+  return dashboardAccountGroups(state?.data?.days ?? [], filters, dashboardStatuses());
+}
+function accountInScope(provider: ConversationProvider) {
+  const id = el<HTMLSelectElement>('filter-account').value;
+  return !id || dashboardGroups().some(row => row.provider === provider && (row.account?.id ?? UNKNOWN_ACCOUNT) === id);
+}
+function dashboardAccountStatus(provider: ConversationProvider): ProviderAccountStatus | undefined {
+  const id = el<HTMLSelectElement>('filter-account').value;
+  if (!id) return state?.accounts?.[provider];
+  const group = dashboardGroups().find(row => row.provider === provider && row.account?.id === id);
+  if (!group) return undefined;
+  if (group.status) return group.status;
+  const account = group.account!, plan = [...(state?.quotaHistory ?? [])].reverse().find(row => row.provider === provider && row.accountId === id)?.plan;
+  return { status: 'ready', account: { signedIn: true, method: account.method, email: account.email, id: account.nativeAccountId, organization: account.organization, plan } };
+}
+function scopedQuotaObservations(provider: ConversationProvider, account = dashboardAccountStatus(provider)) {
+  const active = usageAccount(provider, state?.accounts?.[provider]?.account)?.id;
+  return quotaObservations(provider, account, state?.data).filter(row => row.source !== 'Device' || row.accountId === active);
+}
+function renderAccountGroups(filters: UsageFilters) {
+  const grouped = el<HTMLSelectElement>('dashboard-view').value === 'accounts', selected = !!filters.accountId;
+  el('account-overview').hidden = !grouped; el('dashboard-detail').hidden = grouped && !selected;
+  const root = el('account-groups'); root.replaceChildren();
+  for (const group of dashboardGroups(filters)) {
+    const id = group.account?.id ?? UNKNOWN_ACCOUNT, item = node('article', undefined, 'account-group'); item.dataset.provider = group.provider;
+    const heading = node('div', undefined, 'managed-account-heading'); heading.append(providerIcon(group.provider), node('h3', group.label || group.account?.email || 'Unknown account'));
+    if (group.active) heading.append(node('span', 'Active CLI', 'source-label'));
+    const identity = node('p', `${group.provider} · ${group.account ? usageAccountLabel(group.account) : 'Unattributed history'}`, 'muted');
+    const totals = node('div', undefined, 'account-group-totals'), amount = node('strong', compact(group.totals.total)); amount.title = number(group.totals.total);
+    totals.append(amount, node('span', 'Local tokens', 'muted'), node('span', `${number(group.totals.requests)} requests · ${costLabel(group.cost)}`, 'muted'));
+    item.append(heading, identity, totals);
+    const windows = node('div', undefined, 'account-group-windows');
+    for (const window of group.status?.quota?.windows ?? []) {
+      const row = node('div', undefined, 'account-group-window'), line = node('div');
+      line.append(node('span', window.label), node('strong', `${Math.round((100 - window.usedPercent) * 10) / 10}% left`));
+      const tick = quotaTicks(group.provider, group.status).find(t => t.windowId === window.id), rate = tick && quotaPace(state?.quotaTicks ?? [], tick).percentPerHour;
+      if (rate !== undefined) line.append(node('span', `${number(Math.round(rate * 10) / 10)}% / hour`, 'muted'));
+      row.append(line);
+      if (window.resetsAt) row.append(node('small', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
+      windows.append(row);
+    }
+    if (!windows.children.length) windows.append(node('small', group.account ? group.status?.quota?.detail || 'No quota snapshot' : 'Quota cannot be assigned to unknown history', 'muted'));
+    item.append(windows);
+    const open = node('button', selected ? 'Viewing usage' : 'View usage', 'quiet'); open.disabled = selected;
+    open.onclick = () => {
+      el<HTMLSelectElement>('filter-provider').value = group.provider; el<HTMLSelectElement>('filter-model').value = '';
+      renderUsage(); el<HTMLSelectElement>('filter-account').value = id;
+      renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); el('dashboard-detail').scrollIntoView?.({ block: 'start' });
+    };
+    item.append(open); root.append(item);
+  }
+  if (!filters.provider && !filters.accountId && !filters.model) for (const profile of state?.managedAccounts ?? []) if (!isChatAccount(profile.provider)) {
+    const item = node('article', undefined, 'account-group'), heading = node('div', undefined, 'managed-account-heading');
+    heading.append(accountAppIcon(profile.provider), node('h3', profile.label)); if (profile.active) heading.append(node('span', 'Active IDE', 'source-label'));
+    item.append(heading, node('p', `${profile.provider} · ${profile.status?.account?.email || profile.identity?.email || 'Saved native sign-in'}`, 'muted'), node('p', 'Usage and quota are available in the app.', 'muted'));
+    const open = node('button', 'Manage account', 'quiet'); open.onclick = () => { accountPlatform = profile.provider; page('accounts'); renderManagedAccounts(); }; item.append(open); root.append(item);
+  }
+  if (!root.children.length) root.append(node('p', state?.status === 'loading' ? 'Loading accounts…' : 'No account usage in this selection.', 'empty'));
+}
+function accountAppIcon(provider: AccountProvider) {
+  if (isChatAccount(provider)) return providerIcon(provider);
+  const mark = node('span', provider === 'Cursor' ? '↗' : 'A', 'account-app-mark'); mark.dataset.provider = provider; mark.setAttribute('aria-hidden', 'true'); return mark;
+}
+function renderAccountConnection() {
+  const provider = el<HTMLSelectElement>('account-provider').value as AccountProvider;
+  el('account-add').textContent = isChatAccount(provider) ? 'Sign in' : `Open ${provider}`;
+  el('account-connection-detail').textContent = isChatAccount(provider) ? 'Sign in in a separate CLI profile, or save the account you already use.' : `Sign in in ${provider}, then save its current sign-in here. Quota stays in the app.`;
+  el('account-import').title = isChatAccount(provider) ? 'Import native CLI account JSON' : 'Import an AgentTandem desktop sign-in JSON';
+}
+function renderManagedAccounts() {
+  const root = el('managed-account-list'); root.replaceChildren();
+  const busy = !!state?.accountsBusy;
+  for (const id of ['accounts-refresh', 'account-add', 'account-save', 'account-import', 'account-provider', 'account-connect']) el<HTMLButtonElement>(id).disabled = busy;
+  el('managed-accounts').setAttribute('aria-busy', String(busy)); renderAccountConnection();
+  el('accounts-notice').textContent = busy ? 'Updating accounts…' : state?.accountsError ? '' : state?.accountSwitchBlocked || state?.accountsNotice || '';
+  el('accounts-error').hidden = !state?.accountsError; el('accounts-error').textContent = state?.accountsError || '';
+  const all = state?.managedAccounts ?? [], platforms = el('account-platforms'); platforms.replaceChildren();
+  for (const provider of ['', ...ACCOUNT_PROVIDERS] as const) {
+    const button = node('button', undefined, 'account-platform'); button.setAttribute('aria-pressed', String(accountPlatform === provider));
+    if (provider) button.append(accountAppIcon(provider)); else { const icon = node('span', undefined, 'codicon codicon-apps'); icon.setAttribute('aria-hidden', 'true'); button.append(icon); }
+    button.append(node('span', provider ? accountProviderName(provider) : 'All apps'), node('small', String(all.filter(row => !provider || row.provider === provider).length)));
+    button.onclick = () => { accountPlatform = provider; renderManagedAccounts(); if (!el('account-connection').hidden && provider) { el<HTMLSelectElement>('account-provider').value = provider; renderAccountConnection(); } };
+    platforms.append(button);
+  }
+  const search = el<HTMLInputElement>('account-search').value.trim().toLowerCase();
+  const profiles = all.filter(row => (!accountPlatform || row.provider === accountPlatform) && (!search || [row.label, row.provider, row.identity?.email, row.status?.account?.email, row.identity?.plan].join(' ').toLowerCase().includes(search))).sort((a, b) => Number(!!b.active) - Number(!!a.active) || a.provider.localeCompare(b.provider) || a.label.localeCompare(b.label));
+  el('account-count').textContent = `${profiles.length}${profiles.length !== all.length ? ` / ${all.length}` : ''}`;
+  if (!profiles.length) {
+    const empty = node('div', undefined, 'account-empty'); empty.append(node('span', undefined, 'codicon codicon-account'), node('h3', all.length ? 'No matching accounts' : 'Keep your accounts together'), node('p', all.length ? 'Try another app or search.' : 'Add a sign-in or save the account already open in your CLI or editor.', 'muted'));
+    const add = node('button', all.length ? 'Clear filters' : 'Add your first account', 'quiet'); add.disabled = busy; add.onclick = () => { if (all.length) { accountPlatform = ''; el<HTMLInputElement>('account-search').value = ''; renderManagedAccounts(); } else accountConnection(true); }; empty.append(add); root.append(empty); return;
+  }
+  for (const profile of profiles) {
+    const item = node('article', undefined, 'managed-account'); item.dataset.active = String(!!profile.active); item.dataset.provider = profile.provider;
+    const identity = profile.status?.account || profile.identity;
+    const heading = node('div', undefined, 'managed-account-heading'), icon = node('div', undefined, 'account-app-icon'); icon.append(accountAppIcon(profile.provider));
+    const copy = node('div', undefined, 'managed-account-copy'); copy.append(node('h3', profile.label), node('span', identity?.email || (identity?.signedIn ? 'Saved native sign-in' : 'Complete sign-in'), 'muted')); heading.append(icon, copy);
+    const status = node('span', profile.active ? isChatAccount(profile.provider) ? 'Active CLI' : 'Active IDE' : profile.status?.status === 'error' ? 'Needs attention' : identity?.signedIn ? 'Saved' : 'Not signed in', 'account-state'); status.dataset.state = profile.active ? 'active' : profile.status?.status === 'error' ? 'error' : 'saved'; heading.append(status);
+    const meta = node('div', undefined, 'managed-account-meta'); meta.append(node('span', accountProviderName(profile.provider)));
+    if (identity?.plan) meta.append(node('span', identity.plan.replace(/_/g, ' '), 'account-plan')); else meta.append(node('span', isChatAccount(profile.provider) ? 'CLI account' : 'Desktop account', 'muted'));
+    item.append(heading, meta);
+    const windows = node('div', undefined, 'managed-account-quota');
+    for (const window of profile.status?.quota?.windows ?? []) {
+      const row = node('div'), label = node('span', `${window.label} · ${Math.round((100 - window.usedPercent) * 10) / 10}% left`), meter = node('progress'); meter.max = 100; meter.value = Math.max(0, 100 - window.usedPercent); meter.setAttribute('aria-label', `${profile.label} ${window.label} quota remaining`);
+      if (window.resetsAt) label.title = `Resets ${new Date(window.resetsAt).toLocaleString()}`;
+      row.append(label, meter);
+      const tick = isChatAccount(profile.provider) ? quotaTicks(profile.provider, profile.status).find(t => t.windowId === window.id) : undefined;
+      if (tick) { const pace = quotaPace(state?.quotaTicks ?? [], tick); if (pace.percentPerHour !== undefined) row.append(node('small', `${number(Math.round(pace.percentPerHour * 10) / 10)}% / hour`, 'muted')); }
+      windows.append(row);
+    }
+    if (!windows.children.length) windows.append(node('p', profile.status?.error || (isChatAccount(profile.provider) ? profile.status?.quota?.detail || 'Refresh to check sign-in and quota' : 'Sign-in saved locally · quota in app'), 'muted'));
+    item.append(windows);
+    const actions = node('div', undefined, 'actions');
+    for (const [action, label] of [['switch', profile.active ? 'Active' : 'Switch account'], [isChatAccount(profile.provider) ? 'login' : 'open', isChatAccount(profile.provider) ? 'Sign in' : 'Open app'], ['rename', 'Rename'], ['remove', 'Remove']]) {
+      const switching = action === 'switch' && state?.accountSwitch?.status === 'running' && state.accountSwitch.profileId === profile.id;
+      const button = node('button', switching ? 'Switching…' : label, action === 'switch' ? '' : 'quiet'); button.disabled = busy || (action === 'switch' && (!!profile.active || !!state?.accountSwitchBlocked));
+      if (switching) { const spinner = node('span', undefined, 'codicon codicon-loading account-switch-spinner'); spinner.setAttribute('aria-hidden', 'true'); button.prepend(spinner); }
+      button.onclick = () => send('accountAction', { action, id: profile.id });
+      if (action === 'switch') button.title = state?.accountSwitchBlocked || (isChatAccount(profile.provider) ? 'Updates the default native CLI sign-in' : 'Close all app windows, switch, then reopen');
+      if (action === 'remove') button.classList.add('account-remove');
+      actions.append(button);
+    }
+    item.append(actions); const footer = node('small', profile.status?.updatedAt ? `Checked ${new Date(profile.status.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : accountProviderDetail(profile.provider), 'account-checked muted'); item.append(footer); root.append(item);
+  }
+}
+function renderAccountSwitch() {
+  const operation = state?.accountSwitch; el('account-switch-view').hidden = !operation;
+  if (!operation) return;
+  const running = operation.status === 'running';
+  el('account-switch-view').textContent = running ? 'View switch progress' : 'View switch log';
+  const title = operation.status === 'success' ? 'Account switched' : running ? 'Switching account' : operation.outcome === 'switched' ? 'Switched · refresh failed' : 'Switch failed';
+  el('account-switch-title').textContent = title;
+  el('account-switch-target').textContent = [operation.provider && accountProviderName(operation.provider), operation.label].filter(Boolean).join(' · ');
+  el('account-switch-icon').className = `codicon codicon-${running ? 'loading account-switch-spinner' : operation.status === 'success' ? 'check' : 'error'}`;
+  el('account-switch-dialog').dataset.status = operation.status;
+  el('account-switch-result').textContent = running ? operation.logs.at(-1)?.message || 'Preparing account switch.' : operation.status === 'success' ? operation.notice || 'The default native sign-in has changed.' : operation.outcome === 'restored' ? 'Your previous sign-in was restored.' : operation.outcome === 'notChanged' ? 'The native sign-in was not changed.' : operation.outcome === 'switched' ? 'The sign-in changed. Refresh accounts to update the dashboard.' : operation.outcome === 'recoveryRequired' ? 'Restore failed. Sign in again in the native app.' : 'Check the native sign-in before retrying.';
+  el('account-switch-error').hidden = !operation.error; el('account-switch-error').textContent = operation.error || '';
+  const log = el('account-switch-log'), wasAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 28;
+  log.replaceChildren();
+  for (const entry of operation.logs) {
+    const row = node('li'), at = node('time', new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })); at.dateTime = new Date(entry.at).toISOString(); row.dataset.level = entry.level;
+    const glyph = node('span', undefined, `codicon codicon-${entry.level === 'success' ? 'check' : entry.level === 'error' ? 'error' : 'circle-small-filled'}`); glyph.setAttribute('aria-hidden', 'true'); row.append(at, glyph, node('span', entry.message)); log.append(row);
+  }
+  if (wasAtBottom) log.scrollTop = log.scrollHeight;
+  el('account-switch-duration').textContent = operation.finishedAt ? `Finished in ${Math.max(0.1, (operation.finishedAt - operation.startedAt) / 1000).toFixed(1)}s` : 'You can hide this window while the switch continues.';
+  el('account-switch-close').textContent = running ? 'Hide' : 'Close';
+  if (operation.id !== observedSwitchId) { observedSwitchId = operation.id; if (running) showSwitchDialog(); }
+}
+function renderQuotaPace() {
+  const root = el('quota-pace'); root.replaceChildren();
+  for (const provider of ['Codex', 'Claude'] as const) if (accountInScope(provider)) for (const tick of quotaTicks(provider, dashboardAccountStatus(provider))) {
+    const pace = quotaPace(state?.quotaTicks ?? [], tick), item = node('article', undefined, 'quota-pace-card');
+    const heading = node('div', undefined, 'quota-pace-heading'); heading.append(providerIcon(provider), node('span', `${provider} · ${tick.label}`)); item.append(heading);
+    const value = node('strong', pace.percentPerHour === undefined ? '—' : `${number(Math.round(pace.percentPerHour * 10) / 10)}% / hour`);
+    value.title = 'Measured change in API quota over the last observed hour. Includes usage outside this conversation.'; item.append(value);
+    const detail = node('p', pace.percentPerHour === undefined ? 'Collecting quota samples' : pace.percentPerHour === 0 ? 'No quota increase observed' : pace.exhaustsAt ? `At this pace: ${new Date(pace.exhaustsAt).toLocaleString()}${pace.beforeReset ? ' · before reset' : ''}` : '—', 'muted');
+    item.dataset.low = String(pace.beforeReset); item.append(detail);
+    const chart = node('div', undefined, 'quota-pace-chart'); chart.setAttribute('aria-label', `${provider} ${tick.label} observed quota usage`);
+    for (const sample of pace.samples.slice(-30)) { const bar = node('span'); bar.style.height = `${Math.max(3, sample.usedPercent)}%`; bar.title = `${new Date(sample.at).toLocaleTimeString()} · ${sample.usedPercent}% used`; chart.append(bar); }
+    item.append(chart); root.append(item);
+  }
+  if (!root.children.length) root.append(node('p', 'Refresh account quota to start measuring.', 'empty'));
+}
+function usageFilters(): UsageFilters {
+  return { ...dateRange(), provider: el<HTMLSelectElement>('filter-provider').value as ConversationProvider || undefined, accountId: el<HTMLSelectElement>('filter-account').value || undefined, model: el<HTMLSelectElement>('filter-model').value || undefined, grouping: el<HTMLSelectElement>('filter-group').value as UsageGrouping };
+}
+function renderConversations(filters: UsageFilters) {
+  const root = el('conversation-breakdown'), query = el<HTMLInputElement>('conversation-search').value.trim().toLowerCase();
+  const rows = (state?.data?.conversations ?? []).map(conversation => ({ conversation, result: usageBreakdown(conversation.days, filters), title: state?.conversationTitles?.[conversation.key] || `${conversation.provider} · ${conversation.id === 'unknown' ? 'Unknown conversation' : conversation.id.slice(0, 8)}` }))
+    .filter(row => row.result.totals.total > 0 && (!query || `${row.title} ${row.conversation.id} ${row.conversation.project || ''}`.toLowerCase().includes(query)))
+    .sort((a, b) => b.result.totals.total - a.result.totals.total);
+  table(root, ['Conversation', 'Provider', 'Tokens', 'Requests', 'API USD', 'Last activity'], rows.slice(0, conversationLimit).map(row => [row.title, row.conversation.provider, row.result.totals.total, row.result.totals.requests, costLabel(row.result.cost), new Date(row.conversation.lastAt).toLocaleDateString()]), 2);
+  root.querySelectorAll('tbody tr').forEach((line, index) => {
+    const row = rows[index]!, cell = line.querySelector('td')!, button = node('button', row.title, 'conversation-link');
+    button.title = row.conversation.project || row.conversation.id;
+    button.onclick = () => { selectedUsageConversation = row.conversation.key; renderConversations(filters); el('conversation-detail').scrollIntoView?.({ block: 'nearest' }); };
+    button.setAttribute('aria-expanded', String(selectedUsageConversation === row.conversation.key)); cell.replaceChildren(button);
+  });
+  if (rows.length > conversationLimit) { const more = node('button', `Show ${Math.min(20, rows.length - conversationLimit)} more conversations`, 'quiet'); more.onclick = () => { conversationLimit += 20; renderConversations(filters); }; root.append(more); }
+  const selected = rows.find(row => row.conversation.key === selectedUsageConversation); el('conversation-detail').hidden = !selected;
+  if (!selected) return;
+  const { conversation, result } = selected, t = result.totals;
+  el('conversation-title').textContent = selected.title;
+  el('conversation-meta').textContent = `${conversation.project || conversation.id} · ${new Date(conversation.firstAt).toLocaleString()} → ${new Date(conversation.lastAt).toLocaleString()}`;
+  el('conversation-totals').replaceChildren(metric('Tokens', t.total, `${number(t.requests)} requests`), metric('Input', t.input, `${compact(t.cacheRead)} cache read`), metric('Output', t.output, `${compact(t.reasoning)} reasoning`), metric('API cost', result.cost.usd, 'Estimate'));
+  const costValue = el('conversation-totals').lastElementChild?.querySelector('strong'); if (costValue) { costValue.textContent = costLabel(result.cost); costValue.title = `${result.cost.usd.toFixed(6)} USD`; }
+  const quotaRoot = el('conversation-quota'); quotaRoot.replaceChildren();
+  const elapsed = conversation.lastAt - conversation.firstAt;
+  const lifetime = usageBreakdown(conversation.days, { grouping: 'day' }).totals.total;
+  if (elapsed >= 60000) { const pace = node('span', `≈ ${compact(lifetime / elapsed * 60000)} tokens / min`, 'muted'); pace.title = 'Lifetime average across the full recorded conversation span, including idle time.'; quotaRoot.append(pace); }
+  const accountStatus = dashboardAccountStatus(conversation.provider);
+  for (const trend of quotaTrends(conversation.provider, accountStatus, mergeQuotaObservations(state?.quotaHistory ?? [], scopedQuotaObservations(conversation.provider, accountStatus)))) {
+    const identity = usageAccount(conversation.provider, accountStatus?.account);
+    const matched = result.accounts.length === 1 && result.accounts[0]?.account?.id === identity?.id && !!identity;
+    const otherKnownAccount = result.accounts.some(row => row.account && row.account.id !== identity?.id);
+    if (trend.tokensPerPercent && (matched || (trend.source === 'Device' && !otherKnownAccount))) {
+      const estimate = node('span', `≈ ${number(Math.round(t.total / trend.tokensPerPercent * 10) / 10)}% ${trend.label} equivalent`, 'muted');
+      estimate.title = `${trend.source} estimate from tokens per 1%. This is not measured per-conversation quota consumption.`; quotaRoot.append(estimate);
+    }
+  }
+  table(el('conversation-models'), ['Model', 'Input', 'Output', 'Cache read', 'Tokens', 'API USD'], result.models.map(row => [row.model, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.total, costLabel(row.cost)]));
+  table(el('conversation-days'), ['Period', 'Tokens', 'Requests', 'API USD'], result.periods.map(row => [row.key, row.totals.total, row.totals.requests, costLabel(row.cost)]));
+}
 function renderQuotaEstimates() {
   const root = el('quota-estimates'); root.replaceChildren();
   if (state?.quotaHistoryError) root.append(node('p', state.quotaHistoryError, 'quota-history-error'));
   for (const provider of ['Codex', 'Claude'] as const) {
+    if (!accountInScope(provider)) continue;
     const item = node('article', undefined, 'quota-estimate-provider'), heading = node('h3');
     heading.append(providerIcon(provider), node('span', provider === 'Claude' ? 'Claude Code' : provider)); item.append(heading);
-    const identity = usageAccount(provider, state?.accounts?.[provider]?.account);
+    const identity = usageAccount(provider, dashboardAccountStatus(provider)?.account);
     if (identity) item.append(node('p', usageAccountLabel(identity), 'muted quota-estimate-account'));
     if (!state || (state.status === 'loading' && !state.data && !state.quotaHistory?.length && !state.quotaBaselines?.length && !quotaMeters(provider, state.accounts?.[provider]).length)) { const loading = node('div'); loadingRows(loading, 2); item.append(loading); root.append(item); continue; }
-    const account = state.accounts?.[provider], estimates = quotaEstimates(provider, account, state.data);
+    const account = dashboardAccountStatus(provider), estimates = quotaEstimates(provider, account, state.data);
     const meters = quotaMeters(provider, account);
-    const history = mergeQuotaObservations(state.quotaHistory ?? [], quotaObservations(provider, account, state.data));
+    const observed = observeQuotaMeters(state.quotaBaselines ?? [], meters);
+    // Render a valid paired sample immediately, even while the host persists it.
+    const history = mergeQuotaObservations(state.quotaHistory ?? [], [...scopedQuotaObservations(provider, account), ...observed.observations]);
     for (const trend of quotaTrends(provider, account, history)) {
       const estimate = estimates.find(row => row.label === trend.label)!;
       const meter = meters.find(row => row.label === trend.label);
       const baseline = meter && state.quotaBaselines?.find(row => quotaMeterKey(row.start) === quotaMeterKey(meter));
-      const waiting = baseline ? 'API baseline saved · Waiting for tokens and quota usage to increase' : meter ? 'Collecting API baseline · Refresh to start observing quota changes' : estimate.reason === 'No tokens attributed to this account in this window' ? 'No local tokens matched to this account yet. New chats in AgentTandem record account-matched usage.' : estimate.reason;
+      const tokenDelta = baseline ? meter!.totalTokens - baseline.start.totalTokens : 0;
+      const quotaDelta = baseline ? meter!.usedPercent - baseline.start.usedPercent : 0;
+      const waiting = baseline ? tokenDelta > 0 && quotaDelta <= 0 ? 'Waiting for quota to increase' : quotaDelta > 0 && tokenDelta <= 0 ? 'Waiting for API tokens to update' : 'Waiting for new usage'
+        : meter ? 'API baseline saved · Waiting for new usage' : estimate.reason === 'No tokens attributed to this account in this window' ? 'No tokens recorded this cycle' : estimate.reason;
       const row = node('div', undefined, 'quota-estimate-row'), label = node('div', undefined, 'quota-estimate-label');
       label.append(node('strong', estimate.label), node('span', estimate.usedPercent === undefined ? '—' : `${estimate.usedPercent}% used`, 'muted')); row.append(label);
-      if (trend.tokensPerPercent === undefined) row.append(node('p', waiting, 'muted'));
+      if (trend.tokensPerPercent === undefined) {
+        const pending = node('p', waiting, 'muted');
+        if (baseline) pending.title = `API baseline saved · ${number(tokenDelta)} new tokens · ${number(quotaDelta)} quota percentage points`;
+        row.append(pending);
+      }
       else {
         const amount = node('strong', `≈ ${compact(trend.tokensPerPercent)} tokens / 1%`, 'quota-estimate-value'); amount.title = `${number(Math.round(trend.tokensPerPercent))} tokens per percentage point`;
-        row.append(amount, node('p', `All observed cycles · ${trend.observations.length} ${trend.observations.length === 1 ? 'cycle' : 'cycles'} · All projects & models`, 'muted'));
-        row.append(node('p', trend.source === 'API' ? 'API counters · token increase ÷ quota percentage-point increase' : 'Local · account-matched token history', 'muted quota-estimate-source'));
-        row.append(node('p', `Latest cycle ≈ ${compact(trend.latestTokensPerPercent!)} tokens / 1%`, 'quota-trend-latest'));
-        if (trend.changePercent === undefined) row.append(node('p', 'Collecting baseline · Compare after another quota cycle', 'muted'));
-        else {
+        const source = node('p', `${trend.source === 'Device' ? 'Device estimate' : trend.source} · ${trend.observations.length} ${trend.observations.length === 1 ? 'cycle' : 'cycles'}`, 'muted quota-estimate-source');
+        source.title = trend.source === 'API' ? 'API counters · token increase ÷ quota percentage-point increase' : trend.source === 'Device'
+          ? 'Local history includes sessions with unknown accounts. Other known accounts are excluded; usage on other devices is not recorded.' : 'Local · account-matched token history';
+        row.append(amount, source);
+        if (trend.source === 'Device') row.append(node('small', 'Includes sessions without account identity', 'muted'));
+        if (trend.changePercent !== undefined) {
           const change = Math.round(trend.changePercent * 10) / 10;
           const direction = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
-          const comparison = node('p', `${change > 0 ? '+' : ''}${change}% vs earlier cycles · ${change > 0 ? 'More' : change < 0 ? 'Fewer' : 'Same'} tokens per 1%`, 'quota-trend-change');
+          const comparison = node('p', `${change > 0 ? '+' : ''}${change}% vs earlier cycles`, 'quota-trend-change');
           comparison.dataset.direction = direction;
           comparison.title = `Earlier cycles: ${number(Math.round(trend.baselineTokensPerPercent!))} tokens / 1%`;
           row.append(comparison);
@@ -212,23 +472,37 @@ function renderQuotaEstimates() {
         if (trend.source === 'API') {
           if (latestApi) {
             const rate = latestApi.observedTokens / latestApi.usedPercent;
-            row.append(node('p', `Current observed interval · ≈ ${compact(rate * 100)} at 100% · ≈ ${compact(rate * (100 - meter!.usedPercent))} left`, 'muted'));
-          } else row.append(node('p', `Current cycle · ${waiting}`, 'muted'));
-        } else if (estimate.tokensPerPercent !== undefined) {
-          const detail = node('p', `Current cycle · ≈ ${compact(estimate.capacityTokens!)} at 100% · ≈ ${compact(estimate.remainingTokens!)} left`, 'muted');
-          detail.title = `${number(estimate.observedTokens!)} local tokens from ${new Date(estimate.from!).toLocaleString()} to ${new Date(estimate.to!).toLocaleString()}`;
+            row.append(node('p', `≈ ${compact(rate * (100 - meter!.usedPercent))} tokens left`, 'muted'));
+          } else row.append(node('p', waiting, 'muted'));
+        } else {
+          const current = trend.observations.find(sample => sample.resetsAt > Date.now());
+          const detail = node('p', current ? `≈ ${compact(current.observedTokens / current.usedPercent * (100 - current.usedPercent))} tokens left` : 'Waiting for current cycle usage', 'muted');
+          if (current) detail.title = `${number(current.observedTokens)} tokens from ${new Date(current.from).toLocaleString()} to ${new Date(current.to).toLocaleString()}`;
           row.append(detail);
-        } else row.append(node('p', `Current cycle · ${estimate.reason}`, 'muted'));
-        const latest = trend.observations.at(-1)!;
-        row.append(node('p', `Last observed ${new Date(latest.to).toLocaleString()}`, 'muted'));
-        const details = node('details', undefined, 'quota-trend-history');
-        details.append(node('summary', `Cycle history · ${trend.observations.length} observations`));
+        }
+        const details = node('div', undefined, 'quota-trend-history');
+        details.append(node('h4', 'Tokens per reset cycle'));
         const tableRoot = node('div', undefined, 'table-wrap');
-        table(tableRoot, ['Last observed', 'Tokens / 1%', 'Tokens', 'Used %'], trend.observations.slice(-30).reverse().map(sample => [
-          new Date(sample.to).toLocaleString(), Math.round(sample.observedTokens / sample.usedPercent), sample.observedTokens, sample.usedPercent,
+        const cycles = quotaCycles(trend.observations).slice(-30).reverse();
+        table(tableRoot, ['Reset', 'Recorded', '≈ At 100%', 'vs prev.'], cycles.map(sample => [
+          `${new Date(sample.resetsAt).toLocaleString(undefined, { month: 'short', day: 'numeric', ...(sample.label === '5h' ? { hour: '2-digit', minute: '2-digit' } : {}) })}${sample.active ? ' · current' : ''}`,
+          sample.observedTokens, Math.round(sample.capacityTokens), sample.changePercent === undefined ? '—' : `${sample.changePercent > 0 ? '+' : ''}${Math.round(sample.changePercent * 10) / 10}%`,
         ]));
+        tableRoot.querySelectorAll('tbody tr').forEach((line, index) => {
+          const cycle = cycles[index]!;
+          line.querySelector('td')!.title = `Reset ${new Date(cycle.resetsAt).toLocaleString()} · ${cycle.partial ? 'Partial observation' : 'Full cycle'} · ${number(cycle.usedPercent)}% quota observed\n${new Date(cycle.from).toLocaleString()} – ${new Date(cycle.to).toLocaleString()}`;
+          if (index >= 3) (line as HTMLElement).hidden = true;
+        });
         details.append(tableRoot);
-        if (trend.observations.length > 30) details.append(node('p', 'Latest 30 cycles shown; the average includes all recorded cycles.', 'muted'));
+        if (cycles.length > 3) {
+          const more = node('button', `Show ${cycles.length - 3} more cycles`, 'quiet'); more.setAttribute('aria-expanded', 'false');
+          more.onclick = () => {
+            const expanded = more.getAttribute('aria-expanded') !== 'true'; more.setAttribute('aria-expanded', String(expanded));
+            tableRoot.querySelectorAll<HTMLElement>('tbody tr').forEach((line, index) => { if (index >= 3) line.hidden = !expanded; });
+            more.textContent = expanded ? 'Show fewer cycles' : `Show ${cycles.length - 3} more cycles`;
+          }; details.append(more);
+        }
+        if (trend.observations.length > 30) details.title = 'Latest 30 cycles shown; average includes all recorded cycles.';
         row.append(details);
       }
       item.append(row);
@@ -238,7 +512,8 @@ function renderQuotaEstimates() {
 }
 function renderCost(cost: ApiCost) {
   const total = el('api-cost-total'); total.textContent = costLabel(cost); total.title = `${cost.usd.toFixed(6)} USD for priced token usage`;
-  el('api-cost-caption').textContent = `Estimate · Local tokens × API prices · ${compact(cost.pricedTokens)} tokens priced${cost.unpricedTokens ? ` · ${compact(cost.unpricedTokens)} unpriced tokens excluded` : ''} · standard API rates`;
+  el('api-cost-caption').textContent = `Local tokens × API prices${cost.unpricedTokens ? ` · ${compact(cost.unpricedTokens)} unpriced` : ''}`;
+  el('api-cost-caption').title = `${number(cost.pricedTokens)} tokens priced · standard API rates`;
   const parts = el('api-cost-parts'); parts.replaceChildren();
   for (const [label, value] of [['Uncached input', cost.inputUsd], ['Cache read', cost.cacheReadUsd], ['Cache write', cost.cacheWriteUsd], ['Output', cost.outputUsd]] as const) {
     const item = node('div'); item.append(node('span', label, 'muted'), node('strong', money(value))); parts.append(item);
@@ -257,6 +532,10 @@ function renderUsage() {
   for (const agent of ['Codex', 'Claude'] as const) if (!provider || agent === provider) {
     const account = usageAccount(agent, state.accounts?.[agent]?.account);
     if (account) accounts.set(account.id, `${usageAccountLabel(account)} · ${agent}`);
+  }
+  for (const profile of state.managedAccounts ?? []) if (isChatAccount(profile.provider) && (!provider || profile.provider === provider)) {
+    const account = usageAccount(profile.provider, profile.status?.account || profile.identity);
+    if (account) accounts.set(account.id, `${profile.label} · ${usageAccountLabel(account)} · ${profile.provider}`);
   }
   const accountOptions = [...accounts].sort((a, b) => a[1].localeCompare(b[1])), nextAccountSignature = JSON.stringify(accountOptions);
   if (accountSignature !== nextAccountSignature) {
@@ -332,6 +611,7 @@ function renderUsage() {
   if (periodsDescending.length > periodLimit) {
     const more = node('button', `Show ${Math.min(60, periodsDescending.length - periodLimit)} more`, 'quiet'); more.onclick = () => { periodLimit += 60; renderUsage(); }; el('period-breakdown').append(more);
   }
+  renderConversations(filters); renderAccountGroups(filters);
 }
 const fileSize = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : bytes < 1024 ** 3 ? `${(bytes / 1024 ** 2).toFixed(1)} MB` : `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 function visibleHistory(storage: UsageDashboardState['storage']) {
@@ -439,30 +719,32 @@ function render(value: UsageDashboardState) {
   el('dashboard').setAttribute('aria-busy', String(value.status === 'loading'));
   el('dashboard').dataset.loading = String(value.status === 'loading');
   el('dashboard-status').textContent = value.status === 'loading' ? 'Reading local CLI history…' : value.data ? `Updated ${new Date(value.data.updatedAt).toLocaleString()} · ${value.data.timezone}` : 'Usage history has not been loaded.';
-  renderAccounts(); renderQuotaEstimates();
+  renderManagedAccounts(); renderAccountSwitch();
   const signature = JSON.stringify([value.status, value.data && { ...value.data, recent: undefined }, value.error,
-    value.accounts?.Codex?.account, value.accounts?.Claude?.account]);
+    value.accounts?.Codex?.account, value.accounts?.Claude?.account, value.conversationTitles]);
   // Account/quota updates need estimates, but leave history tables and filters intact.
   if (signature !== usageRenderSignature) { usageRenderSignature = signature; renderUsage(); }
   else renderApiActivity({ ...dateRange(), provider: el<HTMLSelectElement>('filter-provider').value as ConversationProvider || undefined,
     accountId: el<HTMLSelectElement>('filter-account').value || undefined, model: el<HTMLSelectElement>('filter-model').value || undefined,
     grouping: el<HTMLSelectElement>('filter-group').value as UsageGrouping });
-  const root = el('usage-coverage'); root.replaceChildren(node('div', 'Includes recorded Codex and Claude Code usage across all local projects, archived sessions and subagents. Other devices and deleted history are not included.'));
-  root.append(node('div', 'Input includes cache read/write. Output includes reasoning when reported. These token totals do not represent your subscription quota or a billing statement.'));
-  root.append(node('div', 'Account attribution starts with native responses observed by AgentTandem. Older history, external CLI runs and unidentified API keys stay under Unknown account; they are never assigned to the current login or used in quota estimates. Identity uses the native email and organization when reported.'));
+  renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); renderAccountGroups(usageFilters());
+  const root = el('usage-coverage'), coverage = node('details', undefined, 'usage-details');
+  coverage.append(node('summary', 'Data & pricing details')); root.replaceChildren(coverage);
+  coverage.append(node('div', 'Local usage includes saved history across projects, archived sessions and subagents. Other devices and deleted history are excluded. Input includes cache; output includes reported reasoning.'));
+  coverage.append(node('div', 'Sessions without native account evidence stay under Unknown account. Device quota estimates include those sessions separately; account-matched Local estimates exclude them.'));
   const pricing = node('div', `API equivalent uses published standard global token rates checked ${PRICING_CHECKED_AT}, not historical invoices. Prompt-length premiums are estimated per response; older session-wide billing cannot be reconstructed. Fast modes, tool fees, taxes and regional premiums are excluded. Unspecified Claude cache writes use the 5-minute rate. Sources: `);
   for (const provider of ['Codex', 'Claude'] as const) { const link = node('a', provider === 'Codex' ? 'OpenAI API pricing' : 'Claude API pricing'); link.href = PRICING_SOURCES[provider]; pricing.append(link, document.createTextNode(' ')); }
-  root.append(pricing);
+  coverage.append(pricing);
   if (value.data) {
     const d = value.data, skipped = d.unreadableFiles + d.malformedLines + d.oversizedLines + d.undatedRecords;
-    root.append(node('div', `${number(d.files)} history files · ${number(d.duplicates)} repeated response records counted once${skipped ? ` · Incomplete coverage: ${d.unreadableFiles} unreadable files, ${d.malformedLines} malformed lines, ${d.oversizedLines} oversized lines, ${d.undatedRecords} undated usage records` : ''}`));
+    coverage.append(node('div', `${number(d.files)} history files · ${number(d.duplicates)} repeated response records counted once${skipped ? ` · Incomplete coverage: ${d.unreadableFiles} unreadable files, ${d.malformedLines} malformed lines, ${d.oversizedLines} oversized lines, ${d.undatedRecords} undated usage records` : ''}`));
   }
   page(currentPage);
 }
 window.addEventListener('message', event => {
   if (event.data?.type === 'state') render(event.data.state);
   if (event.data?.type === 'dashboard') page('dashboard');
-  if (event.data?.type === 'page' && event.data.page === 'storage') page('storage');
+  if (event.data?.type === 'page' && ['storage', 'accounts'].includes(event.data.page)) page(event.data.page);
 });
 el('dashboard').setAttribute('aria-busy', 'true'); el('dashboard').dataset.loading = 'true';
 el('dashboard-status').textContent = 'Reading local CLI history…'; el<HTMLButtonElement>('refresh').disabled = true;

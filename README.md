@@ -14,7 +14,7 @@ Tracking captures saved, non-ignored files, including manual edits. It cannot re
 
 ## Review changes
 
-Select a conversation group to browse its changed files. Use **Next change** to review each edit or **Next file** to move on. Images show saved **Before / After** versions with whole-file actions.
+Select a conversation group to browse its changed files. Use the arrows for changes/files and **Accept all** for the current file. **…** holds Refresh, Native diff and conversation details. Images show saved **Before / After** versions with whole-file actions.
 
 ![AgentTandem review panel with conversation groups](media/screenshots/review.png)
 
@@ -36,7 +36,11 @@ Open **History** to find and resume project conversations. **Edit and resend** b
 
 ## Usage and storage
 
-Run **AgentTandem: Open Settings and Usage Dashboard** to view quota, token history and API-cost estimates. Filter by date, account, provider or model. Estimates are separate from subscription billing.
+Run **AgentTandem: Open Settings and Usage Dashboard** to view usage **By account**. Select **View usage** for account details or **All accounts** for combined totals. Filter by date, provider or model. Estimates are separate from subscription billing.
+
+Select a **Conversation** to inspect its tokens, cache, models and cost. **Quota burn** shows observed % per hour and projected exhaustion.
+
+Open **Accounts → Add account** for **Codex, Claude Code, Cursor or Antigravity**. Sign in or **Save current sign-in**, then filter or search your saved accounts. **Switch account** updates the default CLI/IDE sign-in; finish active turns and close IDE windows first. Cursor/Antigravity quota stays in their app.
 
 Open **Storage** to inspect snapshots, select restore history and preview cleanup before deleting it.
 

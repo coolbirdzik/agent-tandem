@@ -195,7 +195,7 @@ async function codexTitle(file: string): Promise<string | undefined> {
 }
 
 /** Read native titles/current cwd; transcript metadata can predate renames or project moves. */
-async function codexSessionMetadata(home: string): Promise<Map<string, { cwd?: string; title?: string; archived?: boolean }>> {
+export async function codexSessionMetadata(home: string): Promise<Map<string, { cwd?: string; title?: string; archived?: boolean }>> {
   const result = new Map<string, { cwd?: string; title?: string; archived?: boolean }>();
   try {
     const files = (await readdir(home)).filter(name => /^state_\d+\.sqlite$/.test(name)).sort((a, b) => Number(b.match(/\d+/)![0]) - Number(a.match(/\d+/)![0]));

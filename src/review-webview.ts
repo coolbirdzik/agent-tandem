@@ -28,10 +28,13 @@ function toggleChanges(open: boolean, focus = true) {
 function renderContext() {
   const context = state.context;
   element('review-context').hidden = !context;
-  if (!context) { toggleChanges(false, false); return; }
+  element('context-actions').hidden = !context;
+  if (!context) { element('files').title = ''; toggleChanges(false, false); return; }
   element('context-provider').textContent = context.conversation?.provider === 'Claude' ? 'Claude Code' : context.conversation?.provider ?? 'Workspace';
   element('context-title').textContent = context.title;
   element('context-title').title = context.title;
+  element('files').title = context.title;
+  element('agent-changes').title = `Show ${context.files.length} pending files · ${context.title}`;
   element('agent-changes-label').textContent = context.conversation ? 'Agent changes' : 'Workspace changes';
   element('agent-changes-count').textContent = String(context.files.length);
   element('agent-changes-heading').textContent = context.conversation ? 'Agent changes' : 'Workspace changes';
@@ -111,6 +114,8 @@ function controls() {
   element<HTMLButtonElement>('next').disabled = state.busy || !state.files.length;
   element<HTMLButtonElement>('previous').disabled = state.busy || !state.files.length;
   element<HTMLSelectElement>('files').disabled = state.busy || !state.files.length;
+  element<HTMLButtonElement>('accept-all-file').disabled = state.busy || !state.file;
+  element('accept-all-file').hidden = !state.file;
   element<HTMLButtonElement>('next-file').disabled = state.busy || state.files.length < 2;
   element<HTMLButtonElement>('previous-file').disabled = state.busy || state.files.length < 2;
   element('undo').hidden = !state.undo;
@@ -123,6 +128,10 @@ function render(next: ReviewEditorState) {
   const oldFile = state.file?.path, anchor = state.file?.hunks[active]?.newLine;
   const scroll = codeEditor?.scrollTop ?? 0;
   state = next;
+  const fileBinding = { revision: state.revision, file: state.file?.path };
+  element('accept-all-file').onclick = () => {
+    if (!state.busy && fileBinding.file && state.revision === fileBinding.revision && state.file?.path === fileBinding.file) decide('accept', undefined, active, fileBinding);
+  };
   renderContext();
   const nextSignature = `${state.project}:${state.revision}:${state.file?.path}`;
   if (nextSignature === signature) { controls(); return; }
@@ -163,7 +172,11 @@ element('native').onclick = () => send('native'); element('refresh').onclick = (
 element('agent-changes').onclick = () => toggleChanges(element('agent-changes-panel').hidden);
 element('close-agent-changes').onclick = () => toggleChanges(false);
 element('open-conversation').onclick = () => send('conversation');
+const more = element<HTMLDetailsElement>('review-more');
+more.addEventListener('click', event => { if (event.target instanceof Element && event.target.closest('button')) more.open = false; });
+document.addEventListener('click', event => { if (more.open && event.target instanceof Node && !more.contains(event.target)) more.open = false; });
 window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && more.open) { event.preventDefault(); more.open = false; more.querySelector<HTMLElement>('summary')?.focus(); return; }
   if (event.key === 'Escape' && !element('agent-changes-panel').hidden) { event.preventDefault(); toggleChanges(false); return; }
   if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || (event.target instanceof Element && !event.target.closest('.monaco-editor .inputarea,.monaco-editor .native-edit-context') && event.target.closest('input,textarea,select,[contenteditable="true"]'))) return;
   const key = event.key.toLowerCase();

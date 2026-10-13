@@ -1,20 +1,45 @@
 import type { ConversationProvider } from '../providers/conversations';
 import type { ProviderAccountStatus } from '../providers/account-status';
 import { addApiCost, emptyApiCost, type ApiCost } from './api-pricing';
-import { UNKNOWN_ACCOUNT, type UsageAccount } from './usage-account';
+import { UNKNOWN_ACCOUNT, usageAccount, type UsageAccount } from './usage-account';
 
 export type UsageGrouping = 'day' | 'week' | 'month';
 export interface TokenTotals {
   input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; total: number; requests: number;
 }
+export interface DashboardAccountGroup {
+  provider: ConversationProvider; account?: UsageAccount; label?: string; active?: boolean;
+  totals: TokenTotals; cost: ApiCost; status?: ProviderAccountStatus;
+}
+/** Local counts remain separate per provider/identity, including Unknown; live profiles add no tokens. */
+export function dashboardAccountGroups(days: UsageDay[], filters: UsageFilters, statuses: Array<{ provider: ConversationProvider; status: ProviderAccountStatus; label?: string; active?: boolean }> = []): DashboardAccountGroup[] {
+  const groups = new Map<string, DashboardAccountGroup>(usageBreakdown(days, filters).accounts.map(row => [`${row.provider}\0${row.account?.id ?? UNKNOWN_ACCOUNT}`, row]));
+  for (const entry of statuses) {
+    const account = usageAccount(entry.provider, entry.status.account);
+    if (!account || (filters.provider && filters.provider !== entry.provider) || (filters.accountId && filters.accountId !== account.id)) continue;
+    const key = `${entry.provider}\0${account.id}`, existing = groups.get(key);
+    groups.set(key, { ...(existing ?? { provider: entry.provider, account, totals: emptyTotals(), cost: emptyApiCost() }),
+      status: !existing?.status || (entry.status.updatedAt ?? 0) >= (existing.status.updatedAt ?? 0) ? entry.status : existing.status,
+      label: entry.label || existing?.label, active: entry.active || existing?.active });
+  }
+  return [...groups.values()].sort((a, b) => Number(!!b.active) - Number(!!a.active) || b.totals.total - a.totals.total);
+}
 export interface UsageDay extends TokenTotals { day: string; provider: ConversationProvider; model: string; cost?: ApiCost; account?: UsageAccount }
 export interface RecentUsage { timestamp: number; provider: ConversationProvider; total: number; accountId?: string }
+export interface UsageConversation { key: string; id: string; provider: ConversationProvider; project?: string; firstAt: number; lastAt: number; days: UsageDay[] }
 export interface UsageHistoryData {
   days: UsageDay[]; updatedAt: number; files: number; unreadableFiles: number; malformedLines: number;
   undatedRecords: number; duplicates: number; oversizedLines: number; timezone: string;
   recent?: RecentUsage[];
+  conversations?: UsageConversation[];
 }
 export interface UsageDashboardState {
+  quotaTicks?: import('./quota-pace').QuotaTick[];
+  managedAccounts?: Array<import('./account-profiles').AccountProfile & { status?: ProviderAccountStatus; active?: boolean }>;
+  accountsBusy?: boolean; accountsError?: string; accountsNotice?: string;
+  accountSwitch?: import('./account-switch').AccountSwitchOperation;
+  accountSwitchBlocked?: string;
+  conversationTitles?: Record<string, string>;
   quotaHistory?: import('./quota-estimate').QuotaObservation[]; quotaHistoryError?: string;
   quotaBaselines?: import('./quota-estimate').QuotaBaseline[];
   storage?: import('./storage').StorageState;

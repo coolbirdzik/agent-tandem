@@ -32,6 +32,15 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const [type, listener, options] of listeners.splice(0)) window.removeEventListener(type, listener, options); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Shared Webview review', () => {
+  it('accepts all blocks in only the displayed file and rejects a stale captured handler', () => {
+    const button = document.querySelector<HTMLButtonElement>('#accept-all-file')!, oldHandler = button.onclick!;
+    button.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', revision: 'r1', file: 'first.ts' });
+    expect(button.disabled).toBe(true);
+    render({ ...fixture(), revision: 'r2', file: { ...fixture().file!, path: 'second.ts' } });
+    postMessage.mockClear(); Reflect.apply(oldHandler, button, [new MouseEvent('click')]); expect(postMessage).not.toHaveBeenCalled();
+    button.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', revision: 'r2', file: 'second.ts' });
+    render({ files: [], busy: false }); expect(button.hidden).toBe(true); expect(button.disabled).toBe(true);
+  });
   it('opens the agent file list and binds file/conversation shortcuts to the current review', () => {
     render({ ...fixture(), context: { group: 'Codex:agent', title: 'Update artwork', conversation: { key: 'Codex:agent', id: 'agent', provider: 'Codex', title: 'Update artwork' }, canOpenConversation: true, files: [fixture().files[1]!] } });
     document.getElementById('agent-changes')!.click();

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { mergeQuotaObservations, quotaTrends, quotaObservations, quotaMeters, observeQuotaMeters, type QuotaObservation } from '../src/core/quota-estimate';
+import { mergeQuotaObservations, quotaCycles, quotaTrends, quotaObservations, quotaMeters, observeQuotaMeters, type QuotaObservation } from '../src/core/quota-estimate';
 import { QuotaHistoryStore } from '../src/core/quota-history-store';
 import { usageAccount } from '../src/core/usage-account';
 import type { ProviderAccountStatus } from '../src/providers/account-status';
@@ -41,6 +41,8 @@ describe('Quota history and capacity trends', () => {
     expect(observeQuotaMeters(start.baselines, [{ ...first, to: now + 1, usedPercent: 2 }]).observations).toEqual([]);
     const next = { ...first, to: now + 2, totalTokens: 2000, usedPercent: 2 };
     const captured = observeQuotaMeters(start.baselines, [next]); expect(captured.observations[0]?.observedTokens).toBe(1000);
+    expect(observeQuotaMeters(captured.baselines, []).observations).toEqual(captured.observations);
+    expect(observeQuotaMeters(captured.baselines, [next]).observations).toEqual(captured.observations);
     for (const reset of [{ ...next, totalTokens: 500 }, { ...next, usedPercent: 1 }]) {
       const result = observeQuotaMeters(captured.baselines, [{ ...reset, to: now + 3 }]);
       expect(result.observations).toEqual([]); expect(result.baselines[0]?.start.to).toBe(now + 3);
@@ -87,10 +89,31 @@ describe('Quota history and capacity trends', () => {
       { provider: 'Codex' as const, accountId, timestamp: now - 2 * hour, total: 200 },
       { provider: 'Codex' as const, timestamp: now - hour, total: 9999 },
     ] };
-    expect(quotaObservations('Codex', status, data, now)).toEqual([{ provider: 'Codex', accountId, plan: 'plus', label: '5h',
-      from: now - 4 * hour, resetsAt: now + hour, to: now, observedTokens: 300, usedPercent: 20 }]);
+    const samples = quotaObservations('Codex', status, data, now);
+    expect(samples).toMatchObject([{ provider: 'Codex', accountId, plan: 'plus', label: '5h',
+      from: now - 4 * hour, resetsAt: now + hour, to: now, observedTokens: 300, usedPercent: 20 },
+      { source: 'Device', observedTokens: 10299, usedPercent: 20 }]);
+    expect(quotaTrends('Codex', status, samples)[0]?.observations).toEqual([samples[0]]);
     expect(quotaObservations('Codex', { ...status, status: 'loading' }, data, now)).toEqual([]);
     expect(quotaObservations('Codex', status, { ...data, updatedAt: now - 3 * 60000 }, now)).toEqual([]);
+  });
+  it('compares reset capacities without treating partial recorded tokens as full-cycle usage', () => {
+    const cycles = quotaCycles([sample(1, 1500, 30), sample(0, 1000, 25), { ...sample(0, 500, 10), accountId: 'other' },
+      { ...sample(0, 3000, 20), source: 'API' }], now + 7 * hour);
+    const local = cycles.filter(row => row.accountId === accountId && !row.source);
+    expect(local).toMatchObject([{ capacityTokens: 4000, active: false, partial: true },
+      { capacityTokens: 5000, active: true, partial: true, changePercent: 25 }]);
+    expect(cycles.filter(row => row.accountId === 'other' || row.source === 'API').every(row => row.changePercent === undefined)).toBe(true);
+    expect(quotaCycles([sample(0, 1000, 100)], now + 7 * hour)[0]?.partial).toBe(false);
+  });
+  it('persists Device estimates independently and prefers valid API samples within the latest cycle', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-device-'));
+    const device = { ...sample(1, 2000, 25), source: 'Device' as const };
+    const rows = await new QuotaHistoryStore(directory).record([{ ...sample(0), source: 'API' }, device]);
+    expect(await new QuotaHistoryStore(directory).record()).toEqual(rows);
+    expect(quotaTrends('Codex', account, rows)[0]).toMatchObject({ source: 'Device', tokensPerPercent: 80, observations: [device] });
+    const api = { ...device, source: 'API' as const, observedTokens: 3000 };
+    expect(quotaTrends('Codex', account, [...rows, api])[0]).toMatchObject({ source: 'API', latestTokensPerPercent: 120 });
   });
   it('persists cycles across reloads and concurrent stores without losing or doubling samples', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-history-'));

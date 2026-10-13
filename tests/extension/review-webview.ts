@@ -152,9 +152,16 @@ export function previewMode(file: string): ReviewMode {
   await vscode.commands.executeCommand('agentTandem.openCumulativeInEditor', { sessionId, stepId, file: 'asset.png' }); await stage('cumulative-image');
   await vscode.commands.executeCommand('agentTandem.openFileInEditor', { sessionId, stepId, file: 'deleted.svg' }); await stage('saved-deleted-image');
   assert.equal(await readFile(path.join(recorded, 'asset.png'), 'utf8'), 'newer workspace contents');
-  const report = { success: true, edition, vscode: vscode.version, checks: ['Monaco Webview default in both editions', 'Full-file context with inline colored buttons', 'Monaco worker diff and syntax tokens', 'Ctrl+F reaches line 802 without truncation', 'Source HTML stays inert', 'Dark/light/narrow layouts', 'Accept preserves bytes', 'Stale block actions are rejected', 'Reject restores only its block', 'Undo restores rejected bytes', 'Newer saved edits block rejection', 'Dirty buffers block rejection', 'Navigation crosses files', 'Binary file fallback', 'Native diff'] };
+  const remainingBefore = api.viewState().review!.files.map(file => file.path);
+  await vscode.commands.executeCommand('agentTandem.previewReview', { project, revision: api.viewState().review!.revision, file: first });
+  await stage('accept-file-all');
+  await until(() => !api.viewState().review!.files.some(file => file.path === first), 'Accept all clears only the displayed file');
+  assert.equal(await readFile(path.join(project, first), 'utf8'), after, 'Accept all preserves applied file bytes');
+  assert.deepEqual(api.viewState().review!.files.map(file => file.path), remainingBefore.filter(file => file !== first), 'Accept all leaves other files pending');
+  const report = { success: true, edition, vscode: vscode.version, checks: ['Monaco Webview default in both editions', 'Full-file context with inline colored buttons', 'One compact review toolbar with More actions', 'Monaco worker diff and syntax tokens', 'Ctrl+F reaches line 802 without truncation', 'Source HTML stays inert', 'Dark/light/narrow layouts', 'Accept preserves bytes', 'Stale block actions are rejected', 'Reject restores only its block', 'Undo restores rejected bytes', 'Newer saved edits block rejection', 'Dirty buffers block rejection', 'Navigation crosses files', 'Binary file fallback', 'Native diff'] };
   report.checks.push('Old/new PNG snapshots decode', 'Added/deleted SVG previews', 'Broken image retains the other side', 'Narrow image layout', 'Image editor navigation to/from code', 'Saved step/cumulative image comparisons preserve workspace bytes');
   report.checks.push('Agent change list retains conversation scope', 'Conversation shortcut opens the correct extension chat', 'Visible Restore code opens a checkpoint preview without writing files');
+  report.checks.push('Accept all keeps file bytes and leaves every other pending file untouched');
   await writeFile(path.resolve(runtime, '..', '..', 'artifacts', `review-webview-${edition}.json`), JSON.stringify(report, null, 2));
   await writeFile(path.join(runtime, 'stage.json'), JSON.stringify({ stage: 'complete' }));
   console.log(`REVIEW_WEBVIEW_TEST ${JSON.stringify(report)}`);

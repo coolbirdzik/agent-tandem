@@ -23,6 +23,17 @@ const windows = (fiveHour, weekly) => [{ id: '5h', label: '5h', usedPercent: fiv
 const state = { status: 'ready', data, preferences: { showQuotaInStatusBar: true, grouping: 'day' }, accounts: {
   Codex: { status: 'ready', updatedAt: now, account: { signedIn: true, email: 'codex@example.test', method: 'ChatGPT', plan: 'plus' }, quota: { status: 'available', windows: windows(25, 50) } },
   Claude: { status: 'ready', updatedAt: now, account: { signedIn: true, email: 'claude@example.test', method: 'Claude account', plan: 'pro' }, quota: { status: 'available', windows: windows(100, 50) } } } };
+if (demo) state.quotaHistory = ['Codex', 'Claude'].flatMap(provider => {
+  const account = state.accounts[provider];
+  return account.quota.windows.flatMap(window => Array.from({ length: 4 }, (_, index) => {
+    const duration = window.label === '5h' ? 5 * 3600000 : 7 * 86400000;
+    const resetsAt = window.resetsAt - index * duration;
+    return { provider, accountId: JSON.stringify([provider, account.account.method, account.account.email, '']),
+      plan: account.account.plan, label: window.label === '5h' ? '5h' : 'Weekly', from: resetsAt - duration,
+      resetsAt, to: index ? resetsAt - 60000 : now, usedPercent: index ? 84 - index * 7 : window.usedPercent,
+      observedTokens: (804531 + index * 76037) * (window.label === '7d' ? 12 : 1), source: provider === 'Codex' ? 'API' : 'Local' };
+  }));
+});
 // Optional fully synthetic fixtures for account-filter UI verification. Never
 // relabel the user's real historical tokens with demonstration identities.
 const demoDay = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
@@ -34,6 +45,26 @@ const accountDays = [demoRow('Codex', 'codex@example.test', 80000), demoRow('Cod
 const accountState = { ...state, accounts: { ...state.accounts, Codex: { ...state.accounts.Codex, usage: { source: 'API', status: 'available', accountId: accountDays[0].account.id, updatedAt: now,
   summary: { lifetimeTokens: 9000000, peakDailyTokens: 1200000, longestRunningTurnSec: 540, currentStreakDays: 3, longestStreakDays: 12 }, daily: [{ day: demoDay, tokens: 700000 }] } } },
   data: { ...data, days: accountDays, recent: accountDays.map(row => ({ timestamp: now - 60000, provider: row.provider, total: row.total, ...(row.account ? { accountId: row.account.id } : {}) })) } };
+accountState.data.conversations = accountDays.map((row, index) => ({ key: `${row.provider}:demo-${index}`, id: `demo-${index}`, provider: row.provider,
+  project: index % 2 ? 'L:/Code/demo-desktop' : 'L:/Code/demo-dashboard', firstAt: now - (index + 1) * 20 * 60000, lastAt: now, days: [row] }));
+accountState.conversationTitles = Object.fromEntries(['Add account switching', 'Improve review navigation', 'Fix dashboard filters', 'Update project docs'].map((title, index) => [accountState.data.conversations[index].key, title]));
+accountState.managedAccounts = [
+  { provider: 'Codex', label: 'Personal', email: 'codex@example.test', plan: 'plus', used: 25, active: true },
+  { provider: 'Codex', label: 'Work', email: 'work@example.test', plan: 'team', used: 62 },
+  { provider: 'Claude', label: 'Daily', email: 'claude@example.test', plan: 'pro', used: 50, active: true },
+  { provider: 'Claude', label: 'Team', email: 'team@example.test', plan: 'max', used: 18 },
+  { provider: 'Cursor', label: 'Studio', email: 'studio@example.test', plan: 'pro', active: true },
+  { provider: 'Antigravity', label: 'Research', email: 'research@example.test' },
+].map((row, index) => {
+  const identity = { signedIn: true, email: row.email, plan: row.plan, method: row.provider === 'Codex' ? 'ChatGPT' : `${row.provider} account` };
+  return { id: `00000000-0000-4000-8000-00000000000${index}`, provider: row.provider, label: row.label, createdAt: now - 86400000, identity, active: !!row.active,
+    status: { status: 'ready', account: identity, updatedAt: now, quota: { status: row.used === undefined ? 'unavailable' : 'available', windows: row.used === undefined ? [] : windows(row.used, row.used / 2) } } };
+});
+for (const profile of accountState.managedAccounts) if (profile.active && accountState.accounts[profile.provider]) profile.status = accountState.accounts[profile.provider];
+accountState.quotaTicks = accountState.managedAccounts.flatMap(profile => profile.status.quota.windows.flatMap(window => Array.from({ length: 7 }, (_, index) => ({
+  provider: profile.provider, accountId: JSON.stringify([profile.provider, profile.identity.method, profile.identity.email, '']), plan: profile.identity.plan,
+  windowId: window.id, label: window.label, resetsAt: window.resetsAt, at: now - (6 - index) * 10 * 60000, usedPercent: Math.max(0, window.usedPercent - (6 - index) * 2),
+}))));
 const theme = `:root{--vscode-editor-background:#181818;--vscode-foreground:#cccccc;--vscode-descriptionForeground:#999999;--vscode-panel-border:#303030;--vscode-font-family:'Segoe UI',sans-serif;--vscode-list-hoverBackground:#292929;--vscode-focusBorder:#007fd4;--vscode-button-background:#0078d4;--vscode-button-hoverBackground:#026ec1;--vscode-button-foreground:#ffffff;--vscode-input-foreground:#cccccc;--vscode-input-background:#222222;--vscode-errorForeground:#f48771;--vscode-editorWarning-foreground:#cca700}`;
 const lightTheme = `:root{--vscode-editor-background:#ffffff;--vscode-foreground:#333333;--vscode-descriptionForeground:#666666;--vscode-panel-border:#e5e5e5;--vscode-font-family:'Segoe UI',sans-serif;--vscode-list-hoverBackground:#f3f3f3;--vscode-focusBorder:#0078d4;--vscode-button-background:#0078d4;--vscode-button-hoverBackground:#026ec1;--vscode-button-foreground:#ffffff;--vscode-input-foreground:#333333;--vscode-input-background:#f6f6f6;--vscode-errorForeground:#a1260d;--vscode-editorWarning-foreground:#895503}`;
 const assets = new Map(['/dist/settings.js', '/media/settings.css', '/media/claude.svg', '/media/codex.svg', '/media/codicons/codicon.css', '/media/codicons/codicon.ttf'].map(uri => [uri, path.join(process.cwd(), uri.slice(1))]));

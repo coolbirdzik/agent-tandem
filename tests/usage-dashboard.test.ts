@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyTotals, periodKey, usageBreakdown, type UsageDay } from '../src/core/usage-dashboard';
+import { dashboardAccountGroups, emptyTotals, periodKey, usageBreakdown, type UsageDay } from '../src/core/usage-dashboard';
 import { quotaStatus } from '../src/core/quota-status';
 import { usageAccount, UNKNOWN_ACCOUNT } from '../src/core/usage-account';
 import { apiCost } from '../src/core/api-pricing';
@@ -14,6 +14,18 @@ it('uses the lowest remaining quota window for status colors and resets color wh
 });
 const row = (day: string, provider: 'Codex' | 'Claude', model: string, total: number): UsageDay => ({ ...emptyTotals(), day, provider, model, input: total - 10, output: 10, total, requests: 1 });
 describe('Dashboard grouping and quota presentation', () => {
+  it('groups exact account identities and unknown providers without adding live quota to local totals', () => {
+    const identity = { signedIn: true, email: 'one@test', method: 'ChatGPT' }, account = usageAccount('Codex', identity)!;
+    const rows = [{ ...row('2026-10-13', 'Codex', 'model', 100), account }, row('2026-10-13', 'Codex', 'model', 200), row('2026-10-13', 'Claude', 'model', 300)];
+    const groups = dashboardAccountGroups(rows, { grouping: 'day' }, [
+      { provider: 'Codex', status: { status: 'ready', account: identity }, active: true },
+      { provider: 'Codex', status: { status: 'ready', account: { ...identity, email: 'two@test' } }, label: 'Work' },
+    ]);
+    expect(groups).toHaveLength(4); expect(groups.reduce((sum, row) => sum + row.totals.total, 0)).toBe(600);
+    expect(groups.filter(row => !row.account)).toHaveLength(2);
+    expect(groups.find(row => row.label === 'Work')?.totals.total).toBe(0);
+    expect(dashboardAccountGroups(rows, { grouping: 'day', accountId: account.id }).map(row => row.totals.total)).toEqual([100]);
+  });
   it('filters tokens, requests, costs and calendar breakdowns by account together with provider/model/date', () => {
     const one = usageAccount('Codex', { signedIn: true, email: 'one@test.invalid', method: 'ChatGPT' })!;
     const two = usageAccount('Codex', { signedIn: true, email: 'two@test.invalid', method: 'ChatGPT' })!;

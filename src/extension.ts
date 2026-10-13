@@ -49,6 +49,15 @@ import { AttachmentStore } from './core/attachment-store';
 import { UsageAccountStore } from './core/usage-account-store';
 import { QuotaHistoryStore } from './core/quota-history-store';
 import { quotaMeters, quotaObservations, type QuotaObservation } from './core/quota-estimate';
+import { quotaTicks, type QuotaTick } from './core/quota-pace';
+import { QuotaPaceStore } from './core/quota-pace-store';
+import { AccountProfiles, nativeHome } from './core/account-profiles';
+import { codexSessionMetadata } from './providers/conversations';
+import { AccountManager } from './host/account-manager';
+import { isChatAccount } from './core/account-providers';
+import { DesktopAccounts, desktopExecutable, windowsAntigravityCredential } from './core/desktop-accounts';
+import { spawn as launchDesktopProcess } from 'node:child_process';
+import { withStorageLock } from './core/storage-lock';
 import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeletionPlan } from './core/storage';
 
 export interface ExtensionAPI {
@@ -75,6 +84,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const attachments = new AttachmentStore(context.globalStorageUri.fsPath);
   const usageAccounts = new UsageAccountStore(path.join(context.globalStorageUri.fsPath, 'usage'));
   const quotaHistoryStore = new QuotaHistoryStore(path.join(context.globalStorageUri.fsPath, 'usage'));
+  const quotaPaceStore = new QuotaPaceStore(path.join(context.globalStorageUri.fsPath, 'usage'));
+  const desktopAccounts = new DesktopAccounts(process.platform === 'win32' ? (action, value) => windowsAntigravityCredential(path.join(context.extensionUri.fsPath, 'media', 'antigravity-credential.ps1'), action, value) : undefined);
+  const accountProfiles = new AccountProfiles(path.join(context.globalStorageUri.fsPath, 'accounts'), undefined, desktopAccounts);
+  let savedQuotaTicks: QuotaTick[] = [];
   let quotaHistory: QuotaObservation[] = [], quotaHistoryError: string | undefined;
   try { quotaHistory = await quotaHistoryStore.record(); }
   catch { quotaHistoryError = 'Could not load quota history. Refresh to retry.'; }
@@ -184,20 +197,74 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let storageJob: Promise<void> | undefined;
   let usageState: Pick<UsageDashboardState, 'status' | 'data' | 'error'> = { status: 'idle' };
   let usageJob: Promise<void> | undefined, usageAbort: AbortController | undefined;
+  let usageConversationTitles: Record<string, string> = {};
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+    return { ...usageState, ...accountManager.state, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day' } };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
     async (command, value) => vscode.commands.executeCommand(command, value), report);
+  const accountManager = new AccountManager(accountProfiles, {
+    busy: () => !!chatAbort || reviewing,
+    project: () => state.project,
+    current: provider => isChatAccount(provider) ? state.accounts?.[provider] : undefined,
+    executable: async provider => {
+      if (!isChatAccount(provider)) throw new Error('Use Open app for desktop accounts.');
+      return (await managedCLI(provider, state.project)).entry.executable;
+    },
+    openDesktop: async provider => {
+      if (!vscode.workspace.isTrusted || vscode.env.remoteName) throw new Error('Open a trusted local workspace to manage desktop sign-ins.');
+      let executable = await desktopExecutable(provider);
+      if (!executable) {
+        const files = await vscode.window.showOpenDialog({ title: `Choose ${provider} executable`, canSelectMany: false, ...(process.platform === 'win32' ? { filters: { Application: ['exe'] } } : {}) });
+        if (!files?.[0]) throw new Error('No app selected.');
+        executable = files[0].fsPath;
+      }
+      await new Promise<void>((resolve, reject) => {
+        const child = launchDesktopProcess(executable!, [], { detached: true, windowsHide: true, stdio: 'ignore' });
+        child.once('error', () => reject(new Error(`Could not open ${provider}.`))); child.once('spawn', () => { child.unref(); resolve(); });
+      });
+    },
+    read: async profile => {
+      const provider = typeof profile === 'string' ? profile : profile.provider;
+      if (!state.project || !vscode.workspace.isTrusted) throw new Error('Open a trusted local workspace to manage sign-ins.');
+      if (!isChatAccount(provider)) {
+        if (vscode.env.remoteName) throw new Error('Manage desktop sign-ins from a local extension host.');
+        if (typeof profile !== 'string') return accountProfiles.desktopStatus(profile);
+        try { return await accountProfiles.desktopStatus(provider); } catch { return { status: 'ready', account: { signedIn: false, method: `${provider} account` }, updatedAt: Date.now() }; }
+      }
+      const cli = await managedCLI(provider, state.project), env = typeof profile === 'string' ? undefined : accountProfiles.environment(profile);
+      const read = async () => {
+        if (provider === 'Codex') return readCodexAccount(state.project!, cli.entry.executable, undefined, undefined, env);
+        const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href) as typeof import('./providers/claude-history');
+        return readClaudeAccount(state.project!, sdk.query, cli.entry.executable, undefined, env);
+      };
+      return typeof profile === 'string' ? read() : withStorageLock(accountProfiles.home(profile.id), read);
+    },
+    changed: async provider => {
+      if (!isChatAccount(provider)) { await accountManager.publish(); return; }
+      modelJobs.get(provider)?.abort.abort(); accountJobs.get(provider)?.abort.abort();
+      state.modelCatalogs = { ...state.modelCatalogs, [provider]: undefined };
+      await loadAccount(provider, true); await loadModels(provider, true); await recordQuotaHistory(); await refreshUsageDashboard();
+    },
+    update: () => settings.update(),
+    observed: async statuses => {
+      savedQuotaTicks = await quotaPaceStore.record(statuses.flatMap(status => {
+        const provider = status.account?.method === 'Claude account' ? 'Claude' : 'Codex';
+        return quotaTicks(provider, status);
+      }));
+      quotaHistory = await quotaHistoryStore.record([], statuses.flatMap(status => quotaMeters(status.account?.method === 'Claude account' ? 'Claude' : 'Codex', status)));
+    },
+  });
   function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state); trackingBar.update(state); settings.update(); }
   async function recordQuotaHistory(data = usageState.data) {
     try {
       const samples = (['Codex', 'Claude'] as const).flatMap(provider => quotaObservations(provider, state.accounts?.[provider], data));
       const meters = (['Codex', 'Claude'] as const).flatMap(provider => quotaMeters(provider, state.accounts?.[provider]));
       quotaHistory = await quotaHistoryStore.record(samples, meters); quotaHistoryError = undefined;
+      savedQuotaTicks = await quotaPaceStore.record((['Codex', 'Claude'] as const).flatMap(provider => quotaTicks(provider, state.accounts?.[provider])));
     } catch { quotaHistoryError = 'Could not save quota history. Refresh to retry.'; }
   }
   async function refreshUsageDashboard(): Promise<void> {
@@ -208,7 +275,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     usageJob = (async () => {
       try {
         const data = await usageHistory.read(abort.signal);
+        const titles: Record<string, string> = {};
+        const names = await codexSessionMetadata(nativeHome('Codex'));
+        for (const [id, row] of names) if (row.title) titles[`Codex:${id}`] = row.title;
+        try {
+          const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href);
+          for (const row of await sdk.listSessions({ includeWorktrees: false })) if (row.summary) titles[`Claude:${row.sessionId}`] = row.summary;
+        } catch { /* Usage remains available without optional session titles. */ }
         if (!disposed && !abort.signal.aborted) {
+          usageConversationTitles = titles;
           usageState = { status: 'ready', data };
           await recordQuotaHistory(data);
         }
@@ -367,6 +442,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     await Promise.all((['Codex', 'Claude'] as const).map(provider => loadAccount(provider)));
     await recordQuotaHistory();
     await refreshUsageDashboard();
+    await accountManager.publish();
+    if (settings.visible && !accountManager.state.accountsBusy && accountManager.state.managedAccounts?.length) await accountManager.refresh();
   }
   function resetAccounts() {
     for (const job of accountJobs.values()) job.abort.abort(); accountJobs.clear(); state.accounts = {}; refreshAccounts();
@@ -630,6 +707,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.captureExternalChanges', async () => { await captureExternalReview(); return state.review; });
 
   register('agentTandem.openSettings', async () => { settings.open(); await refreshAccounts(); return dashboardState(); });
+  register('agentTandem.manageAccounts', async () => { settings.open('accounts'); await accountManager.refresh(); return dashboardState(); });
+  register('agentTandem.accountAction', async value => { await accountManager.action(value); return dashboardState(); });
   register('agentTandem.openStorage', async () => { settings.open('storage'); await vscode.commands.executeCommand('agentTandem.refreshStorage'); return dashboardState(); });
   register('agentTandem.refreshUsageDashboard', async () => {
     await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]); await recordQuotaHistory(); await refreshUsageDashboard(); return dashboardState();
@@ -813,6 +892,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }
   register('agentTandem.sendChat', sendChat);
   async function sendChat(value: unknown) {
+    if (accountManager.state.accountsBusy) throw new Error('Wait for the account operation to finish before starting a turn.');
     const request = chatRequest(value);
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before chatting with an agent.');
     if (!state.project || request.project !== state.project) throw new Error('The workspace changed. Send your message again.');

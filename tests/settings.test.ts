@@ -25,6 +25,129 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
+  it('shows live switch progress, lets users hide and reopen it, and retains rollback/error logs without reopening on every update', () => {
+    const operation: NonNullable<UsageDashboardState['accountSwitch']> = { id: 'operation-one', profileId: 'selected', provider: 'Codex', label: 'Work', startedAt: Date.now(), status: 'running', outcome: 'notChanged', logs: [{ at: Date.now(), level: 'info', message: 'Backing up the current sign-in.' }] };
+    render({ ...value, accountsBusy: true, accountSwitch: operation });
+    const dialog = document.querySelector<HTMLDialogElement>('#account-switch-dialog')!;
+    expect(dialog.open).toBe(true); expect(document.querySelector('#account-switch-result')?.textContent).toContain('Backing up'); expect(document.querySelector('#account-switch-target')?.textContent).toContain('Work');
+    document.querySelector<HTMLButtonElement>('#account-switch-close')!.click(); expect(dialog.open).toBe(false);
+    render({ ...value, accountsBusy: true, accountSwitch: { ...operation, logs: [...operation.logs, { at: Date.now(), level: 'info', message: 'Checking the selected sign-in.' }] } }); expect(dialog.open).toBe(false);
+    document.querySelector<HTMLButtonElement>('#account-switch-view')!.click(); expect(dialog.open).toBe(true);
+    render({ ...value, accountSwitch: { ...operation, status: 'error', outcome: 'restored', error: 'Native CLI did not verify the selected sign-in.', finishedAt: Date.now(), logs: [...operation.logs, { at: Date.now(), level: 'success', message: 'Previous sign-in restored.' }] } });
+    expect(document.querySelector('#account-switch-title')?.textContent).toBe('Switch failed'); expect(document.querySelector('#account-switch-result')?.textContent).toContain('previous sign-in was restored');
+    expect(document.querySelector('#account-switch-log')?.textContent).toContain('Previous sign-in restored'); expect(document.querySelector('#account-switch-error')?.textContent).toContain('did not verify');
+    expect(document.querySelector('#account-switch-close')?.textContent).toBe('Close');
+  });
+  it('filters and searches all four account apps, with native desktop actions and an inline connection panel', () => {
+    const profile = (provider: 'Codex' | 'Cursor' | 'Antigravity', email: string) => ({ id: `${provider}-opaque-id`, provider, label: `${provider} work`, createdAt: 1, identity: { signedIn: true, email, method: `${provider} account` } });
+    render({ ...value, managedAccounts: [profile('Codex', 'codex@test'), profile('Cursor', 'cursor@test'), profile('Antigravity', 'gravity@test')] });
+    expect(document.querySelectorAll('#account-platforms button')).toHaveLength(5);
+    expect(document.querySelectorAll('.managed-account')).toHaveLength(3);
+    [...document.querySelectorAll<HTMLButtonElement>('#account-platforms button')].find(button => button.textContent?.includes('Cursor'))!.click();
+    expect(document.querySelectorAll('.managed-account')).toHaveLength(1); expect(document.querySelector('.account-state')?.textContent).toBe('Saved');
+    [...document.querySelectorAll<HTMLButtonElement>('.managed-account button')].find(button => button.textContent === 'Open app')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'accountAction', value: { action: 'open', id: 'Cursor-opaque-id' } });
+    document.querySelector<HTMLButtonElement>('#account-connect')!.click(); expect(document.querySelector<HTMLElement>('#account-connection')!.hidden).toBe(false);
+    expect(document.querySelector<HTMLSelectElement>('#account-provider')!.value).toBe('Cursor'); expect(document.querySelector('#account-add')!.textContent).toBe('Open Cursor');
+    document.querySelector<HTMLButtonElement>('#account-save')!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'accountAction', value: { action: 'importCurrent', provider: 'Cursor' } });
+    const search = document.querySelector<HTMLInputElement>('#account-search')!; search.value = 'no-match'; search.dispatchEvent(new Event('input')); expect(document.querySelectorAll('.managed-account')).toHaveLength(0); expect(document.querySelector('.account-empty')?.textContent).toContain('No matching accounts');
+  });
+  it('defaults to account groups, opens a saved account with its own quota, and can show All accounts', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const one = { signedIn: true, email: 'one@test', method: 'ChatGPT', plan: 'plus' }, two = { ...one, email: 'two@test' };
+    const first = { ...row('2026-10-13', 'Codex', 'model', 100), account: usageAccount('Codex', one)! }, second = { ...row('2026-10-13', 'Codex', 'model', 200), account: usageAccount('Codex', two)! };
+    const status = (identity: typeof one, usedPercent: number) => ({ status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent, resetsAt: now + 3600000 }] } });
+    render({ ...value, data: { ...value.data!, days: [first, second] }, accounts: { Codex: status(one, 20) }, managedAccounts: [{ id: '11111111-1111-4111-8111-111111111111', provider: 'Codex', label: 'Work', identity: two, createdAt: now, status: status(two, 60) }] });
+    expect(document.querySelector<HTMLSelectElement>('#dashboard-view')!.value).toBe('accounts');
+    expect(document.querySelector<HTMLElement>('#dashboard-detail')!.hidden).toBe(true);
+    expect(document.querySelectorAll('.account-group')).toHaveLength(2);
+    const work = [...document.querySelectorAll('.account-group')].find(row => row.textContent?.includes('Work'))!;
+    expect(work.textContent).toContain('40% left'); work.querySelector<HTMLButtonElement>('button')!.click();
+    expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe(second.account.id);
+    expect(document.querySelector<HTMLElement>('#dashboard-detail')!.hidden).toBe(false);
+    expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('200');
+    expect(document.querySelector('#accounts')!.textContent).toContain('two@test');
+    expect(document.querySelector('#accounts')!.textContent).toContain('40% left');
+    expect(document.querySelector('#accounts')!.textContent).not.toContain('80% left');
+    choose('dashboard-view', 'all'); expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(true);
+    expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('300');
+    expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe('');
+  });
+  it('opens conversation usage details, respects dashboard filters and safely renders native titles', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const codex = row('2026-10-13', 'Codex', 'codex-model', 1200), claude = row('2026-10-13', 'Claude', 'claude-model', 2400);
+    render({ ...value, conversationTitles: { 'Codex:one': '<img src=x onerror=alert(1)>', 'Claude:two': 'Fix dashboard' }, data: { ...value.data!, days: [codex, claude], conversations: [
+      { key: 'Codex:one', id: 'one', provider: 'Codex', project: 'L:/one', firstAt: now - 600000, lastAt: now, days: [codex] },
+      { key: 'Claude:two', id: 'two', provider: 'Claude', project: 'L:/two', firstAt: now - 1200000, lastAt: now, days: [claude] },
+    ] } });
+    expect(document.querySelectorAll('#conversation-breakdown tbody tr')).toHaveLength(2);
+    const link = document.querySelector<HTMLButtonElement>('#conversation-breakdown tbody tr:first-child button')!; link.click();
+    expect(document.querySelector<HTMLElement>('#conversation-detail')!.hidden).toBe(false);
+    expect(document.querySelector('#conversation-title')!.textContent).toBe('Fix dashboard');
+    expect(document.querySelector('#conversation-totals strong')!.getAttribute('title')).toBe('2,400');
+    expect(document.querySelector('#conversation-quota')!.textContent).toContain('120 tokens / min');
+    expect(document.querySelector('#conversation-models')!.textContent).toContain('claude-model');
+    choose('filter-provider', 'Codex'); expect(document.querySelectorAll('#conversation-breakdown tbody tr')).toHaveLength(1);
+    expect(document.querySelector<HTMLElement>('#conversation-detail')!.hidden).toBe(true);
+    document.querySelector<HTMLButtonElement>('#conversation-breakdown button')!.click(); expect(document.querySelector('#conversation-title img')).toBeNull();
+    const search = document.querySelector<HTMLInputElement>('#conversation-search')!; search.value = 'missing'; search.dispatchEvent(new Event('input'));
+    expect(document.querySelectorAll('#conversation-breakdown tbody tr')).toHaveLength(0);
+  });
+  it('shows measured quota pace and wires managed-account buttons to opaque IDs', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identity = { signedIn: true, email: 'one@test', method: 'ChatGPT', plan: 'plus' };
+    const accountId = usageAccount('Codex', identity)!.id;
+    const status = { status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const, windows: [{ id: 'primary', label: '5h', usedPercent: 50, resetsAt: now + 5 * 3600000 }] } };
+    const tick = { provider: 'Codex' as const, accountId, plan: 'plus', windowId: 'primary', label: '5h', resetsAt: now + 5 * 3600000, at: now - 3600000, usedPercent: 25 };
+    const profile = { id: '11111111-1111-4111-8111-111111111111', provider: 'Codex' as const, label: 'Work', identity, createdAt: now, status };
+    const state = { ...value, accounts: { Codex: status }, quotaTicks: [tick], managedAccounts: [profile] };
+    render(state); expect(document.querySelector('#quota-pace')!.textContent).toContain('25% / hour');
+    expect(document.querySelector('#quota-pace')!.textContent).toContain('before reset');
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'page', page: 'accounts' } }));
+    expect(document.querySelector<HTMLElement>('#managed-accounts')!.hidden).toBe(false);
+    document.querySelector<HTMLButtonElement>('#managed-account-list button')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'accountAction', value: { action: 'switch', id: profile.id } });
+    render({ ...state, accountSwitchBlocked: 'Finish the active turn.' });
+    expect(document.querySelector<HTMLButtonElement>('#managed-account-list button')!.disabled).toBe(true);
+    expect(document.querySelector('#accounts-notice')!.textContent).toContain('Finish the active turn.');
+    render({ ...state, accountsBusy: true }); expect(document.querySelector<HTMLButtonElement>('#account-add')!.disabled).toBe(true);
+    render({ ...state, accountsError: 'Native CLI rejected sign-in.' }); expect(document.querySelector<HTMLElement>('#accounts-error')!.hidden).toBe(false);
+  });
+  it('shows Device fallback and compares reset cycles without assigning unknown token history to an account', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
+    const accountId = usageAccount('Codex', identity)!.id;
+    const account = { status: 'ready' as const, account: identity, updatedAt: now,
+      quota: { status: 'available' as const, windows: [{ id: 'weekly', label: '7d', usedPercent: 20, resetsAt: now + 86400000 }] } };
+    const recent = [{ provider: 'Codex' as const, timestamp: now - 60000, total: 1000000 }];
+    const sample: QuotaObservation = { provider: 'Codex', accountId, plan: 'plus', label: 'Weekly', source: 'Device',
+      from: now - 13 * 86400000, resetsAt: now - 6 * 86400000, to: now - 7 * 86400000, observedTokens: 500000, usedPercent: 20 };
+    render({ ...value, data: { ...value.data!, updatedAt: now, recent }, accounts: { Codex: account }, quotaHistory: [sample] });
+    const root = document.getElementById('quota-estimates')!;
+    expect(root.textContent).toContain('Device estimate · 2 cycles');
+    expect(root.textContent).toContain('Includes sessions without account identity');
+    expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('37,500 tokens per percentage point');
+    const latest = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
+    expect(latest[0]?.textContent).toContain('current'); expect(latest[0]?.getAttribute('title')).toContain('Partial observation');
+    expect(latest[1]?.getAttribute('title')).toBe('1,000,000');
+    expect(latest[2]?.getAttribute('title')).toBe('5,000,000'); expect(latest[3]?.textContent).toBe('+100%');
+    expect(recent[0]).not.toHaveProperty('accountId');
+    expect(document.querySelector('.quota-estimate-note details[open]')).toBeNull();
+    expect(document.querySelector('.quota-estimate-note')?.tagName).toBe('DETAILS');
+  });
+  it('keeps cycle history compact and lets users expand earlier resets', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
+    const quotaHistory: QuotaObservation[] = Array.from({ length: 5 }, (_, i) => ({ provider: 'Codex',
+      accountId: usageAccount('Codex', identity)!.id, plan: 'plus', label: '5h', from: now - (i + 1) * 5 * 3600000,
+      resetsAt: now - i * 5 * 3600000, to: now - i * 5 * 3600000 - 60000, observedTokens: 1000 * (i + 1), usedPercent: 10 }));
+    render({ ...value, accounts: { Codex: { status: 'ready', account: identity } }, quotaHistory });
+    const root = document.querySelector('.quota-trend-history')!, rows = [...root.querySelectorAll<HTMLElement>('tbody tr')];
+    expect(rows.filter(row => !row.hidden)).toHaveLength(3);
+    const button = root.querySelector('button')!; button.click();
+    expect(button.getAttribute('aria-expanded')).toBe('true'); expect(rows.every(row => !row.hidden)).toBe(true);
+    button.click(); expect(rows.filter(row => !row.hidden)).toHaveLength(3);
+  });
   it('shows persisted API baseline progress and then the API ratio without local attribution', () => {
     const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
     const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
@@ -33,13 +156,16 @@ describe('Settings usage dashboard', () => {
       usage: { source: 'API' as const, status: 'available' as const, accountId: usageAccount('Codex', identity)!.id, updatedAt: now, summary: { lifetimeTokens: 10200000 } } };
     const latest = quotaMeters('Codex', account, now)[0]!, start = { ...latest, to: now - 60000, totalTokens: 10000000, usedPercent: 16 };
     const baseline = { start, latest };
+    render({ ...value, data: undefined, accounts: { Codex: { ...account, usage: { ...account.usage, summary: { lifetimeTokens: start.totalTokens } } } }, quotaBaselines: [{ start, latest: start }] });
+    expect(document.querySelector('#quota-estimates')!.textContent).toContain('Waiting for API tokens to update');
     render({ ...value, data: undefined, accounts: { Codex: account }, quotaBaselines: [baseline] });
-    expect(document.querySelector('#quota-estimates')!.textContent).toContain('API baseline saved');
+    expect(document.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('100,000 tokens per percentage point');
     render({ ...value, data: undefined, accounts: { Codex: account }, quotaBaselines: [baseline], quotaHistory: [{ provider: 'Codex', accountId: latest.accountId,
       plan: 'plus', label: 'Weekly', from: start.to, to: now, resetsAt: latest.resetsAt, observedTokens: 200000, usedPercent: 2, source: 'API' }] });
     const root = document.querySelector('#quota-estimates')!;
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('100,000 tokens per percentage point');
-    expect(root.textContent).toContain('API counters'); expect(root.textContent).toContain('Current observed interval');
+    expect(root.querySelector('.quota-estimate-source')!.getAttribute('title')).toContain('API counters');
+    expect(root.textContent).toContain('8.2M tokens left');
     const before = root.textContent; choose('filter-provider', 'Claude'); expect(root.textContent).toBe(before);
   });
   it('filters restore history, selects visible conversations, previews impact and sends only the delete token', () => {
@@ -118,15 +244,15 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('1,200');
     expect(document.querySelector('#api-cost-caption')!.textContent).toContain('Local tokens × API prices');
     choose('filter-model', 'codex-model');
-    expect(api.textContent).toContain('model filter applies only to Local');
+    expect(api.textContent).toContain('Model filter: Local only');
     expect(api.querySelector('strong')?.getAttribute('title')).toBe('700,000');
     render({ ...value, accounts: { Codex: { ...status, status: 'loading' } } });
     expect(api.textContent).toContain('previous snapshot'); expect(api.querySelector('.skeleton')).toBeNull();
     choose('filter-account', UNKNOWN_ACCOUNT);
-    expect(api.textContent).toContain('only for the signed-in Codex account'); expect(api.querySelector('strong')).toBeNull();
+    expect(api.textContent).toContain('API token activity unavailable'); expect(api.querySelector('strong')).toBeNull();
     choose('filter-provider', 'Claude'); expect(api.textContent).toContain('No personal-account token activity API');
   });
-  it('shows an account breakdown and filters all usage views without changing the live quota account', () => {
+  it('scopes account usage and quota together without switching native sign-in', () => {
     const one = usageAccount('Codex', { signedIn: true, email: 'one@test.invalid', method: 'ChatGPT' })!;
     const two = usageAccount('Codex', { signedIn: true, email: 'two@test.invalid', method: 'ChatGPT' })!;
     render({ ...value, data: { ...value.data!, days: [
@@ -143,7 +269,9 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#model-breakdown')!.textContent).toContain('one-model');
     expect(document.querySelector('#model-breakdown')!.textContent).not.toContain('two-model');
     expect(document.querySelectorAll('#account-breakdown tbody tr')).toHaveLength(1);
-    expect(document.querySelector('#quota-estimates')!.textContent).toBe(quotaBefore);
+    expect(document.querySelector('#quota-estimates')!.textContent).not.toBe(quotaBefore);
+    expect(document.querySelector('#quota-estimates')!.textContent).toContain('one@test.invalid');
+    expect(document.querySelector('#quota-estimates')!.textContent).not.toContain('claude@example.test');
     render({ ...value, data: { ...value.data!, days: [{ ...row('2026-10-09', 'Codex', 'one-model', 200), account: one }] } });
     expect((document.querySelector('#filter-account') as HTMLSelectElement).value).toBe(one.id);
     document.getElementById('reset-filters')!.click();
@@ -205,8 +333,12 @@ describe('Settings usage dashboard', () => {
     const root = document.getElementById('quota-estimates')!;
     expect(root.querySelector('.quota-estimate-value')?.getAttribute('title')).toBe('60,000 tokens per percentage point');
     expect(root.querySelector('.quota-trend-change')?.textContent).toContain('+100% vs earlier cycles');
-    expect(root.textContent).toContain('All observed cycles · 2 cycles · All projects & models');
+    expect(root.textContent).toContain('Local · 2 cycles');
     expect(root.querySelectorAll('.quota-trend-history tbody tr')).toHaveLength(2);
+    const cells = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
+    expect(cells[1]?.getAttribute('title')).toBe('2,000,000');
+    expect(cells[2]?.getAttribute('title')).toBe('8,000,000');
+    expect(cells[3]?.textContent).toBe('+100%');
     const before = root.textContent;
     choose('filter-provider', 'Claude'); choose('filter-range', 'all');
     expect(root.textContent).toBe(before);

@@ -59,6 +59,11 @@
   "contributes": {
     "commands": [
       {
+        "command": "agentTandem.manageAccounts",
+        "title": "AgentTandem: Manage Accounts",
+        "icon": "$(account)"
+      },
+      {
         "command": "agentTandem.acceptCurrentChange",
         "title": "Accept change",
         "icon": "$(check)",

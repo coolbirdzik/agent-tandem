@@ -74,7 +74,7 @@ export function claudeQuota(value: unknown): AccountQuota {
 
 /** Read-only RPCs: no thread, turn, or inference request. */
 export async function readCodexAccount(project: string, configured = '', signal?: AbortSignal,
-  launch = (executable: string) => spawn(executable, ['app-server'], { cwd: project, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] })) : Promise<ProviderAccountStatus> {
+  launch = (executable: string) => spawn(executable, ['app-server'], { cwd: project, env: environment, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }), environment?: NodeJS.ProcessEnv) : Promise<ProviderAccountStatus> {
   const executable = await findExecutable('codex', configured); signal?.throwIfAborted();
   const child = launch(executable), lines = createInterface({ input: child.stdout });
   child.stderr.on('data', () => undefined);
@@ -123,7 +123,7 @@ export async function readCodexAccount(project: string, configured = '', signal?
 }
 
 /** Initialize an empty SDK input stream: listing account/usage never sends a user message. */
-export async function readClaudeAccount(project: string, query: typeof sdkQuery, configured = '', signal?: AbortSignal): Promise<ProviderAccountStatus> {
+export async function readClaudeAccount(project: string, query: typeof sdkQuery, configured = '', signal?: AbortSignal, environment?: NodeJS.ProcessEnv): Promise<ProviderAccountStatus> {
   const executable = await findExecutable('claude', configured); signal?.throwIfAborted();
   const controller = new AbortController();
   let child: ChildProcessWithoutNullStreams | undefined, stream: ReturnType<typeof sdkQuery> | undefined, release!: () => void;
@@ -138,6 +138,7 @@ export async function readClaudeAccount(project: string, query: typeof sdkQuery,
   try {
     stream = query({ prompt: input(), options: {
       cwd: project, pathToClaudeCodeExecutable: executable, abortController: controller,
+      ...(environment ? { env: environment } : {}),
       settingSources: ['user', 'project', 'local'], persistSession: false,
       spawnClaudeCodeProcess: options => {
         controller.signal.throwIfAborted();

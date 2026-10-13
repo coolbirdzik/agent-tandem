@@ -138,6 +138,13 @@ h2 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: -.15px; }
 .quota-trend-history { margin-top: 12px; font-size: 11px; }
 .quota-trend-history summary { cursor: pointer; color: var(--muted); }
 .quota-trend-history .table-wrap { margin-top: 8px; }
+.quota-trend-history h4 { margin: 0; font-size: 11px; font-weight: 500; color: var(--muted); }
+.quota-trend-history table { font-size: 11px; font-variant-numeric: tabular-nums; }
+.quota-trend-history th, .quota-trend-history td { padding: 7px 6px; white-space: nowrap; }
+.quota-trend-history button { margin-top: 8px; font-size: 11px; }
+.usage-details { color: var(--muted); font-size: 11px; margin-top: 12px; }
+.usage-details summary { cursor: pointer; width: fit-content; }
+.usage-details p { max-width: 80ch; }
 .quota-history-error { grid-column: 1 / -1; color: var(--vscode-errorForeground); }
 .usage-coverage a { color: var(--vscode-textLink-foreground, var(--vscode-focusBorder)); }
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 32px; margin: 28px 0; }
@@ -206,6 +213,111 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .preference label { display: flex; align-items: center; gap: 10px; }
 .preference p { margin: 6px 0 0; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.settings-header nav { flex-wrap: wrap; }
+.account-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 0 0 20px; }
+.account-toolbar label, .conversation-search { display: grid; gap: 5px; font-size: 11px; color: var(--muted); }
+.conversation-search input { min-width: 220px; }
+.account-platforms { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 18px; margin: 24px 0; }
+.account-platform { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 9px 12px; gap: 8px; }
+.account-platform[aria-pressed=true] { color: var(--vscode-foreground); background: var(--surface); border-color: var(--line); }
+.account-platform small { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--muted); min-width: 12px; }
+.account-platform .provider-icon, .account-platform .account-app-mark { width: 16px; height: 16px; font-size: 15px; }
+.account-connection { padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 20px; }
+.account-connection h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.account-connection p { margin: 5px 0 16px; font-size: 12px; }
+.account-connection .account-toolbar { margin: 0; gap: 10px; align-items: end; }
+.account-connection #account-connect-close { margin-left: auto; padding-inline: 7px; }
+.account-list-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin: 28px 0 18px; }
+#accounts-notice:empty { display: none; }
+.account-list-tools h2 { margin: 0; font-weight: 500; font-size: 14px; }
+.account-list-tools h2 span { margin-left: 8px; font-variant-numeric: tabular-nums; font-size: 11px; }
+.account-search { display: flex; align-items: center; gap: 8px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; background: var(--vscode-input-background); padding-left: 10px; }
+.account-search:focus-within { outline: 1px solid var(--vscode-focusBorder); }
+.account-search input { border: none; background: transparent; min-width: 0; width: 190px; }
+.account-search input:focus { outline: none; }
+.managed-account-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; }
+.managed-account { border: 1px solid var(--line); border-radius: 8px; padding: 20px; min-width: 0; background: var(--surface); transition: border-color 150ms; }
+.managed-account:hover { border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder)); }
+.managed-account[data-active=true] { border-top: 2px solid var(--vscode-testing-iconPassed, #73a783); padding-top: 19px; }
+.managed-account-heading, .quota-pace-heading { display: flex; align-items: center; gap: 8px; }
+.managed-account-heading { align-items: start; gap: 12px; }
+.managed-account-heading h3 { margin: 0 0 3px; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.managed-account-copy { min-width: 0; flex: 1; }
+.managed-account-copy > span { display: block; font-size: 11px; overflow-wrap: anywhere; }
+.account-app-icon { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; border: 1px solid var(--line); background: var(--vscode-editor-background); border-radius: 8px; }
+.account-app-icon .provider-icon { width: 22px; height: 22px; }
+.account-app-mark { display: inline-grid; place-items: center; width: 22px; height: 22px; font-size: 22px; line-height: 1; font-weight: 600; color: var(--vscode-foreground); }
+.account-app-mark[data-provider=Antigravity] { font-size: 18px; font-weight: 500; }
+.account-state { font-size: 10px; white-space: nowrap; padding: 3px 6px; border-radius: 3px; background: var(--vscode-editor-background); color: var(--muted); }
+.account-state[data-state=active] { color: var(--vscode-testing-iconPassed, #73a783); }
+.vscode-light .account-state[data-state=active] { color: var(--vscode-testing-iconPassed, #287844); }
+.account-state[data-state=error] { color: var(--vscode-errorForeground); }
+.managed-account-meta { display: flex; gap: 8px; align-items: center; font-size: 11px; margin: 18px 0; }
+.account-plan { padding: 1px 6px; background: var(--vscode-editor-background); color: var(--muted); border-radius: 3px; }
+.managed-account-quota { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; min-height: 48px; }
+.managed-account-quota > p { grid-column: 1 / -1; font-size: 11px; margin: 0; align-self: center; overflow-wrap: anywhere; }
+.managed-account-quota > div { display: grid; gap: 5px; font-variant-numeric: tabular-nums; }
+.managed-account-quota > div > span { font-size: 11px; }
+.managed-account-quota progress { width: 100%; height: 5px; border: 0; appearance: none; accent-color: var(--codex); }
+.managed-account-quota progress::-webkit-progress-bar { background: var(--line); border-radius: 2px; }
+.managed-account-quota progress::-webkit-progress-value { background: var(--codex); border-radius: 2px; }
+.managed-account[data-provider=Claude] progress { accent-color: var(--claude); }
+.managed-account[data-provider=Claude] progress::-webkit-progress-value { background: var(--claude); }
+.managed-account .actions button { font-size: 11px; }
+.managed-account[data-active=true] .actions > button:first-child { background: transparent; color: var(--muted); }
+.managed-account .actions { display: flex; gap: 6px; flex-wrap: wrap; padding-top: 16px; border-top: 1px solid var(--line); }
+.managed-account .account-remove { margin-left: auto; color: var(--muted); }
+.managed-account .account-remove:hover { color: var(--vscode-errorForeground); }
+.account-checked { display: block; font-size: 10px; margin-top: 12px; }
+.account-footnote { margin: 24px 0 0; font-size: 11px; max-width: 70ch; }
+.account-switch-dialog { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; padding: 24px; border: 1px solid var(--line); border-radius: 10px; background: var(--vscode-editor-background); color: var(--vscode-foreground); box-shadow: 0 12px 48px var(--vscode-widget-shadow, #0003); }
+.account-switch-dialog::backdrop { background: #0006; }
+.account-switch-heading { display: flex; align-items: center; gap: 14px; }
+.account-switch-heading > .codicon { font-size: 22px; color: var(--vscode-focusBorder); }
+.account-switch-dialog[data-status=success] .account-switch-heading > .codicon { color: var(--vscode-testing-iconPassed, #287844); }
+.account-switch-dialog[data-status=error] .account-switch-heading > .codicon { color: var(--vscode-errorForeground); }
+.account-switch-heading p { font-size: 11px; margin: 0 0 4px; overflow-wrap: anywhere; }
+.account-switch-heading h2 { font-size: 20px; margin: 0; letter-spacing: -.3px; font-weight: 600; }
+#account-switch-result { font-size: 12px; margin: 18px 0; line-height: 1.6; }
+.account-switch-log { list-style: none; padding: 12px; margin: 0; max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.account-switch-log li { display: grid; grid-template-columns: 58px 14px minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 6px 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.account-switch-log time { font-variant-numeric: tabular-nums; color: var(--muted); }
+.account-switch-log .codicon { font-size: 12px; color: var(--muted); }
+.account-switch-log [data-level=error] > span { color: var(--vscode-errorForeground); }
+.account-switch-log [data-level=success] > .codicon { color: var(--vscode-testing-iconPassed, #287844); }
+.account-switch-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 20px; font-size: 11px; }
+.account-switch-spinner { animation: account-switch-spin 1s linear infinite; }
+@keyframes account-switch-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .account-switch-spinner { animation: none; } }
+.account-empty { grid-column: 1 / -1; padding: 48px 24px; border: 1px dashed var(--line); border-radius: 8px; text-align: center; }
+.account-empty > .codicon { font-size: 28px; color: var(--muted); }
+.account-empty h3 { font-size: 17px; font-weight: 500; margin: 12px 0 6px; }
+.account-empty p { margin: 0 0 20px; }
+@media (max-width: 500px) { #managed-accounts .page-heading { flex-wrap: wrap; gap: 18px; } .account-platform { padding: 7px 8px; } .account-search { width: 100%; } .account-search input { width: 100%; } .managed-account { padding: 16px; } .managed-account[data-active=true] { padding-top: 15px; } .account-connection { padding: 16px; } .account-connection .account-toolbar label { width: 100%; } .account-connection select { width: 100%; } }
+.quota-pace-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 24px; }
+.quota-pace-card > strong { display: block; font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; margin: 8px 0 4px; }
+.quota-pace-card p { font-size: 11px; margin: 0; }
+.quota-pace-card[data-low=true] > strong { color: var(--vscode-editorWarning-foreground); }
+.quota-pace-chart { display: flex; align-items: end; gap: 3px; height: 38px; margin-top: 14px; }
+.quota-pace-chart span { flex: 1; max-width: 20px; background: var(--vscode-charts-blue, #3794ff); border-radius: 2px 2px 0 0; }
+.conversation-link { background: transparent; color: var(--vscode-textLink-foreground); padding: 2px 0; font-size: 12px; max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.conversation-link:hover { background: transparent; text-decoration: underline; }
+.conversation-detail { margin-top: 24px; padding: 20px; background: var(--surface); border-left: 2px solid var(--vscode-focusBorder); }
+.conversation-detail h3 { margin: 0; overflow-wrap: anywhere; }
+.conversation-detail .section-heading p { overflow-wrap: anywhere; }
+.conversation-detail .usage-totals { margin: 20px 0; }
+.conversation-detail .table-wrap { margin-top: 20px; }
+.conversation-quota { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; }
+.account-group-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 24px; }
+.account-group { min-width: 0; padding: 18px 0; border-top: 1px solid var(--line); }
+.account-group .muted { font-size: 11px; overflow-wrap: anywhere; }
+.account-group-totals { display: grid; gap: 3px; margin: 18px 0; font-variant-numeric: tabular-nums; }
+.account-group-totals > strong { font-size: 32px; font-weight: 500; }
+.account-group-windows { display: grid; gap: 12px; margin-bottom: 18px; }
+.account-group-window > div { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.account-group-window > div strong { margin-left: auto; font-weight: 500; }
+.account-group-window small { display: block; margin-top: 3px; }
+#dashboard-detail { margin-top: 28px; }
 @media (max-width: 1000px) {
   .dashboard-grid { grid-template-columns: minmax(0, 1fr) 250px; gap: 24px; }
   .usage-total { padding-inline: 16px; }

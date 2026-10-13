@@ -23,6 +23,8 @@ export async function run() {
   const state = api.usageDashboard(); assert.equal(state.status, 'ready'); assert.equal(state.preferences.showQuotaInStatusBar, true);
   assert.equal(state.preferences.grouping, 'day', 'New installations group dashboard usage by day');
   assert.ok(state.data); assert.equal(state.data.files, 3);
+  assert.equal(state.data.conversations?.length, 3, 'Usage includes separate native conversations');
+  assert.equal(state.data.conversations?.flatMap(row => row.days).reduce((sum, row) => sum + row.total, 0), 770, 'Conversation breakdown preserves deduplicated totals');
   assert.equal(state.data.days.reduce((sum, row) => sum + row.total, 0), 770);
   assert.ok(state.data.days.every(row => !row.account), 'History without response/turn evidence is never assigned to the current login');
   assert.equal(state.data.recent?.length, 3, 'Quota receives recent deduplicated timestamp/token metadata');
@@ -35,6 +37,9 @@ export async function run() {
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   assert.equal(tabs().length, 1);
+  assert.ok(commands.includes('agentTandem.manageAccounts'));
+  await vscode.commands.executeCommand('agentTandem.manageAccounts');
+  assert.equal(api.usageDashboard().managedAccounts?.length, 0, 'A fresh profile opens functional Accounts without importing native credentials');
   await vscode.commands.executeCommand('agentTandem.openSettings'); assert.equal(tabs().length, 1, 'Reuses the settings tab');
   await vscode.commands.executeCommand('agentTandem.setDashboardPreferences', { showQuotaInStatusBar: false, grouping: 'month' });
   assert.deepEqual(api.usageDashboard().preferences, { showQuotaInStatusBar: false, grouping: 'month' });
@@ -85,6 +90,7 @@ export async function run() {
   await assert.rejects(readFile(restoreManifest), { code: 'ENOENT' });
   assert.equal(api.viewState().review?.externalTracking, true, 'History deletion retains automatic tracking');
   const report = { success: true, vscode: vscode.version, checks: ['Dashboard script and styles exist in the loaded extension', 'Activates automatically for the status bar without opening AgentTandem', 'Settings opens Dashboard in one reusable editor tab', 'Dashboard reads both providers across all projects including archived history', 'Duplicate Claude content blocks count once', 'API equivalent includes cache pricing and explicitly unpriced models', 'Recent usage exposes deduplicated timestamp/token metadata for quota estimates', 'Status bar visibility and dashboard grouping update persisted preferences'] };
+  report.checks.push('Conversation usage preserves native IDs and deduplicated totals', 'Manage Accounts opens without importing or switching native sign-ins');
   report.checks.push('Storage shows the runtime data path and exact old-unused snapshot preview', 'Cleanup rejects unknown preview tokens and retains tracking baselines');
   report.checks.push('Manage Storage reuses the settings editor', 'History deletion previews exact checkpoints, rejects unapproved tokens and deletes the approved restore point', 'Deleting history keeps workspace tracking active');
   await writeFile(path.join(process.env.AGENT_TANDEM_REPORT_DIR!, 'settings-host.json'), JSON.stringify(report, null, 2));

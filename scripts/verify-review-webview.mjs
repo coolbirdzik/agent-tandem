@@ -42,6 +42,12 @@ export async function verifyReviewWebview(runtime, port, edition) {
       }
     }, 'rendered review Webview');
     await until(() => evaluate(`return d.querySelector('#diff')?.dataset.diffReady==='true';`), 'Monaco worker computes the inline diff');
+    const compactToolbar = await evaluate(`return {height:d.querySelector('.review-header').getBoundingClientRect().height,rows:d.querySelectorAll('body>.review-header,body>.review-context,body>.file-toolbar').length};`);
+    assert.equal(compactToolbar.rows, 1, 'Review uses one consolidated toolbar');
+    assert.ok(compactToolbar.height <= 56, 'Wide review toolbar stays within one compact row');
+    await evaluate(`d.querySelector('#review-more').open=true;return true;`);
+    assert.equal(await evaluate(`return d.querySelector('#native').getBoundingClientRect().height>0;`), true, 'Native diff remains available in More actions');
+    await evaluate(`d.querySelector('#review-more').open=false;return true;`);
     const syntax = await until(() => evaluate(`const lines=[...d.querySelectorAll('.view-line')];const colors=[...new Set(lines.flatMap(line=>[...line.querySelectorAll('span')].filter(s=>s.textContent.trim()).map(s=>d.defaultView.getComputedStyle(s).color)))];return colors.length>1?{language:d.querySelector('#diff').dataset.language,colors}:undefined;`), 'syntax-highlighted source');
     assert.equal(syntax.language, 'typescript');
     await click('.next-block');
@@ -151,6 +157,9 @@ export async function verifyReviewWebview(runtime, port, edition) {
     }
     await stage('saved-deleted-image'); target = await findTarget('#images .image-comparison'); await decodedImages(1);
     assert.match(await evaluate(`return d.querySelectorAll('.image-side')[1].textContent;`), /file deleted/); await done('saved-deleted-image');
+    await stage('accept-file-all'); target = await findTarget('#accept-all-file');
+    await until(() => evaluate(`return d.querySelector('#files')?.value==='01-source.ts'&&!d.querySelector('#accept-all-file')?.disabled;`), 'Accept all is ready for the selected code file');
+    await click('#accept-all-file'); await done('accept-file-all');
     await stage('complete');
-  } finally { ws.close(); for (const name of ['dark', 'agent-list', 'conversation-link', 'light', 'narrow', 'accept', 'stale', 'reject', 'undo', 'external', 'dirty', 'navigation', 'binary', 'image', 'image-narrow', 'added-image', 'deleted-image', 'broken-image', 'readme-image', 'native-image', 'image-to-code', 'code-to-image', 'native', 'saved-image', 'cumulative-image', 'saved-deleted-image']) await done(name); }
+  } finally { ws.close(); for (const name of ['dark', 'agent-list', 'conversation-link', 'light', 'narrow', 'accept', 'stale', 'reject', 'undo', 'external', 'dirty', 'navigation', 'binary', 'image', 'image-narrow', 'added-image', 'deleted-image', 'broken-image', 'readme-image', 'native-image', 'image-to-code', 'code-to-image', 'native', 'saved-image', 'cumulative-image', 'saved-deleted-image', 'accept-file-all']) await done(name); }
 }

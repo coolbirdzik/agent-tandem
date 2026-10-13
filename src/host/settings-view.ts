@@ -8,13 +8,13 @@ export class SettingsView implements vscode.Disposable {
   private subscriptions: vscode.Disposable[] = [];
   private lastUpdate = '';
   private lastData?: UsageDashboardState['data'];
-  private page: 'dashboard' | 'storage' = 'dashboard';
+  private page: 'dashboard' | 'storage' | 'accounts' = 'dashboard';
   constructor(private extensionUri: vscode.Uri, private state: () => UsageDashboardState,
     private invoke: (command: string, value?: unknown) => Promise<unknown>, private report: (error: unknown) => void) {}
   get visible() { return !!this.panel?.visible; }
-  open(page: 'dashboard' | 'storage' = 'dashboard') {
+  open(page: 'dashboard' | 'storage' | 'accounts' = 'dashboard') {
     this.page = page;
-    if (this.panel) { this.panel.reveal(); void this.panel.webview.postMessage(page === 'storage' ? { type: 'page', page } : { type: 'dashboard' }); this.update(true); return; }
+    if (this.panel) { this.panel.reveal(); void this.panel.webview.postMessage(page !== 'dashboard' ? { type: 'page', page } : { type: 'dashboard' }); this.update(true); return; }
     const panel = vscode.window.createWebviewPanel('agentTandem.settings', 'AgentTandem Settings', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
     this.panel = panel;
     const webview = panel.webview;
@@ -25,8 +25,8 @@ export class SettingsView implements vscode.Disposable {
     const bridge = webview.onDidReceiveMessage(async data => {
       try {
         if (!data || typeof data !== 'object') throw new Error('Invalid settings request.');
-        if (data.type === 'ready') { this.update(true); if (this.page === 'storage') await webview.postMessage({ type: 'page', page: 'storage' }); return; }
-        const commands: Record<string, string> = { refresh: 'agentTandem.refreshUsageDashboard', preferences: 'agentTandem.setDashboardPreferences', chat: 'agentTandem.open', clis: 'agentTandem.manageCLIs', vscodeSettings: 'agentTandem.openVSCodeSettings', storage: 'agentTandem.refreshStorage', previewCleanup: 'agentTandem.previewStorageCleanup', cleanup: 'agentTandem.cleanupStorage', revealStorage: 'agentTandem.revealStorage', previewHistoryDeletion: 'agentTandem.previewHistoryDeletion', deleteHistory: 'agentTandem.deleteHistory' };
+        if (data.type === 'ready') { this.update(true); if (this.page !== 'dashboard') await webview.postMessage({ type: 'page', page: this.page }); return; }
+        const commands: Record<string, string> = { accountAction: 'agentTandem.accountAction', refresh: 'agentTandem.refreshUsageDashboard', preferences: 'agentTandem.setDashboardPreferences', chat: 'agentTandem.open', clis: 'agentTandem.manageCLIs', vscodeSettings: 'agentTandem.openVSCodeSettings', storage: 'agentTandem.refreshStorage', previewCleanup: 'agentTandem.previewStorageCleanup', cleanup: 'agentTandem.cleanupStorage', revealStorage: 'agentTandem.revealStorage', previewHistoryDeletion: 'agentTandem.previewHistoryDeletion', deleteHistory: 'agentTandem.deleteHistory' };
         if (!Object.hasOwn(commands, data.type)) throw new Error('Unsupported settings request.');
         await this.invoke(commands[data.type]!, data.value);
       } catch (error) { this.report(error); }
@@ -38,7 +38,7 @@ export class SettingsView implements vscode.Disposable {
   update(force = false) {
     if (!this.panel) return;
     const state = this.state();
-    const signature = JSON.stringify([state.status, state.data?.updatedAt, state.error, state.accounts, state.storage, state.preferences, state.quotaHistory, state.quotaHistoryError, state.quotaBaselines]);
+    const signature = JSON.stringify([state.status, state.data?.updatedAt, state.error, state.accounts, state.storage, state.preferences, state.quotaHistory, state.quotaHistoryError, state.quotaBaselines, state.quotaTicks, state.managedAccounts, state.accountsBusy, state.accountsError, state.accountsNotice, state.accountSwitch, state.accountSwitchBlocked, state.conversationTitles]);
     // Chat streaming, conversation sync and review capture don't change usage.
     if (!force && signature === this.lastUpdate && state.data === this.lastData) return;
     this.lastUpdate = signature; this.lastData = state.data;

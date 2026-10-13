@@ -39,6 +39,21 @@ describe('Observed tokens per quota percentage point', () => {
     const mixed = { ...data, recent: [...data.recent!, { provider: 'Claude' as const, accountId: anotherOrg.id, timestamp: now - hour, total: 99e6 }] };
     expect(quotaEstimates('Claude', { ...account, account: claudeIdentity }, mixed, now)[0]?.tokensPerPercent).toBe(200000);
   });
+  it('estimates native device usage without relabeling unknown sessions or including other known accounts', () => {
+    const recent = [
+      { provider: 'Codex' as const, timestamp: now - hour, total: 1000 },
+      { provider: 'Codex' as const, accountId: codexId, timestamp: now - hour, total: 500 },
+      { provider: 'Codex' as const, accountId: 'other', timestamp: now - hour, total: 900000 },
+      { provider: 'Claude' as const, timestamp: now - hour, total: 900000 },
+      { provider: 'Codex' as const, timestamp: now - 5 * hour, total: 900000 },
+      { provider: 'Codex' as const, timestamp: now + 1, total: 900000 },
+    ];
+    expect(quotaEstimates('Codex', account, { ...data, recent }, now, 'Device')[0]).toMatchObject({ observedTokens: 1500, tokensPerPercent: 60 });
+    expect(quotaEstimates('Codex', account, { ...data, recent }, now)[0]?.observedTokens).toBe(500);
+    expect(recent[0]?.accountId).toBeUndefined();
+    expect(quotaEstimates('Codex', account, { ...data, recent: [recent[0]!] }, now)[0]?.tokensPerPercent).toBeUndefined();
+    expect(quotaEstimates('Codex', account, { ...data, recent: [recent[0]!] }, now, 'Device')[0]?.tokensPerPercent).toBe(40);
+  });
   it('anchors both windows to native resets, isolates providers and excludes future records', () => {
     const [five, weekly] = quotaEstimates('Codex', account, data, now);
     expect(five).toMatchObject({ label: '5h', observedTokens: 1e6, tokensPerPercent: 40000, capacityTokens: 4e6, remainingTokens: 3e6, from: now - 4 * hour, to: now });

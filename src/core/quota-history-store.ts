@@ -8,7 +8,7 @@ function observation(value: unknown): value is QuotaObservation {
   if (!value || typeof value !== 'object') return false;
   const row = value as QuotaObservation;
   return ['Codex', 'Claude'].includes(row.provider) && typeof row.accountId === 'string' && !!row.accountId && typeof row.plan === 'string' &&
-    ['5h', 'Weekly'].includes(row.label) && (row.source === undefined || ['API', 'Local'].includes(row.source)) && [row.from, row.resetsAt, row.to, row.observedTokens, row.usedPercent].every(Number.isFinite) &&
+    ['5h', 'Weekly'].includes(row.label) && (row.source === undefined || ['API', 'Local', 'Device'].includes(row.source)) && [row.from, row.resetsAt, row.to, row.observedTokens, row.usedPercent].every(Number.isFinite) &&
     row.from > 0 && row.from < row.to && row.to < row.resetsAt && Number.isSafeInteger(row.observedTokens) && row.observedTokens > 0 && row.usedPercent > 0 && row.usedPercent <= 100;
 }
 const clean = (row: QuotaObservation): QuotaObservation => ({

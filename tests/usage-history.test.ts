@@ -19,6 +19,26 @@ const claude = (id: string, output = 20) => ({ timestamp: stamp, type: 'assistan
 const jsonl = (rows: unknown[]) => rows.map(row => JSON.stringify(row)).join('\n') + '\n';
 
 describe('Native usage accounting', () => {
+  it('groups deduplicated tokens by conversation across models/accounts and retains metadata in the token-only cache', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-conversation-usage-'));
+    try {
+      const homes = { codex: path.join(root, 'codex'), claude: path.join(root, 'claude') }, cache = path.join(root, 'cache');
+      await mkdir(path.join(homes.codex, 'sessions'), { recursive: true }); await mkdir(path.join(homes.claude, 'projects', 'test'), { recursive: true });
+      await writeFile(path.join(homes.codex, 'sessions', 'one.jsonl'), jsonl([{ ...meta, payload: { id: 'thread-one', cwd: 'L:/project-one' } }, turn,
+        { ...token('r1', 100, 20), payload: { ...token('r1', 100, 20).payload, thread_id: 'thread-one' } }]));
+      const message = { ...claude('c1'), sessionId: 'claude-one', cwd: 'L:/project-two' };
+      await writeFile(path.join(homes.claude, 'projects', 'test', 'one.jsonl'), jsonl([message, message, { ...message, message: { ...message.message, id: 'c2', model: 'second-model' } }]));
+      const first = await new UsageHistory(homes, undefined, cache).read();
+      expect(first.conversations).toHaveLength(2);
+      const codex = first.conversations!.find(row => row.key === 'Codex:thread-one')!;
+      expect(codex.project).toBe('L:/project-one'); expect(usageBreakdown(codex.days, { grouping: 'day' }).totals.total).toBe(120);
+      const c = first.conversations!.find(row => row.key === 'Claude:claude-one')!;
+      expect(c.project).toBe('L:/project-two'); expect(usageBreakdown(c.days, { grouping: 'day' }).totals.total).toBe(660);
+      expect(usageBreakdown(c.days, { grouping: 'day' }).models).toHaveLength(2);
+      expect(first.conversations!.reduce((sum, row) => sum + usageBreakdown(row.days, { grouping: 'day' }).totals.total, 0)).toBe(usageBreakdown(first.days, { grouping: 'day' }).totals.total);
+      const reload = await new UsageHistory(homes, undefined, cache).read(); expect(reload.conversations).toEqual(first.conversations);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('reuses token-only disk cache after reload, invalidates changed/corrupt entries and reapplies account evidence', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-usage-cache-'));
     try {
