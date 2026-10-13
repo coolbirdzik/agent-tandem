@@ -3,6 +3,8 @@ import { mkdir, copyFile } from 'node:fs/promises';
 await mkdir('dist', { recursive: true });
 await copyFile('node_modules/@anthropic-ai/claude-agent-sdk/LICENSE.md', 'dist/claude-sdk-LICENSE.md');
 await copyFile('node_modules/diff/LICENSE', 'dist/diff-LICENSE.txt');
+await copyFile('node_modules/monaco-editor/LICENSE', 'dist/monaco-LICENSE.txt');
+await copyFile('node_modules/monaco-editor/ThirdPartyNotices.txt', 'dist/monaco-ThirdPartyNotices.txt');
 await copyFile('node_modules/ignore/LICENSE-MIT', 'dist/ignore-LICENSE.txt');
 await copyFile('node_modules/jsonc-parser/LICENSE.md', 'dist/jsonc-parser-LICENSE.md');
 await mkdir('media/codicons', { recursive: true });
@@ -10,6 +12,9 @@ await copyFile('node_modules/@vscode/codicons/LICENSE-CODE', 'media/codicons/Lic
 for (const file of ['codicon.css', 'codicon.ttf']) await copyFile(`node_modules/@vscode/codicons/dist/${file}`, `media/codicons/${file}`);
 for (const [source, target] of [['node_modules/@vscode/codicons/LICENSE', 'codicons-LICENSE.txt'], ['node_modules/marked/LICENSE', 'marked-LICENSE.md'], ['node_modules/dompurify/LICENSE', 'dompurify-LICENSE.txt']]) await copyFile(source, `dist/${target}`);
 const configs = [
+  { entryPoints: ['tests/extension/review-webview.ts'], outfile: 'dist/review-webview-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
+  { entryPoints: ['src/review-webview.ts'], outfile: 'dist/review-webview.js', bundle: true, platform: 'browser', format: 'iife', target: 'es2022', sourcemap: true, minify: true, loader: { '.ttf': 'dataurl' } },
+  { entryPoints: ['node_modules/monaco-editor/esm/vs/editor/editor.worker.js'], outfile: 'dist/review-editor-worker.js', bundle: true, platform: 'browser', format: 'iife', target: 'es2022', minify: true },
   { entryPoints: ['tests/extension/external-review.ts'], outfile: 'dist/external-review-host-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['tests/extension/settings.ts'], outfile: 'dist/settings-host-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['tests/extension/change-navigation.ts'], outfile: 'dist/change-navigation-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },

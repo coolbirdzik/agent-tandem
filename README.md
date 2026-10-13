@@ -2,13 +2,13 @@
 
 <h1 align="center">AgentTandem</h1>
 <p align="center"><strong>Claude Code &amp; Codex Chat, Code Review &amp; Usage</strong></p>
-<p align="center">A VS Code companion for Claude Code and Codex.<br>Review changes, return to checkpoints, pick up conversations, and see where your allowance goes.</p>
+<p align="center">A VS Code companion for Claude Code and Codex.<br>Track saved code changes and review them line by line, with chat, checkpoints and usage nearby.</p>
 
 ---
 
 ## Keep your workflow. Add a review layer.
 
-Use Claude Code or Codex in their own tools, or chat directly in AgentTandem. Saved workspace changes appear in one review panel, grouped by conversation when the source can be verified. Open a native diff, keep what works, and restore what needs another pass.
+**Change tracking is the core workflow.** Turn it on before your agent starts editing, then read its changes line by line in VS Code. Use Claude Code or Codex in their own tools, or chat directly in AgentTandem. Saved workspace changes appear in one review panel, grouped by conversation when the source can be verified. Open a file's inline diff, keep what works, and restore what needs another pass.
 
 AgentTandem opens to **Review**. Chat, history and usage are always close by.
 
@@ -16,12 +16,44 @@ AgentTandem opens to **Review**. Chat, history and usage are always close by.
 
 *Product preview with demonstration data, rendered from AgentTandem's actual interface.*
 
+## Get started: turn tracking on first
+
+1. Install AgentTandem in VS Code **1.100 or newer**, open a local project folder, and trust the workspace.
+2. Check the **bottom-right VS Code status bar** for **Tracking on**. Tracking starts automatically in trusted local workspaces unless you have paused it or disabled automatic startup.
+3. If it says **Tracking off**, click it and choose **Resume tracking**. You can also run **AgentTandem: Change Tracking Controls** from the Command Palette (`Ctrl+Shift+P` on Windows/Linux, `Cmd+Shift+P` on macOS) and choose **Resume tracking**.
+4. **Wait for tracking to be ready before asking your agent to edit.** AgentTandem takes the current saved files as its starting baseline; edits made before tracking starts are not reconstructed.
+5. Work in your usual Codex or Claude Code tool, another editor, or AgentTandem chat. Save changes, then open AgentTandem in the Activity Bar to review them.
+
+To install a downloaded package, use **Extensions → … → Install from VSIX…**, then select the `.vsix` file. **AgentTandem: Getting Started** opens the in-editor walkthrough.
+
+Every edition opens the Monaco review editor by default, with syntax highlighting, full-file context and colored inline buttons. See [Choose your review editor](#choose-your-review-editor) for settings and the native diff option.
+
+### Use Tracking on to review each change
+
+Tracking watches saved additions, edits and deletions in the open project, including **manual edits**. You can use it without sending a message through AgentTandem.
+
+1. After a saved change is captured, the status-bar label becomes **Review · N files**. Click it to open the latest conversation changes in the editor, or open the **Review** panel to browse all pending changes.
+2. Open a changed file in the Monaco inline diff. Read the surrounding code with syntax highlighting and **Accept / Reject / Next change** actions directly above each change. Use **Previous/Next** (`Alt+↑` / `Alt+↓`) to move between changes and files.
+   Use **Next file** beside the inline actions to skip straight to the next file. **Previous file / Next file** also appear in the editor-title toolbar; hover over the left/right chevrons to see their labels. Click **File x/y** in the status bar to choose any file in the current review.
+3. **Accept** keeps the already-applied code and marks a block or file as reviewed. **Reject** restores the block's saved baseline; **Revert** is the corresponding file/group action. Use `Alt+Y` / `Alt+N` for the selected change; file/group Revert previews its scope before confirmation. Accept does not create a Git commit.
+4. For tracking controls, use the **eye button in the Review header**, **… → Change tracking…**, or **AgentTandem: Change Tracking Controls**. When the status bar shows a pending file count, clicking it opens the diff instead of the tracking menu.
+
+**Pause tracking** captures outstanding saved changes and keeps pending review available. Pause/resume is remembered for this workspace across reloads. Choose **Capture changes now** in the tracking controls, or run **AgentTandem: Capture External Changes Now**, to scan immediately while tracking is on.
+
+If you see **Tracking unavailable**, open and trust a local workspace. If new changes are missing, check that tracking is on, save the file, and check whether it is ignored. Unsaved buffers and ignored files are not captured. Conversation groups require verified native edit history; other changes remain visible under **Shared** or **Unassigned**.
+
+The setting `agentTandem.autoTrackExternalChanges` defaults to `true`. Setting it to `false` disables automatic startup for workspaces without a saved tracking choice; use **Resume tracking** to enable it explicitly. Pause tracking before restoring an AgentTandem message checkpoint.
+
+### Set up AgentTandem chat
+
+To chat inside the extension, install and sign in to [Claude Code](https://code.claude.com/docs/en/overview) or [Codex CLI](https://developers.openai.com/codex/cli), then run **AgentTandem: Manage CLIs** and select your installation. Open AgentTandem and select **+** to start a chat, or open **History** to find project conversations. **AgentTandem: Open Settings and Usage Dashboard** opens usage, account information and preferences.
+
 ## What you get
 
 | Feature | What it adds to your day |
 | --- | --- |
 | **Review across agents** | See saved changes from AgentTandem, native CLIs and other editors in one place. Verified conversation groups keep context nearby; mixed and unknown sources stay visible as Shared and Unassigned. |
-| **Native diffs, precise decisions** | Review a file or an individual change block. Accept keeps applied code; Revert restores its saved baseline. Previous/Next follows changes across files. |
+| **Readable diffs, precise decisions** | Read each file with syntax highlighting, surrounding source and colored inline buttons. Accept keeps applied code; Reject restores a change's saved baseline. Next change follows edits; Next file skips directly to another file. |
 | **Checkpoints and Undo** | AgentTandem captures a checkpoint before its own chat turns. Preview a restore, return the code to that point, or undo the latest restore. |
 | **One conversation workspace** | Find project conversations from Codex and Claude, resume a native session, or open chat in a sidebar or editor tab. |
 | **Chat that fits real work** | Stream replies and tool activity, attach images or files, choose a model and reasoning effort, and answer approvals in the panel. |
@@ -80,36 +112,44 @@ Inspect local storage by category and conversation. Filter restore history by pr
 
 *Screenshots use demonstration files, conversations, accounts and usage values rendered by the actual AgentTandem interface and VS Code Development Host.*
 
-## Get started
-
-1. Install AgentTandem in VS Code **1.100 or newer** and open a local project folder.
-2. Install and sign in to [Claude Code](https://code.claude.com/docs/en/overview) or [Codex CLI](https://developers.openai.com/codex/cli).
-3. Open **AgentTandem: Manage CLIs** from the Command Palette and select your installation.
-4. Open AgentTandem in the Activity Bar. Review saved changes, open **History**, or select **+** to start a chat.
-
-Use **AgentTandem: Getting Started** for the in-editor walkthrough. **AgentTandem: Open Settings and Usage Dashboard** opens usage, account information and preferences.
-
-To install a downloaded package, use **Extensions → … → Install from VSIX…**, then select the `.vsix` file.
-
 ## A review loop that stays close to your code
 
-![AgentTandem native multi-file diff in the VS Code editor with block review actions](media/screenshots/editor-diff.png)
+![AgentTandem Monaco diff with syntax highlighting, colored inline buttons and file navigation](media/screenshots/editor-diff.png)
 
-*Actual VS Code Development Host capture with demonstration files. This local build shows experimental in-editor action cards; the Marketplace build uses CodeLens for block actions.*
+*Actual VS Code Development Host capture using demonstration files and a Marketplace-compatible manifest. The Monaco diff shows syntax highlighting, green Accept and red Reject buttons above each edit, plus separate change and file navigation.*
 
 1. **Work.** Continue in your native agent, or send a turn through AgentTandem.
-2. **Inspect.** Open a changed file in VS Code's inline diff. Review one block, one file or the entire group.
+2. **Inspect.** Open a changed file in the Monaco inline diff. Read its highlighted source and review one change, one file or the entire group.
 3. **Decide.** Accept keeps the current code and marks it reviewed. Revert previews file/group scope and checks for newer edits before restoring snapshots.
 4. **Continue.** Keep the context, branch an earlier message, or restore an AgentTandem checkpoint for another attempt.
 
 | Shortcut | Action |
 | --- | --- |
 | `Alt+↓` / `Alt+↑` | Next / previous change in an AgentTandem diff |
-| `Alt+Y` | Accept the change block under the cursor |
-| `Alt+N` | Revert the change block under the cursor |
+| `Alt+PageDown` / `Alt+PageUp` | Next / previous file, skipping remaining changes in the current file |
+| `Alt+Y` | Accept the block under the cursor (selected change in Webview mode) |
+| `Alt+N` | Reject the block under the cursor (selected change in Webview mode) |
 | `Enter` / `Shift+Enter` | Send a chat message / add a newline |
 
-The Marketplace build uses **CodeLens** for block actions, editor-title navigation buttons and the status-bar file picker. The local development build can also enable experimental floating controls.
+## Choose your review editor
+
+**Local and Marketplace editions default to the Monaco review editor.** Open a pending file from Review, chat or the status bar to read its saved before/after snapshots. The full file has syntax highlighting, line numbers, red/green diff backgrounds, text selection and **Ctrl+F** search. Green **Accept**, red **Reject**, blue **Next change** and **Next file** buttons sit directly above each pending edit.
+
+**Next change** (`Alt+Down`, previous: `Alt+Up`) visits individual edits and continues across files. **Next file** (`Alt+PageDown`, previous: `Alt+PageUp`) skips the remaining edits in the current file. Use the filename dropdown to jump directly to a file. Navigation retains the current conversation/group scope and wraps at the ends.
+
+If you previously selected native review, choose **Webview** in AgentTandem settings, or merge this into your settings:
+
+```json
+{
+  "agentTandem.reviewEditor": "webview"
+}
+```
+
+Monaco is bundled inside the extension and works offline. It highlights supported languages such as TypeScript, JavaScript, Python, Dart, Rust, HTML, CSS and JSON. It follows VS Code's light/dark/high-contrast mode and editor font; syntax colors come from Monaco's built-in themes. It does not inherit installed VS Code language extensions or their semantic highlighting. Unknown languages remain readable as plain text. Source snapshots are read-only; edit the workspace file in your normal editor.
+
+The **Native diff** button opens the same snapshots in VS Code's editor. Set `agentTandem.reviewEditor` to `native` to use that editor by default. Native Accept/Reject actions remain CodeLens, styled by VS Code; `agentTandem.blockActionsStyle` controls those actions. Both review modes use the same snapshot decisions, scope checks and Undo. AgentTandem does not override the shared CodeLens font size.
+
+Binary files, combined snapshots over 4 MiB and timed-out snapshot diffs offer file-level decisions and a Native diff action. Monaco virtualizes visible lines while retaining the complete source model for scrolling and searching.
 
 ## Know what is captured
 
@@ -118,7 +158,7 @@ The Marketplace build uses **CodeLens** for block actions, editor-title navigati
 - **Accept** marks already-applied code as reviewed; it does not create a Git commit. **Edit and resend** branches conversation context and keeps the current code.
 - Native history discovery reads local provider records. Snapshot, queue and preference data are stored locally. Prompts and attachments sent through chat are handled by the selected provider through its CLI.
 - Account, quota, Fast mode, models and attachment support depend on the selected provider, CLI version and account. API-cost estimates are separate from subscription quota.
-- Agent execution requires a **trusted local workspace**. Virtual workspaces have limited support. AgentTandem selects inline diff layout for review, which also affects the workspace's other diff editors.
+- Agent execution requires a **trusted local workspace**. Virtual workspaces have limited support. Opening native review selects inline diff layout, which also affects the workspace's other diff editors.
 
 AgentTandem is an independent companion. It is not affiliated with OpenAI or Anthropic. Provider names and marks identify the tools it connects to.
 

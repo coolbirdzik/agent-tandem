@@ -15,7 +15,7 @@ async function waitFor(predicate: () => boolean, description: string) {
 }
 const codeLenses = (uri: vscode.Uri) => vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri);
 export async function run() {
-  const api = await vscode.extensions.getExtension<ExtensionAPI>('agent-tandem-local.agent-tandem')!.activate();
+  const api = await vscode.extensions.getExtension<ExtensionAPI>(process.env.AGENT_TANDEM_EXTENSION_ID || 'agent-tandem-local.agent-tandem')!.activate();
   await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
   const runtime = process.env.AGENT_TANDEM_NAV_RUNTIME!;
   const reportFile = path.join(runtime, '..', '..', 'artifacts/change-navigation-test.json');
@@ -55,6 +55,7 @@ export async function run() {
     await vscode.commands.executeCommand('agentTandem.previewReview', request(file));
     await waitFor(() => api.changeNavigationState()?.file === file, 'single file navigation scope');
     const editor = vscode.window.activeTextEditor!;
+    assert.equal(editor.document.languageId, 'typescript', 'Native review retains VS Code language detection for syntax highlighting');
     editor.selection = new vscode.Selection(line, 0, line, 0);
     editor.revealRange(editor.selection, vscode.TextEditorRevealType.AtTop);
     await new Promise(resolve => setTimeout(resolve, 800));
@@ -76,6 +77,32 @@ export async function run() {
     visited.push({ direction, ...state, line });
   };
   const editor = await openSingle();
+  for (const [direction, file] of [['next', added], ['next', deleted], ['previous', added], ['previous', first], ['previous', last], ['next', first]] as const) {
+    await vscode.commands.executeCommand(`agentTandem.${direction}File`);
+    await waitFor(() => api.changeNavigationState()?.file === file, `${direction} file goes directly to ${file}`);
+    assert.equal(api.changeNavigationState()!.total, 4);
+    assert.equal(vscode.window.activeTextEditor!.document.languageId, 'typescript');
+  }
+  await Promise.all([1, 2, 3].map(() => vscode.commands.executeCommand('agentTandem.nextFile')));
+  await waitFor(() => api.changeNavigationState()?.file === last, 'Rapid Next file clicks are serialized');
+  await openMulti();
+  const multiNextFile = captured.files[api.changeNavigationState()!.index % 4]!.path;
+  await vscode.commands.executeCommand('agentTandem.nextFile');
+  await waitFor(() => api.changeNavigationState()?.file === multiNextFile, 'Next file from multi-diff retains all four files');
+  await openSingle();
+  if (process.env.AGENT_TANDEM_NAV_FILES_VISUAL) {
+    await writeFile(path.join(runtime, 'stage.json'), JSON.stringify({ stage: 'files' }));
+    const start = Date.now();
+    while (!await readFile(path.join(runtime, 'files.done'), 'utf8').then(() => true, () => false)) { if (Date.now() - start > 60_000) throw new Error('File toolbar visual test timed out'); await delay(); }
+    assert.equal(api.changeNavigationState()?.file, deleted, 'Rendered title buttons and status-bar file picker reach the chosen file');
+    assert.equal(await readFile(path.join(project, first), 'utf8'), after, 'File navigation does not change workspace bytes');
+    if (process.env.AGENT_TANDEM_NAV_FILES_ONLY) {
+      const report = { success: true, edition: process.env.AGENT_TANDEM_NAV_EDITION, vscode: vscode.version, checks: ['Direct Previous/Next file skips edits', 'Wraparound', 'Rapid clicks serialize', 'Multi-diff retains scope', 'Title toolbar clicks', 'Clickable status-bar file picker', 'Native TypeScript language detection', 'Workspace bytes preserved'] };
+      await writeFile(path.resolve(runtime, '..', '..', 'artifacts', `file-navigation-${process.env.AGENT_TANDEM_NAV_EDITION}.json`), JSON.stringify(report, null, 2));
+      console.log(`FILE_NAVIGATION_TEST ${JSON.stringify(report)}`); return;
+    }
+  }
+  await openSingle();
   for (const [file, line] of [[first, 7], [first, 54], [first, 99], [added, 0], [deleted, 0], [last, 0], [last, 21], [first, 7]] as const) await move('next', file, line);
   for (const [file, line] of [[last, 21], [last, 0], [deleted, 0], [added, 0], [first, 99]] as const) await move('previous', file, line);
   assert.equal(editor.document.getText(), after);
@@ -124,9 +151,15 @@ export async function run() {
   const rendered = await codeLenses(lensEditor.document.uri);
   for (const [index, hunk] of lensHunks.entries()) {
     const row = rendered.filter(lens => lens.range.start.line === hunk.newLine).map(lens => lens.command?.title);
-    assert.deepEqual(row, ['$(check) Accept', '$(discard) Reject', '$(arrow-down) Next change', `Block ${index + 1}/3`],
+    assert.deepEqual(row, ['$(check) Accept', '$(discard) Reject', '$(arrow-down) Next change', '$(chevron-right) Next file', `Block ${index + 1}/3`],
       `block ${index + 1} renders its own Accept/Reject/Next row at line ${hunk.newLine + 1}`);
   }
+  const nextFileLens = rendered.find(lens => lens.command?.command === 'agentTandem.nextFile')!;
+  await vscode.commands.executeCommand(nextFileLens.command!.command, ...nextFileLens.command!.arguments!);
+  await waitFor(() => api.changeNavigationState()?.file === added, 'Inline Next file skips the remaining source blocks');
+  await vscode.commands.executeCommand(nextFileLens.command!.command, ...nextFileLens.command!.arguments!);
+  assert.equal(api.changeNavigationState()?.file, added, 'A stale file-navigation lens cannot jump from another file');
+  await openSingle(first, 0);
   // Cards take over the editor wherever insets work, so the two styles never stack.
   await settings().update('blockActionsStyle', 'auto', vscode.ConfigurationTarget.Global);
   await openSingle(first, 0);

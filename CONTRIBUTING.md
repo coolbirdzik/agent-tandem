@@ -45,6 +45,7 @@ When changing VS Code integration, run the matching host scenario:
 | --- | --- |
 | `npm run test:extension` | Core extension behavior, native diffs, persistence and restart |
 | `npm run test:changes:navigation` | Native diff navigation and review controls |
+| `npm run test:review:webview` | Shared full-file Webview review, actual button clicks and both edition manifests |
 | `npm run test:checkpoints` | Checkpoint creation, restore previews and Undo |
 | `npm run test:external-review:host` | Saved changes from external agents/editors |
 
@@ -58,7 +59,7 @@ CI targets `main`. Its test diagnostics remain available after a failure. Mainta
 - Snapshot bytes and historical diffs stay immutable. Provider history discovery does not rewrite native transcripts or databases.
 - Unknown or mixed change provenance stays visible rather than being assigned to an unverified conversation.
 - Async state updates must remain bound to the current workspace, conversation and review revision.
-- The stable Marketplace build uses CodeLens and released menu locations. Experimental editor controls belong to the local development build; keep the stable fallback working.
+- Every edition defaults to the bundled Monaco Webview review. Preserve complete source models, syntax highlighting, revision-bound inline buttons, scoped navigation and read-only snapshots. Keep the optional native diff and CodeLens actions working.
 
 ## Preview and document UI changes
 

@@ -85,7 +85,7 @@ This creates `agent-tandem-VERSION-preview.vsix` with the local publisher. Rebui
 ## 4. Test and submit
 
 1. Install the upload VSIX in a separate VS Code profile using **Extensions → … → Install from VSIX…**.
-2. Open a trusted test project, verify Review, native diffs, CodeLens block actions, next/previous navigation, History and the usage dashboard. Connect an authenticated CLI to check live chat.
+2. Open a trusted test project, verify Review, Monaco syntax highlighting, colored inline buttons, native diff fallback, next/previous navigation, History and the usage dashboard. Connect an authenticated CLI to check live chat.
 3. Return to [publisher management](https://marketplace.visualstudio.com/manage/publishers/), select your publisher and choose **New extension → Visual Studio Code**.
 4. Upload the `.vsix`, review the listing and complete submission. For later releases, update the existing extension with a higher version.
 
@@ -95,6 +95,6 @@ Marketplace performs its own validation. A successful local package build does n
 
 `npm run dev` / `npm run package` retain experimental editor controls for local development. They must not be uploaded to Marketplace.
 
-`npm run package:marketplace` stages a stable manifest, removes proposed API declarations and experimental menu locations, defaults review actions to CodeLens, and uses editor-title navigation plus the status-bar file picker. It includes runtime bundles, product assets, docs and license notices, writes a SHA-256 checksum, and never installs or publishes the package.
+`npm run package:marketplace` stages a stable manifest and removes proposed API declarations and experimental menu locations. Every edition defaults to Monaco review with syntax highlighting and colored inline buttons. Native diff remains an option. The package includes `review-webview.js`, its generated CSS, the bundled `review-editor-worker.js`, Monaco's license, the review stylesheet, product assets, docs and other license notices, writes a SHA-256 checksum, and never installs or publishes the package.
 
 Reference: [VS Code's proposed API restrictions](https://code.visualstudio.com/api/advanced-topics/using-proposed-api).

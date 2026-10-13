@@ -14,13 +14,13 @@ export function marketplaceManifest(source, { publisher = source.publisher, repo
   manifest.contributes.menus['editor/title'] = [
     ...manifest.contributes.menus['editor/title'] ?? [],
     ...['previous', 'next'].map((direction, index) => ({
-      command: `agentTandem.${direction}Change`, when: 'agentTandem.changeNavigation', group: `navigation@${index + 1}`,
+      command: `agentTandem.${direction}Change`, when: 'agentTandem.changeNavigation', group: `navigation@${index + 4}`,
     })),
   ];
   const settings = manifest.contributes.configuration.properties;
   settings['agentTandem.blockActionsStyle'].default = 'lens';
   settings['agentTandem.blockActionsStyle'].enumDescriptions[0] = 'Use the available review controls; the Marketplace build uses CodeLens.';
-  settings['agentTandem.blockActionsStyle'].description = 'Show Accept, Reject and Next change actions above pending diff blocks using CodeLens.';
+  settings['agentTandem.blockActionsStyle'].description = 'Optional native diff actions use CodeLens. The default Monaco Webview review has colored inline buttons.';
   settings['agentTandem.showFileCounterInEditor'].default = false;
   settings['agentTandem.showFileCounterInEditor'].description = 'Experimental local-build option. In the Marketplace build, use the file counter in the status bar to choose a changed file.';
   if (repositoryUrl) {

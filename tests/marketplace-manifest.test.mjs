@@ -14,7 +14,14 @@ describe('Marketplace packaging', () => {
     expect(result.contributes.menus).not.toHaveProperty('editor/content');
     expect(result.contributes.menus).not.toHaveProperty('multiDiffEditor/content');
     expect(result.contributes.menus['editor/title'].map(item => item.command)).toContain('agentTandem.nextChange');
+    for (const command of ['agentTandem.previousFile', 'agentTandem.nextFile', 'agentTandem.chooseChangedFile']) {
+      expect(source.contributes.menus['editor/title'].filter(item => item.command === command)).toHaveLength(1);
+      expect(result.contributes.menus['editor/title'].filter(item => item.command === command)).toHaveLength(1);
+    }
     expect(result.contributes.configuration.properties['agentTandem.blockActionsStyle'].default).toBe('lens');
+    expect(result.contributes.configuration.properties['agentTandem.reviewEditor'].default).toBe('webview');
+    expect(source.contributes.configuration.properties['agentTandem.blockActionsStyle'].default).toBe('lens');
+    expect(result.contributes.configuration.properties['agentTandem.reviewEditor']).toEqual(source.contributes.configuration.properties['agentTandem.reviewEditor']);
     expect(result.contributes.configuration.properties['agentTandem.showFileCounterInEditor'].default).toBe(false);
     expect(result).not.toHaveProperty('scripts');
     expect(result).not.toHaveProperty('dependencies');

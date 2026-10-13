@@ -6,6 +6,7 @@ import { runDemo } from './core/demo';
 import type { Session, ViewState } from './core/types';
 import { openChanges, TandemView, selectionFrom, SnapshotDocuments } from './host/preview';
 import { openReviewChanges, ReviewDocuments, reviewSnapshotUri } from './host/review-editor';
+import { ReviewWebview } from './host/review-webview';
 import { registerChangeNavigation, type ChangeNavigationState } from './host/change-navigation';
 import { ReviewHunkActions } from './host/review-hunk-actions';
 import { probeCodex, probeClaude, findExecutable, cliInfo, installedCLIs } from './providers/probe';
@@ -50,6 +51,7 @@ import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeleti
 
 export interface ExtensionAPI {
   changeNavigationState(): ChangeNavigationState | undefined;
+  reviewWebviewState(): import('./core/review-webview').ReviewEditorState | undefined;
   sessions(): Session[];
   runDemo(delay?: number): Promise<Session>;
   stop(): void;
@@ -98,6 +100,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let externalSwitching = false;
   const state: ViewState = { sessions: [], running: false, providers: [], screen: 'changes' };
   let hunkActions: ReviewHunkActions | undefined;
+  let reviewEditor: ReviewWebview | undefined;
   state.composeProvider = 'Codex';
   let chatAbort: AbortController | undefined;
   let liveConversation: ConversationContent | undefined;
@@ -187,7 +190,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
     async (command, value) => vscode.commands.executeCommand(command, value), report);
-  function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); quotaBar.update(state); trackingBar.update(state); settings.update(); }
+  function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state); trackingBar.update(state); settings.update(); }
   async function refreshUsageDashboard(): Promise<void> {
     if (disposed) return;
     if (usageJob) return usageJob;
@@ -968,7 +971,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }
   register('agentTandem.previewReview', async value => {
     const request = reviewRequest(value), version = ++uiGeneration;
-    await openReviewChanges(reviews, request, changeNavigation, () => !disposed && request.project === state.project && version === uiGeneration);
+    const current = () => !disposed && request.project === state.project && version === uiGeneration;
+    if (vscode.workspace.getConfiguration('agentTandem').get<string>('reviewEditor', 'webview') === 'native') await openReviewChanges(reviews, request, changeNavigation, current);
+    else await reviewEditor!.open(request, current);
   });
   register('agentTandem.closeReviewPreview', () => { state.reviewPreview = undefined; update(); });
   register('agentTandem.refreshReview', async () => { if (state.review?.externalTracking) await captureExternalReview(); else await refreshReview(state.project, true); });
@@ -1069,6 +1074,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     () => ({ project: state.project, review: state.review, busy: !!chatAbort || reviewing || !!state.review?.busy }),
     decideReview, report);
   context.subscriptions.push(hunkActions);
+  reviewEditor = new ReviewWebview(context.extensionUri, reviews,
+    () => ({ project: state.project, review: state.review, busy: !!chatAbort || reviewing || !!externalJob || externalSwitching }),
+    async (command, value) => vscode.commands.executeCommand(command, value),
+    request => openReviewChanges(reviews, request, changeNavigation, () => !disposed && request.project === state.project && request.revision === state.review?.revision));
+  context.subscriptions.push(reviewEditor);
   function checkpointRequest(value: unknown) {
     if (!value || typeof value !== 'object') throw new Error('Choose a message checkpoint.');
     const request = value as { project: string; id: string; token?: string };
@@ -1202,6 +1212,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   return {
     usageDashboard: dashboardState,
     changeNavigationState: () => changeNavigation.state(),
+    reviewWebviewState: () => reviewEditor?.state,
     sessions: () => state.sessions, runDemo: run, stop: () => cancel?.abort(), history,
     syncConversations, openConversation, conversation: () => state.conversation,
     viewState: () => state, viewResolved: () => preview.resolved,

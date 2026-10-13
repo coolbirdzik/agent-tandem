@@ -11,7 +11,8 @@ const extensionManifest = JSON.parse(await readFile(path.join(process.env.AGENT_
 const extensionId = `${extensionManifest.publisher}.${extensionManifest.name}`;
 const profile = path.join(runtime, 'test-profiles', `${packaged ? 'packaged' : 'source'}-${Date.now()}`);
 await mkdir(path.join(profile, 'User'), { recursive: true });
-await writeFile(path.join(profile, 'User/settings.json'), JSON.stringify({ 'window.restoreWindows': 'none', 'files.hotExit': 'off' }));
+// This suite covers the native editor option; test-review-webview covers the default.
+await writeFile(path.join(profile, 'User/settings.json'), JSON.stringify({ 'window.restoreWindows': 'none', 'files.hotExit': 'off', 'agentTandem.reviewEditor': 'native' }));
 const reportDirectory = path.join(root, 'artifacts', ...(packaged ? ['packaged'] : []));
 await mkdir(path.join(runtime, 'workspace'), { recursive: true });
 await mkdir(path.join(root, 'artifacts'), { recursive: true });

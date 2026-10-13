@@ -33,6 +33,7 @@ export class ChangeNavigation {
   constructor(private context: vscode.ExtensionContext) {
     this.storageFile = path.join((context.storageUri ?? context.globalStorageUri).fsPath, 'change-navigation.json');
     this.counter.name = 'AgentTandem change file count';
+    this.counter.command = 'agentTandem.chooseChangedFile';
     context.subscriptions.push(this.counter, this.badge, this.changes, this.opening,
       vscode.window.tabGroups.onDidChangeTabs(event => { this.update(); if (event.closed.length) void this.persist(); }),
       vscode.window.tabGroups.onDidChangeTabGroups(() => this.update()),
@@ -45,6 +46,11 @@ export class ChangeNavigation {
       this.queue = job.catch(() => undefined);
       return job;
     }));
+    for (const direction of ['previous', 'next'] as const) context.subscriptions.push(vscode.commands.registerCommand(`agentTandem.${direction}File`, (anchor?: unknown) => {
+      const job = this.queue.then(() => this.navigateFile(direction, anchor));
+      this.queue = job.catch(() => undefined); return job;
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('agentTandem.chooseChangedFile', () => this.chooseFile()));
     this.update();
   }
   async restore() {
@@ -119,10 +125,11 @@ export class ChangeNavigation {
     const showBadge = vscode.workspace.getConfiguration('agentTandem').get<boolean>('showFileCounterInEditor', true);
     this.badge.update(showBadge && editor && owns(editor.document.uri) && state ? editor : undefined, state);
     void vscode.commands.executeCommand('setContext', 'agentTandem.changeNavigation', !!state);
+    void vscode.commands.executeCommand('setContext', 'agentTandem.multipleChangedFiles', !!state && state.total > 1);
     this.changes.fire();
     if (!state) { this.counter.hide(); return; }
     this.counter.text = `$(diff) File ${state.index}/${state.total}`;
-    this.counter.tooltip = `${state.file}\nPrevious/Next change continues through all ${state.total} changed files.`;
+    this.counter.tooltip = `${state.file}\nClick to choose a changed file. Previous/Next file skips directly between files; Previous/Next change follows individual edits.`;
     this.counter.accessibilityInformation = { label: `AgentTandem changed file ${state.index} of ${state.total}: ${state.file}` };
     this.counter.show();
   }
@@ -204,6 +211,35 @@ export class ChangeNavigation {
       await vscode.commands.executeCommand('workbench.action.compareEditor.previousChange');
       if (direction === 'next') await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
     }
+    this.update();
+  }
+  private async navigateFile(direction: 'previous' | 'next', anchor?: unknown) {
+    const tab = activeTab(), scope = this.scope(tab);
+    if (!tab || !scope || scope.files.length < 2) return;
+    const current = this.index(scope, tab), comparison = scope.files[current];
+    // Editor-title menus supply a resource URI; CodeLens supplies a review anchor.
+    if (anchor instanceof vscode.Uri) {
+      if (owns(anchor) && comparison && !same(anchor, comparison.original) && !same(anchor, comparison.modified)) return;
+      anchor = undefined;
+    }
+    // A delayed CodeLens click must still belong to this file and revision.
+    if (anchor !== undefined) {
+      if (!anchor || typeof anchor !== 'object') return;
+      const request = anchor as { file?: unknown; project?: unknown; revision?: unknown };
+      if (request.file !== comparison?.file || request.project !== comparison?.review?.project || request.revision !== comparison?.review?.revision) return;
+    }
+    const index = (current + (direction === 'next' ? 1 : -1) + scope.files.length) % scope.files.length;
+    await this.showFile(scope, index);
+    // Direct file review replaces the overview, retaining its complete scope.
+    // Keeping the reused multi-diff pane alive can leave its embedded editor
+    // focused after returning to the overview in recent VS Code builds.
+    if (kind(tab) === 'multi' && activeTab() !== tab && vscode.window.tabGroups.all.some(group => group.tabs.includes(tab))) await vscode.window.tabGroups.close(tab, true);
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !same(editor.document.uri, scope.files[index]!.modified)) return;
+    editor.selection = new vscode.Selection(0, 0, 0, 0);
+    // Start at the first change even when it begins on line one.
+    await vscode.commands.executeCommand('workbench.action.compareEditor.previousChange');
+    await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
     this.update();
   }
 }

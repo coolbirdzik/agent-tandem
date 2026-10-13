@@ -26,6 +26,10 @@ interface PendingReview {
 }
 interface RevertFile { original: ReviewFile; after?: string; remaining?: ReviewFile }
 export interface ReviewPreview { path: string; patch?: string; notice?: string; before: string; after: string }
+export interface ReviewWebviewFile extends ReviewFile {
+  beforeText?: string; afterText?: string; hunks: ReviewHunk[];
+  beforeSize: number; afterSize: number; notice?: string;
+}
 export interface CheckpointPlan { target: string; current: string; revision: string; files: ReviewFile[] }
 
 /** Workspace changes are already applied. Review owns snapshots and decisions only. */
@@ -527,6 +531,22 @@ export class ReviewStore {
     const files = value.files.filter(file => (!request.file || file.path === request.file) && (!request.group || reviewGroup(file) === request.group));
     if (!files.length) throw new Error('Choose a pending file change.');
     return files.map(file => ({ ...file }));
+  }); }
+  /** Bounded, immutable text for the shared Webview review editor. */
+  webviewFile(request: ReviewRequest) { return this.serial(async (): Promise<ReviewWebviewFile> => {
+    if (!request.file) throw new Error('Choose a file change.');
+    const value = await this.load(request.project), file = this.selected(value, request)[0]!;
+    const [left, right] = await Promise.all([file.before, file.after].map(id => id ? this.history.inspectBlob(id) : { size: 0, binary: false }));
+    const result: ReviewWebviewFile = { ...file, beforeSize: left!.size, afterSize: right!.size, hunks: [] };
+    if (file.binary || left!.binary || right!.binary) return { ...result, notice: 'Binary file. Review the whole file or open its saved snapshots in the native editor.' };
+    if (left!.size + right!.size > 4 * 1024 * 1024) return { ...result, notice: 'Large file. Review the whole file or open its full saved snapshots in the native editor.' };
+    try {
+      const data = await this.hunkData(file);
+      return { ...result, beforeText: data.before, afterText: data.after, hunks: data.hunks };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('computing changes took too long')) return { ...result, notice: error.message };
+      throw error;
+    }
   }); }
   preview(request: ReviewRequest) { return this.serial(async (): Promise<ReviewPreview> => {
     const value = await this.load(request.project);

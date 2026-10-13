@@ -107,7 +107,7 @@ export class ReviewHunkActions implements vscode.Disposable {
       const hunks = await this.hunks(project, review.revision, file.path);
       // A later turn or decision can land while this provider awaits.
       if (!this.current(project, review.revision, file.path, editor)) return;
-      return { project, revision: review.revision, file: file.path, files: review.files.length, hunks };
+      return { project, revision: review.revision, file: file.path, files: this.navigation.comparisons().length, hunks };
     } catch {
       // Binary/large/stale files retain the existing file-level sidebar actions.
       return;
@@ -166,7 +166,7 @@ export class ReviewHunkActions implements vscode.Disposable {
       const request = { project, revision: review.revision, file, hunk: hunk.id, line: hunk.newLine };
       const collection = blocks;
       try {
-        const card = new ReviewBlockCard(editor, hunk, hunks.indexOf(hunk), hunks.length, hunks.length > 1 || review.files.length > 1,
+        const card = new ReviewBlockCard(editor, hunk, hunks.indexOf(hunk), hunks.length, hunks.length > 1 || this.navigation.comparisons().length > 1,
           action => { if (action === 'next') void vscode.commands.executeCommand('agentTandem.nextChange'); else void this.act(editor, request, action === 'revert'); },
           () => collection.cards.delete(hunk.id));
         blocks.cards.set(hunk.id, card);

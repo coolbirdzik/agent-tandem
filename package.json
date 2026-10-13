@@ -91,6 +91,24 @@
         "icon": "$(arrow-down)"
       },
       {
+        "command": "agentTandem.previousFile",
+        "title": "Previous file",
+        "icon": "$(chevron-left)",
+        "enablement": "agentTandem.multipleChangedFiles"
+      },
+      {
+        "command": "agentTandem.nextFile",
+        "title": "Next file",
+        "icon": "$(chevron-right)",
+        "enablement": "agentTandem.multipleChangedFiles"
+      },
+      {
+        "command": "agentTandem.chooseChangedFile",
+        "title": "Choose changed file",
+        "icon": "$(files)",
+        "enablement": "agentTandem.changeNavigation"
+      },
+      {
         "command": "agentTandem.open",
         "title": "AgentTandem: Open Conversations"
       },
@@ -227,6 +245,23 @@
     },
     "menus": {
       "view/title": [],
+      "editor/title": [
+        {
+          "command": "agentTandem.previousFile",
+          "when": "agentTandem.multipleChangedFiles",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentTandem.chooseChangedFile",
+          "when": "agentTandem.changeNavigation",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agentTandem.nextFile",
+          "when": "agentTandem.multipleChangedFiles",
+          "group": "navigation@3"
+        }
+      ],
       "editor/content": [
         {
           "command": "agentTandem.previousChange",
@@ -252,6 +287,18 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "agentTandem.previousFile",
+          "when": "agentTandem.multipleChangedFiles"
+        },
+        {
+          "command": "agentTandem.nextFile",
+          "when": "agentTandem.multipleChangedFiles"
+        },
+        {
+          "command": "agentTandem.chooseChangedFile",
+          "when": "agentTandem.changeNavigation"
+        },
         {
           "command": "agentTandem.acceptCurrentChange",
           "when": "false"
@@ -279,6 +326,16 @@
       ]
     },
     "keybindings": [
+      {
+        "command": "agentTandem.previousFile",
+        "key": "alt+pageup",
+        "when": "agentTandem.multipleChangedFiles && editorTextFocus"
+      },
+      {
+        "command": "agentTandem.nextFile",
+        "key": "alt+pagedown",
+        "when": "agentTandem.multipleChangedFiles && editorTextFocus"
+      },
       {
         "command": "agentTandem.acceptCurrentChange",
         "key": "alt+y",
@@ -318,6 +375,19 @@
           "default": "day",
           "description": "Default calendar grouping for the AgentTandem usage dashboard. Weeks start on Monday."
         },
+        "agentTandem.reviewEditor": {
+          "type": "string",
+          "enum": [
+            "webview",
+            "native"
+          ],
+          "default": "webview",
+          "enumDescriptions": [
+            "Use the Monaco diff editor with syntax highlighting and colored inline Accept, Reject and navigation buttons in every edition.",
+            "Use VS Code's native diff editor with the available in-editor review controls."
+          ],
+          "description": "Editor used to review pending changes. The Webview review editor works without experimental APIs."
+        },
         "agentTandem.blockActionsStyle": {
           "type": "string",
           "enum": [
@@ -330,8 +400,8 @@
             "Always use the compact Accept | Reject | Next change code lens row.",
             "No in-editor block actions; review files from the AgentTandem sidebar."
           ],
-          "default": "auto",
-          "description": "In-editor actions above each pending change block in AgentTandem diff editors. Opening a review enables diffEditor.codeLens so the fallback row renders."
+          "default": "lens",
+          "description": "Block actions in the native diff editor. Native mode uses CodeLens. The default Monaco Webview review uses colored inline buttons. Opening a native review enables diffEditor.codeLens."
         },
         "agentTandem.showFileCounterInEditor": {
           "type": "boolean",
@@ -452,6 +522,7 @@
     "test": "vitest run",
     "test:extension": "npm run build && node scripts/test-extension.mjs",
     "test:changes:navigation": "npm run build && node scripts/test-change-navigation.mjs",
+    "test:review:webview": "npm run build && node scripts/test-review-webview.mjs",
     "test:checkpoints": "npm run build && node scripts/test-checkpoints.mjs",
     "test:review:live": "npm run build && node scripts/test-review-live.mjs",
     "test:review:large": "npm run build && node scripts/test-review-live.mjs --large",
@@ -499,6 +570,7 @@
     "diff": "9.0.0",
     "dompurify": "3.4.16",
     "ignore": "^7.0.5",
-    "marked": "18.1.0"
+    "marked": "18.1.0",
+    "monaco-editor": "0.57.0"
   }
 }

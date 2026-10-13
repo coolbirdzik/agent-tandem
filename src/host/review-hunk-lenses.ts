@@ -32,6 +32,8 @@ export class ReviewHunkLenses implements vscode.CodeLensProvider, vscode.Disposa
       ];
       if (hunks.length > 1 || target.files > 1) lenses.push(new vscode.CodeLens(range,
         { title: '$(arrow-down) Next change', tooltip: 'Go to the next change, continuing into the next changed file', command: 'agentTandem.nextChange' }));
+      if (target.files > 1) lenses.push(new vscode.CodeLens(range,
+        { title: '$(chevron-right) Next file', tooltip: 'Skip the remaining edits in this file and open the next changed file', command: 'agentTandem.nextFile', arguments: [{ project, revision, file }] }));
       lenses.push(new vscode.CodeLens(range, { title: `Block ${index + 1}/${hunks.length}`, command: '' }));
       return lenses;
     });

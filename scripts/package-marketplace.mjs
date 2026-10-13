@@ -41,7 +41,7 @@ try {
   }
   // Only ship runtime bundles and their notices, never test bundles or source maps.
   await mkdir(path.join(stage, 'dist'));
-  for (const file of ['extension.js', 'webview.js', 'settings.js', 'claude-history.mjs', 'claude-sdk-LICENSE.md', 'diff-LICENSE.txt', 'ignore-LICENSE.txt', 'jsonc-parser-LICENSE.md', 'codicons-LICENSE.txt', 'marked-LICENSE.md', 'dompurify-LICENSE.txt']) {
+  for (const file of ['extension.js', 'webview.js', 'review-webview.js', 'review-webview.css', 'review-editor-worker.js', 'monaco-LICENSE.txt', 'monaco-ThirdPartyNotices.txt', 'settings.js', 'claude-history.mjs', 'claude-sdk-LICENSE.md', 'diff-LICENSE.txt', 'ignore-LICENSE.txt', 'jsonc-parser-LICENSE.md', 'codicons-LICENSE.txt', 'marked-LICENSE.md', 'dompurify-LICENSE.txt']) {
     await cp(path.join(root, 'dist', file), path.join(stage, 'dist', file));
   }
   if (release) {
