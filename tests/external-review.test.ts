@@ -15,9 +15,14 @@ vi.mock('node:fs/promises', async importOriginal => {
 const folders: string[] = [];
 const execute = promisify(execFile);
 afterEach(async () => { vi.restoreAllMocks(); vi.mocked(fs.readFile).mockReset(); for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
-async function fixture() {
+async function fixture(linkedProject = false) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'agent-tandem-external-')); folders.push(directory);
-  const project = path.join(directory, 'project'); await mkdir(project);
+  let project = path.join(directory, 'project'); await mkdir(project);
+  if (linkedProject) {
+    const alias = path.join(directory, 'project-alias');
+    await symlink(project, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    project = alias;
+  }
   const store = new ReviewStore(path.join(directory, 'reviews'));
   const set = (name: string, text: string) => writeFile(path.join(project, name), text);
   const get = (name: string) => readFile(path.join(project, name), 'utf8');
@@ -63,17 +68,25 @@ describe('External change tracking', () => {
     expect((await f.store.preview({ project: f.project, revision: next.revision, file: 'blocked.ts' })).before).toBe('before\n');
     expect(next.notice).not.toContain('Skipped');
   });
-  it('continues around a workspace read error, preserves pending bytes and retries the path', async () => {
-    const f = await fixture(); await f.set('blocked.ts', 'before\n');
+  it.each([false, true])('continues around a workspace read error, preserves pending bytes and retries the path (aliased project: %s)', async linkedProject => {
+    const f = await fixture(linkedProject); await f.set('blocked.ts', 'before\n');
     await f.store.initializeExternalTracking(f.project);
     await f.set('blocked.ts', 'pending\n'); const pending = await f.store.scanExternal(f.project);
     await f.set('blocked.ts', 'after recovery\n'); await f.set('source.ts', 'healthy edit\n');
     const original = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    // Capture resolves the project first. Temp paths on CI can contain aliases,
+    // so match the same canonical path instead of the fixture's spelling.
+    const blockedPath = await original.realpath(path.join(f.project, 'blocked.ts'));
+    let blockedReads = 0;
     const read = vi.mocked(fs.readFile).mockImplementation((...args: Parameters<typeof fs.readFile>) => {
-      if (String(args[0]) === path.join(f.project, 'blocked.ts')) return Promise.reject(Object.assign(new Error('Access denied'), { code: 'EACCES', path: String(args[0]) }));
+      if (String(args[0]) === blockedPath) {
+        blockedReads++;
+        return Promise.reject(Object.assign(new Error('Access denied'), { code: 'EACCES', path: blockedPath }));
+      }
       return original.readFile(...args);
     });
     const captured = await f.store.scanExternal(f.project);
+    expect(blockedReads).toBeGreaterThan(0);
     expect(captured.externalTracking).toBe(true);
     expect(captured.files.find(file => file.path === 'blocked.ts')).toEqual(pending.files[0]);
     expect(captured.files.map(file => file.path)).toEqual(['blocked.ts', 'source.ts']);
