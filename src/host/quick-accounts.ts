@@ -1,0 +1,109 @@
+import * as vscode from 'vscode';
+import { ACCOUNT_PROVIDERS, accountProviderName, isChatAccount, type AccountProvider } from '../core/account-providers';
+import { profileIdentityKey } from '../core/account-profiles';
+import type { UsageDashboardState } from '../core/usage-dashboard';
+import type { ProviderAccountStatus } from '../providers/account-status';
+import { bankedResetDetails } from '../core/banked-resets';
+
+interface Item extends vscode.QuickPickItem { action?: 'switch' | 'dashboard' | 'manage' | 'refresh' | 'log'; id?: string }
+interface Dependencies {
+  state(): UsageDashboardState; publish(): Promise<void>; refresh(): Promise<void>;
+  switch(id: string): Promise<void>; open(page: 'dashboard' | 'accounts'): Promise<void>; report(error: unknown): void;
+}
+export function quickQuota(status?: ProviderAccountStatus) {
+  const windows = status?.quota?.windows;
+  if (windows?.length) return [...windows.map(window => `${window.label} ${Math.round(Math.max(0, 100 - window.usedPercent) * 10) / 10}% left`), ...(status?.quota?.bankedResets?.availableCount ? [`↻ ${status.quota.bankedResets.availableCount}`] : [])].join(' · ');
+  return status?.quota?.credits || status?.quota?.detail || status?.error || (status?.status === 'loading' ? 'Loading quota…' : 'Quota unavailable');
+}
+function quotaDetail(status?: ProviderAccountStatus) {
+  const reset = status?.quota?.windows.filter(window => window.resetsAt).map(window => `${window.label} resets ${new Date(window.resetsAt!).toLocaleString()}`).join(' · ');
+  return [status?.account?.plan, reset, ...bankedResetDetails(status?.quota?.bankedResets).slice(1)].filter(Boolean).join(' · ');
+}
+/** Native popup; remains open for quota refresh, switches and live host progress. */
+export class QuickAccounts implements vscode.Disposable {
+  private picker?: vscode.QuickPick<Item>;
+  private subscriptions: vscode.Disposable[] = [];
+  private provider?: AccountProvider;
+  private working = false;
+  private logOpen = false;
+  private generation = 0;
+  constructor(private deps: Dependencies) {}
+  async show(provider?: AccountProvider) {
+    this.provider = provider; this.logOpen = false;
+    if (this.picker) { this.update(); this.picker.show(); return; }
+    const picker = vscode.window.createQuickPick<Item>(); this.picker = picker;
+    picker.matchOnDescription = true; picker.matchOnDetail = true;
+    const refresh: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('refresh'), tooltip: 'Refresh account quota' };
+    picker.buttons = [refresh];
+    this.subscriptions = [picker.onDidHide(() => this.dispose()),
+      picker.onDidTriggerButton(() => { if (!this.working) void this.run(() => this.deps.refresh()); }),
+      picker.onDidAccept(() => {
+        const item = picker.selectedItems[0];
+        if (!item?.action) return;
+        if (item.action === 'dashboard' || item.action === 'manage') { const page = item.action === 'dashboard' ? 'dashboard' : 'accounts'; this.dispose(); void this.deps.open(page).catch(this.deps.report); }
+        else if (item.action === 'log') { this.logOpen = !this.logOpen; this.update(); }
+        else if (this.working || this.deps.state().accountsBusy) return;
+        else if (item.action === 'refresh') void this.run(() => this.deps.refresh());
+        else if (item.id) {
+          const state = this.deps.state(), profile = state.managedAccounts?.find(row => row.id === item.id);
+          if (!profile || profile.active || state.accountSwitchBlocked) return;
+          this.logOpen = false; void this.run(() => this.deps.switch(item.id!));
+        }
+      })];
+    this.update(); picker.show();
+    // Publish saved profiles immediately, then read quota without opening Settings/history.
+    await this.run(async () => { await this.deps.publish(); this.update(); await this.deps.refresh(); });
+  }
+  private async run(job: () => Promise<void>) {
+    if (this.working) return;
+    this.working = true; const generation = this.generation; this.update();
+    try { await job(); } catch (error) { this.deps.report(error); }
+    finally { if (generation === this.generation) { this.working = false; this.update(); } }
+  }
+  update() {
+    const picker = this.picker; if (!picker) return;
+    const state = this.deps.state(), operation = state.accountSwitch, switching = operation?.status === 'running';
+    picker.busy = this.working || !!state.accountsBusy;
+    picker.title = switching ? `Switching · ${operation.label || accountProviderName(operation.provider || 'Codex')}` : 'AgentTandem · Quota & accounts';
+    picker.placeholder = switching ? operation.logs.at(-1)?.message || 'Switching account…' : state.accountSwitchBlocked || 'Select an account to switch · search by app or email';
+    const items: Item[] = [];
+    const providers = [...ACCOUNT_PROVIDERS].sort((a, b) => Number(b === this.provider) - Number(a === this.provider));
+    for (const provider of providers) {
+      const profiles = (state.managedAccounts || []).filter(row => row.provider === provider).sort((a, b) => Number(!!b.active) - Number(!!a.active) || a.label.localeCompare(b.label));
+      const native = isChatAccount(provider) ? state.accounts?.[provider] : undefined;
+      if (!profiles.length && !native && provider !== this.provider) continue;
+      items.push({ label: accountProviderName(provider), kind: vscode.QuickPickItemKind.Separator });
+      const currentId = profileIdentityKey(provider, native?.account);
+      if (native && !profiles.some(row => row.active || (currentId && currentId === profileIdentityKey(provider, row.identity)))) {
+        items.push({ label: `$(check) ${native.account?.email || 'Current CLI'}`, description: quickQuota(native), detail: [quotaDetail(native), 'Active · Save current sign-in in Manage accounts'].filter(Boolean).join(' · ') });
+      }
+      for (const profile of profiles) {
+        const active = profile.active || !!currentId && currentId === profileIdentityKey(provider, profile.identity);
+        const status = active && native?.status === 'ready' ? native : profile.status;
+        const identity = status?.account || profile.identity;
+        const blocked = state.accountSwitchBlocked || (state.accountsBusy ? 'Account operation in progress' : undefined);
+        items.push({ id: profile.id, label: `$(${active ? 'check' : switching && operation.profileId === profile.id ? 'loading~spin' : 'account'}) ${profile.label}`,
+          description: quickQuota(status), detail: [identity?.email, quotaDetail(status), active ? 'Active' : blocked || (isChatAccount(provider) ? 'Select to switch default CLI' : 'Close IDE windows, then select to switch')].filter(Boolean).join(' · '),
+          ...(!active && !blocked && !this.working ? { action: 'switch' as const } : {}) });
+      }
+    }
+    if (!items.length) items.push({ label: 'No saved accounts yet', detail: 'Open Manage accounts to save a sign-in.' });
+    if (operation) {
+      items.push({ label: 'Switch activity', kind: vscode.QuickPickItemKind.Separator });
+      items.push({ label: `$(${switching ? 'loading~spin' : operation.status === 'success' ? 'check' : 'error'}) ${switching ? 'Switching…' : operation.status === 'success' ? 'Account switched' : operation.outcome === 'switched' ? 'Switched · refresh failed' : 'Switch failed'}`,
+        description: operation.label, detail: operation.error || operation.notice || operation.logs.at(-1)?.message, action: switching ? undefined : 'log' });
+      const logs = this.logOpen ? operation.logs : switching ? operation.logs.slice(-3) : [];
+      for (const log of logs) items.push({ label: `$(${log.level === 'error' ? 'error' : log.level === 'success' ? 'check' : 'circle-small-filled'}) ${log.message}`, description: new Date(log.at).toLocaleTimeString() });
+    }
+    items.push({ label: 'Menu', kind: vscode.QuickPickItemKind.Separator },
+      { label: '$(dashboard) Open dashboard', action: 'dashboard', alwaysShow: true },
+      { label: '$(settings-gear) Manage accounts', action: 'manage', alwaysShow: true },
+      { label: '$(refresh) Refresh quota', action: 'refresh', alwaysShow: true });
+    const selected = picker.activeItems[0]; picker.items = items;
+    if (selected) { const same = items.find(row => selected.id ? row.id === selected.id : row.label === selected.label); if (same) picker.activeItems = [same]; }
+  }
+  dispose() {
+    ++this.generation; const picker = this.picker; this.picker = undefined; this.working = false;
+    for (const subscription of this.subscriptions.splice(0)) subscription.dispose(); picker?.dispose();
+  }
+}

@@ -27,7 +27,7 @@ export class SettingsView implements vscode.Disposable {
       try {
         if (!data || typeof data !== 'object') throw new Error('Invalid settings request.');
         if (data.type === 'ready') { this.update(true); if (this.page !== 'dashboard') await webview.postMessage({ type: 'page', page: this.page }); return; }
-        const commands: Record<string, string> = { accountAction: 'agentTandem.accountAction', refresh: 'agentTandem.refreshUsageDashboard', preferences: 'agentTandem.setDashboardPreferences', chat: 'agentTandem.open', clis: 'agentTandem.manageCLIs', vscodeSettings: 'agentTandem.openVSCodeSettings', storage: 'agentTandem.refreshStorage', previewCleanup: 'agentTandem.previewStorageCleanup', cleanup: 'agentTandem.cleanupStorage', revealStorage: 'agentTandem.revealStorage', previewHistoryDeletion: 'agentTandem.previewHistoryDeletion', deleteHistory: 'agentTandem.deleteHistory' };
+        const commands: Record<string, string> = { usageAttribution: 'agentTandem.usageAttribution', accountAction: 'agentTandem.accountAction', refresh: 'agentTandem.refreshUsageDashboard', preferences: 'agentTandem.setDashboardPreferences', chat: 'agentTandem.open', clis: 'agentTandem.manageCLIs', vscodeSettings: 'agentTandem.openVSCodeSettings', storage: 'agentTandem.refreshStorage', previewCleanup: 'agentTandem.previewStorageCleanup', cleanup: 'agentTandem.cleanupStorage', revealStorage: 'agentTandem.revealStorage', previewHistoryDeletion: 'agentTandem.previewHistoryDeletion', deleteHistory: 'agentTandem.deleteHistory' };
         if (!Object.hasOwn(commands, data.type)) throw new Error('Unsupported settings request.');
         await this.invoke(commands[data.type]!, data.value);
       } catch (error) { this.report(error); }
@@ -39,7 +39,7 @@ export class SettingsView implements vscode.Disposable {
   update(force = false) {
     if (!this.panel) return;
     const state = this.state();
-    const signature = JSON.stringify([state.status, state.data?.updatedAt, state.error, state.accounts, state.storage, state.preferences, state.quotaHistory, state.quotaHistoryError, state.quotaBaselines, state.quotaTicks, state.managedAccounts, state.accountsBusy, state.accountsError, state.accountsNotice, state.accountSwitch, state.accountSwitchBlocked, state.conversationTitles]);
+    const signature = JSON.stringify([state.status, state.data?.updatedAt, state.error, state.accounts, state.storage, state.preferences, state.activeProvider, state.quotaHistory, state.quotaHistoryError, state.quotaBaselines, state.quotaTicks, state.managedAccounts, state.accountsBusy, state.accountsError, state.accountsNotice, state.accountSwitch, state.accountSwitchBlocked, state.conversationTitles, state.attributionBusy, state.attributionError, state.attributionNotice]);
     // Chat streaming, conversation sync and review capture don't change usage.
     if (!force && signature === this.lastUpdate && state.data === this.lastData) return;
     this.lastUpdate = signature; this.lastData = state.data;

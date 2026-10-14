@@ -25,6 +25,70 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
+  it('previews explicit history scopes, labels inferred usage and sends reversible assignments', () => {
+    const account = usageAccount('Codex', { signedIn: true, email: 'history@test.invalid', method: 'ChatGPT' })!;
+    const days = [{ ...row('2026-10-14', 'Codex', 'model', 200), account, accountSource: 'inferred' as const }, row('2026-10-14', 'Codex', 'model', 300)];
+    const fixture: UsageDashboardState = { ...value, accounts: { Codex: { status: 'ready', account: { signedIn: true, email: account.email, method: 'ChatGPT' } } }, data: { ...value.data!, days,
+      conversations: [{ key: 'Codex:session', id: 'session', provider: 'Codex', firstAt: 1, lastAt: 2, days }], assignments: [{ id: 'saved', provider: 'Codex', conversationId: 'session', account }] } };
+    render(fixture); choose('filter-range', 'all');
+    expect(document.querySelector('#account-groups')!.textContent).toContain('Inferred from session creator: 200 tokens');
+    choose('attribution-conversation', 'session'); choose('attribution-account', account.id);
+    expect(document.querySelector('#attribution-preview')!.textContent).toContain('500 tokens');
+    expect((document.querySelector('#attribution-save') as HTMLButtonElement).disabled).toBe(false);
+    document.querySelector<HTMLFormElement>('#attribution-form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'usageAttribution', value: { action: 'assign', scope: { provider: 'Codex', conversationId: 'session', from: undefined, to: undefined }, accountId: account.id } });
+    choose('attribution-account', UNKNOWN_ACCOUNT);
+    document.querySelector<HTMLFormElement>('#attribution-form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(postMessage.mock.lastCall![0].value.accountId).toBeNull();
+    document.querySelector<HTMLButtonElement>('#attribution-assignments button')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'usageAttribution', value: { action: 'remove', id: 'saved' } });
+    render({ ...fixture, attributionBusy: true });
+    expect((document.querySelector('#attribution-save') as HTMLButtonElement).disabled).toBe(true);
+    expect((document.querySelector('#attribution-conversation') as HTMLSelectElement).value).toBe('session');
+    expect(document.querySelector('#attribution-status')!.textContent).toContain('Saving');
+    render({ ...fixture, attributionError: 'Could not write assignments.' });
+    expect(document.querySelector<HTMLElement>('#attribution-error')!.hidden).toBe(false);
+    expect(document.querySelector('#attribution-error')!.textContent).toContain('Could not write');
+    choose('attribution-conversation', '');
+    expect((document.querySelector('#attribution-save') as HTMLButtonElement).disabled).toBe(true);
+  });
+  it('previews distinct agent icons and switches appearance without losing selected details', () => {
+    render();
+    expect(document.querySelector('#status-bar-preview .codicon-terminal')).not.toBeNull();
+    expect(document.querySelector('#status-bar-preview .codicon-sparkle')).not.toBeNull();
+    choose('status-bar-style', 'icons');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { style: 'icons' } } });
+    const items = [...document.querySelectorAll<HTMLElement>('.status-bar-preview-item')];
+    expect(items).toHaveLength(2); expect(items.every(item => item.textContent === '')).toBe(true);
+    expect(items[1]!.getAttribute('aria-label')).toContain('Claude Code');
+    expect(items[1]!.title).toContain('5h: 75% remaining');
+    const quota = document.querySelector<HTMLInputElement>('[data-status-field="quota"]')!;
+    expect(quota.disabled).toBe(true); expect(quota.checked).toBe(true);
+    choose('status-bar-style', 'text');
+    expect(quota.disabled).toBe(false); expect(quota.checked).toBe(true);
+    expect(document.querySelectorAll('#status-bar-preview .codicon-dashboard')).toHaveLength(2);
+    expect(document.querySelector('#status-bar-preview')!.textContent).toContain('Claude Code · 5h 75%');
+  });
+  it('customizes both status items through Preferences with an accurate preview and host persistence requests', () => {
+    render({ ...value, activeProvider: 'Claude' });
+    expect(document.querySelector('#status-bar-preview')!.textContent).toContain('Codex');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toContain('Claude Code · 5h 75%');
+    choose('status-bar-providers', 'claude');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { providers: 'claude' } } });
+    expect(document.querySelector('#status-bar-preview')!.textContent).not.toContain('Codex');
+    const account = document.querySelector<HTMLInputElement>('[data-status-field="account"]')!; account.checked = true; account.dispatchEvent(new Event('change'));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { fields: ['quota', 'bankedResets', 'account'] } } });
+    expect(document.querySelector('#status-bar-preview')!.textContent).toContain('claude@example.test');
+    choose('status-bar-windows', 'main'); expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { quotaWindows: 'main' } } });
+    choose('status-bar-alignment', 'left'); expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { alignment: 'left' } } });
+    const toggle = document.querySelector<HTMLInputElement>('#show-status-quota')!; toggle.checked = false; toggle.dispatchEvent(new Event('change'));
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Status bar hidden');
+    expect(account.disabled).toBe(true);
+    render({ ...value, preferences: { ...value.preferences, statusBar: { providers: 'codex', fields: ['plan'], quotaWindows: 'main', alignment: 'left', style: 'compact' } } });
+    expect(document.querySelector<HTMLSelectElement>('#status-bar-providers')!.value).toBe('codex');
+    expect(account.checked).toBe(false); expect(account.disabled).toBe(false);
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Codex · Plan —');
+  });
   it('shows banked reset counts and expiry in dashboard account cards and managed accounts', () => {
     const expiresAt = Date.parse('2026-11-01T00:00:00Z');
     const status = { status: 'ready' as const, account: { signedIn: true, email: 'codex@test', method: 'ChatGPT' }, quota: { status: 'available' as const, windows: [], bankedResets: { availableCount: 2, credits: [{ title: 'Full reset', expiresAt }] } } };
@@ -135,7 +199,7 @@ describe('Settings usage dashboard', () => {
     render({ ...value, data: { ...value.data!, updatedAt: now, recent }, accounts: { Codex: account }, quotaHistory: [sample] });
     const root = document.getElementById('quota-estimates')!;
     expect(root.textContent).toContain('Device estimate · 2 cycles');
-    expect(root.textContent).toContain('Includes sessions without account identity');
+    expect(root.textContent).toContain('Includes history without native turn identity');
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('37,500 tokens per percentage point');
     const latest = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
     expect(latest[0]?.textContent).toContain('current'); expect(latest[0]?.getAttribute('title')).toContain('Partial observation');

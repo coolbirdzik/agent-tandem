@@ -6,7 +6,7 @@ it('shows the authoritative count and expiry dates in the status text and hover 
   const expiresAt = Date.parse('2026-11-01T00:00:00Z');
   const status = quotaStatus({ composeProvider: 'Codex', accounts: { Codex: { status: 'ready', quota: { status: 'available', windows: [],
     bankedResets: { availableCount: 3, credits: [{ title: 'Full reset', expiresAt }, {}] } } } } });
-  expect(status.text).toContain('3 banked resets');
+  expect(status.text).toContain('↻ 3');
   expect(status.tooltip).toContain('Banked resets: 3 available');
   expect(status.tooltip).toContain(`Full reset · Expires ${new Date(expiresAt).toLocaleString()}`);
   expect(status.tooltip).toContain('Expiry unavailable');

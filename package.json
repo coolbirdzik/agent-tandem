@@ -62,6 +62,11 @@
   "contributes": {
     "commands": [
       {
+        "command": "agentTandem.quickAccounts",
+        "title": "AgentTandem: Quota and Quick Account Switch",
+        "icon": "$(account)"
+      },
+      {
         "command": "agentTandem.manageAccounts",
         "title": "AgentTandem: Manage Accounts",
         "icon": "$(account)"
@@ -371,7 +376,40 @@
         "agentTandem.showQuotaInStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show the current provider's remaining quota in the VS Code status bar. Click to open the AgentTandem usage dashboard."
+          "description": "Show agent quota in the VS Code status bar. Customize agents and details in AgentTandem Settings > Preferences."
+        },
+        "agentTandem.statusBarProviders": {
+          "type": "string",
+          "enum": ["both", "active", "codex", "claude"],
+          "enumDescriptions": ["Show Codex and Claude Code together.", "Show only the agent selected in chat.", "Show only Codex.", "Show only Claude Code."],
+          "default": "both",
+          "description": "Agents shown in the status bar. Each agent has its own quota and hover details."
+        },
+        "agentTandem.statusBarStyle": {
+          "type": "string",
+          "enum": ["compact", "icons", "text"],
+          "enumDescriptions": ["Distinct agent icons with quota and a short banked reset count.", "Agent icons only; hover for account, quota and reset details.", "Full agent names and detail labels."],
+          "default": "compact",
+          "description": "Appearance of the agent quota status items. Compact uses a terminal icon for Codex, a sparkle for Claude Code, and ↻ for banked resets."
+        },
+        "agentTandem.statusBarFields": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["quota", "reset", "bankedResets", "account", "plan"] },
+          "uniqueItems": true,
+          "default": ["quota", "bankedResets"],
+          "description": "Details shown beside each agent, in this order: remaining quota, quota reset countdown, banked reset count, account and plan. Hover always shows full details. An empty list shows agent names only."
+        },
+        "agentTandem.statusBarQuotaWindows": {
+          "type": "string",
+          "enum": ["all", "main"],
+          "default": "all",
+          "description": "Show all reported quota windows, or only the first two for a shorter status bar. Hover always shows every window."
+        },
+        "agentTandem.statusBarAlignment": {
+          "type": "string",
+          "enum": ["right", "left"],
+          "default": "right",
+          "description": "Side of the VS Code status bar used for agent quota."
         },
         "agentTandem.usageDashboardDefaultGrouping": {
           "type": "string",

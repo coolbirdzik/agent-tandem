@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, afterEach, describe, it, expect, vi } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile, utimes } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import os from 'node:os';
@@ -33,6 +34,32 @@ async function otherWindow(directory: string) {
 }
 
 describe('Snapshot storage coordination', () => {
+  it('recovers an aged ownerless lock with an empty temp left by an interrupted owner write', async () => {
+    const directory = root(), lock = path.join(directory, '.snapshot-lock'), temp = path.join(lock, `${randomUUID()}.tmp`);
+    await mkdir(lock, { recursive: true }); await writeFile(temp, '');
+    const past = new Date(Date.now() - 120000); await utimes(temp, past, past); await utimes(lock, past, past);
+    await expect(withStorageLock(directory, async () => 'recovered')).resolves.toBe('recovered');
+    await expect(readFile(temp)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('times out on an ownerless nonempty lock instead of retrying forever or deleting unknown files', async () => {
+    const directory = root(), lock = path.join(directory, '.snapshot-lock'), file = path.join(lock, 'unknown.txt');
+    await mkdir(lock, { recursive: true }); await writeFile(file, 'keep');
+    const past = new Date(Date.now() - 120000); await utimes(lock, past, past);
+    const now = performance.now(), clock = vi.spyOn(performance, 'now').mockReturnValue(now);
+    const waiting = withStorageLock(directory, async () => { throw new Error('Must not enter'); }); waiting.catch(() => undefined);
+    await pause(); clock.mockReturnValue(now + 121000);
+    await expect(waiting).rejects.toThrow('after 2 minutes');
+    expect(await readFile(file, 'utf8')).toBe('keep');
+  });
+  it('retains a fresh unpublished owner temp while waiting for the creator', async () => {
+    const directory = root(), lock = path.join(directory, '.snapshot-lock'), temp = path.join(lock, `${randomUUID()}.tmp`);
+    await mkdir(lock, { recursive: true }); await writeFile(temp, '');
+    const past = new Date(Date.now() - 120000); await utimes(lock, past, past);
+    const now = performance.now(), clock = vi.spyOn(performance, 'now').mockReturnValue(now);
+    const waiting = withStorageLock(directory, async () => { throw new Error('Must not enter'); }); waiting.catch(() => undefined);
+    await pause(); clock.mockReturnValue(now + 121000);
+    await expect(waiting).rejects.toThrow('after 2 minutes'); expect(await readFile(temp, 'utf8')).toBe('');
+  });
   it('queues local work in FIFO order without applying the cross-window timeout to it', async () => {
     const directory = root(), entered = gate(), release = gate(), order: number[] = [];
     const first = withStorageLock(directory, async () => { order.push(1); entered.resolve(); await release.promise; });

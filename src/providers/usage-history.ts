@@ -11,11 +11,13 @@ import { addTotals, emptyTotals, localDay, type TokenTotals, type UsageDay, type
 import { addApiCost, apiCost, emptyApiCost } from '../core/api-pricing';
 import type { UsageAccountStore } from '../core/usage-account-store';
 import type { UsageAccount } from '../core/usage-account';
+import { matchingAssignment, type KnownUsageAccount, type UsageAttributionStore } from '../core/usage-attribution-store';
+import type { UsageAccountSource } from '../core/usage-dashboard';
 
 const obj = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const count = (value: unknown): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const text = (value: unknown): string | undefined => typeof value === 'string' && value ? value : undefined;
-interface UsageRecord extends TokenTotals { id: string; provider: ConversationProvider; model: string; timestamp: number; conversationId?: string; project?: string; accountKey?: string; cacheWrite1h?: number; kind?: 'modern' | 'legacy'; equivalent?: string; account?: UsageAccount; accountConflict?: boolean }
+interface UsageRecord extends TokenTotals { id: string; provider: ConversationProvider; model: string; timestamp: number; conversationId?: string; project?: string; accountKey?: string; cacheWrite1h?: number; kind?: 'modern' | 'legacy'; equivalent?: string; account?: UsageAccount; accountConflict?: boolean; creatorAccountId?: string; creatorConflict?: boolean; accountSource?: UsageAccountSource }
 function totals(value: unknown, provider: ConversationProvider): TokenTotals & { cacheWrite1h?: number } {
   const u = obj(value), cacheRead = count(u.cache_read_input_tokens ?? u.cached_input_tokens ?? u.cachedInputTokens);
   const cacheWrite = count(u.cache_creation_input_tokens ?? u.cache_write_input_tokens ?? u.cacheWriteInputTokens);
@@ -30,6 +32,7 @@ const fingerprint = (t: TokenTotals) => JSON.stringify([t.input, t.output, t.cac
 export class UsageParser {
   private session = ''; private model = 'Unknown model'; private turn = ''; private rootTurn = '';
   private project?: string;
+  private creatorAccountId?: string;
   private previous?: TokenTotals;
   private modern: UsageRecord[] = [];
   private legacy: Array<{ record: UsageRecord; cumulative?: string }> = [];
@@ -46,7 +49,7 @@ export class UsageParser {
       this.record(this.modern, `Claude:${id}`, totals(m.usage, 'Claude'), r.timestamp, text(m.model) ?? 'Unknown model');
       return;
     }
-    if (r.type === 'session_meta') { this.session = text(p.id) ?? ''; this.project = text(p.cwd); this.model = text(p.model) ?? this.model; }
+    if (r.type === 'session_meta') { this.session = text(p.id) ?? ''; this.project = text(p.cwd); this.model = text(p.model) ?? this.model; this.creatorAccountId = text(p.creator_account_id); }
     if (r.type === 'turn_context') { this.turn = text(p.turn_id) ?? this.turn; this.rootTurn = text(p.root_turn_id) ?? ''; this.model = text(p.model) ?? this.model; }
     if (r.type === 'event_msg' && p.type === 'model_rerouted') this.model = text(p.to_model ?? p.toModel) ?? this.model;
     if (r.type === 'token_usage_record') {
@@ -97,6 +100,7 @@ export class UsageParser {
     const timestamp = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
     if (!Number.isFinite(timestamp)) { this.undated++; return; }
     target.push({ ...usage, id, timestamp, model, provider: this.provider,
+      ...(this.creatorAccountId ? { creatorAccountId: this.creatorAccountId } : {}),
       ...(this.session ? { conversationId: this.session } : {}), ...(this.project ? { project: this.project } : {}),
       ...(this.provider === 'Codex' && (this.rootTurn || this.turn) ? { accountKey: `Codex:turn:${this.rootTurn || this.turn}` } : {}) });
   }
@@ -104,18 +108,18 @@ export class UsageParser {
 }
 interface ParsedFile { signature: string; records: UsageRecord[]; malformed: number; oversized: number; undated: number }
 export interface UsageReadStats { discoveryMs: number; parseMs: number; aggregateMs: number; parsedFiles: number; memoryHits: number; diskHits: number }
-const cacheVersion = 2;
+const cacheVersion = 3;
 /** Compact allowlist: cache contains usage counters and native IDs, never message text or account credentials. */
 function cachedRecords(value: unknown, provider: ConversationProvider): UsageRecord[] | undefined {
   if (!Array.isArray(value)) return;
   const records: UsageRecord[] = [];
   for (const row of value) {
-    if (!Array.isArray(row) || row.length !== 14 || typeof row[0] !== 'string' || !row[0].startsWith(`${provider}:`) || row[0].length > 2048 || typeof row[1] !== 'string' || row[1].length > 512 || !Number.isFinite(row[2]) || row.slice(3, 8).some(n => !Number.isSafeInteger(n) || n < 0) || (row[8] !== null && (!Number.isSafeInteger(row[8]) || row[8] < 0)) || [row[9], row[11], row[12], row[13]].some(s => s !== null && (typeof s !== 'string' || s.length > 2048)) || ![null, 'modern', 'legacy'].includes(row[10])) return;
-    const [id, model, timestamp, input, output, cacheRead, cacheWrite, reasoning, cacheWrite1h, accountKey, kind, equivalent, conversationId, project] = row;
+    if (!Array.isArray(row) || row.length !== 15 || typeof row[0] !== 'string' || !row[0].startsWith(`${provider}:`) || row[0].length > 2048 || typeof row[1] !== 'string' || row[1].length > 512 || !Number.isFinite(row[2]) || row.slice(3, 8).some(n => !Number.isSafeInteger(n) || n < 0) || (row[8] !== null && (!Number.isSafeInteger(row[8]) || row[8] < 0)) || [row[9], row[11], row[12], row[13], row[14]].some(s => s !== null && (typeof s !== 'string' || s.length > 2048)) || ![null, 'modern', 'legacy'].includes(row[10])) return;
+    const [id, model, timestamp, input, output, cacheRead, cacheWrite, reasoning, cacheWrite1h, accountKey, kind, equivalent, conversationId, project, creatorAccountId] = row;
     if (!Number.isSafeInteger(input + output)) return;
     records.push({ id, model, timestamp, input, output, cacheRead, cacheWrite, reasoning, total: input + output, requests: 1, provider,
       ...(cacheWrite1h !== null ? { cacheWrite1h } : {}), ...(accountKey !== null ? { accountKey } : {}), ...(kind !== null ? { kind } : {}), ...(equivalent !== null ? { equivalent } : {}),
-      ...(conversationId !== null ? { conversationId } : {}), ...(project !== null ? { project } : {}) });
+      ...(conversationId !== null ? { conversationId } : {}), ...(project !== null ? { project } : {}), ...(creatorAccountId !== null ? { creatorAccountId } : {}) });
   }
   return records;
 }
@@ -182,7 +186,8 @@ async function historyFiles(directory: string, signal?: AbortSignal): Promise<{ 
 export class UsageHistory {
   private cache = new Map<string, ParsedFile>();
   readStats?: UsageReadStats;
-  constructor(private homes = { codex: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claude: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude') }, private accounts?: Pick<UsageAccountStore, 'read'>, private cacheDirectory?: string) {}
+  constructor(private homes = { codex: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claude: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude') }, private accounts?: Pick<UsageAccountStore, 'read'>, private cacheDirectory?: string,
+    private attribution?: { store: Pick<UsageAttributionStore, 'read'>; knownAccounts: () => Promise<KnownUsageAccount[]> }) {}
   private cacheFile(file: string, provider: ConversationProvider) {
     const source = process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
     return path.join(this.cacheDirectory!, `${createHash('sha256').update(`${provider}:${source}`).digest('hex')}.json`);
@@ -203,7 +208,7 @@ export class UsageHistory {
     const filename = this.cacheFile(file, provider), temporary = `${filename}.${randomUUID()}.tmp`;
     try {
       await mkdir(this.cacheDirectory, { recursive: true });
-      const records = data.records.map(row => [row.id, row.model, row.timestamp, row.input, row.output, row.cacheRead, row.cacheWrite, row.reasoning, row.cacheWrite1h ?? null, row.accountKey ?? null, row.kind ?? null, row.equivalent ?? null, row.conversationId ?? null, row.project ?? null]);
+      const records = data.records.map(row => [row.id, row.model, row.timestamp, row.input, row.output, row.cacheRead, row.cacheWrite, row.reasoning, row.cacheWrite1h ?? null, row.accountKey ?? null, row.kind ?? null, row.equivalent ?? null, row.conversationId ?? null, row.project ?? null, row.creatorAccountId ?? null]);
       await writeFile(temporary, JSON.stringify({ version: cacheVersion, provider, signature: data.signature, malformed: data.malformed, oversized: data.oversized, undated: data.undated, records }), { flag: 'wx' });
       await rename(temporary, filename);
     } catch { /* An optional cache must never hide otherwise readable usage. */ }
@@ -212,6 +217,13 @@ export class UsageHistory {
   async read(signal?: AbortSignal): Promise<UsageHistoryData> {
     const start = performance.now(), stats: UsageReadStats = { discoveryMs: 0, parseMs: 0, aggregateMs: 0, parsedFiles: 0, memoryHits: 0, diskHits: 0 };
     const accounts = await this.accounts?.read();
+    const assignments = await this.attribution?.store.read(), known = await this.attribution?.knownAccounts();
+    const creators = new Map<string, UsageAccount | null>();
+    for (const entry of known ?? []) for (const id of entry.nativeAccountIds) {
+      if (entry.account.provider !== 'Codex') continue;
+      const previous = creators.get(id);
+      creators.set(id, previous === null || (previous && previous.id !== entry.account.id) ? null : entry.account);
+    }
     const roots: Array<[ConversationProvider, string]> = [['Codex', path.join(this.homes.codex, 'sessions')], ['Codex', path.join(this.homes.codex, 'archived_sessions')], ['Claude', path.join(this.homes.claude, 'projects')]];
     const lists = await Promise.all(roots.map(async ([provider, root]) => ({ provider, ...await historyFiles(root, signal) })));
     let unreadableFiles = lists.reduce((sum, list) => sum + list.unreadable, 0), malformedLines = 0, oversizedLines = 0, undatedRecords = 0, duplicates = 0;
@@ -245,6 +257,8 @@ export class UsageHistory {
           const conflict = accounts?.get(row.id) === null || (!!row.accountKey && accounts?.get(row.accountKey) === null);
           const account = conflict ? undefined : evidence ?? undefined;
           if (!existing) { records.set(row.id, { ...row, account, accountConflict: conflict }); continue; }
+          if (row.creatorAccountId && existing.creatorAccountId && row.creatorAccountId !== existing.creatorAccountId) existing.creatorConflict = true;
+          else existing.creatorAccountId ??= row.creatorAccountId;
           if (conflict || (existing.account && account && existing.account.id !== account.id)) { existing.account = undefined; existing.accountConflict = true; }
           else if (!existing.accountConflict && account) existing.account = account;
           duplicates++;
@@ -264,19 +278,29 @@ export class UsageHistory {
     for (const row of records.values()) {
       if (++aggregated % 2000 === 0) { signal?.throwIfAborted(); await setImmediate(); }
       if (row.kind === 'legacy' && row.equivalent && nativeAliases.has(row.equivalent)) { duplicates++; continue; }
-      const day = localDay(row.timestamp), key = `${day}\0${row.provider}\0${row.model}\0${row.account?.id ?? ''}`;
-      const value = days.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...(row.account ? { account: row.account } : {}) };
+      const day = localDay(row.timestamp);
+      if (!row.account) {
+        const assignment = matchingAssignment(assignments ?? [], row.provider, row.conversationId, day);
+        if (assignment) { row.account = assignment.account ?? undefined; row.accountSource = 'manual'; }
+        else if (!row.accountConflict && !row.creatorConflict && row.creatorAccountId) {
+          row.account = creators.get(row.creatorAccountId) ?? undefined;
+          if (row.account) row.accountSource = 'inferred';
+        }
+      }
+      const key = `${day}\0${row.provider}\0${row.model}\0${row.account?.id ?? ''}\0${row.accountSource ?? ''}`;
+      const attribution = { ...(row.account ? { account: row.account } : {}), ...(row.accountSource ? { accountSource: row.accountSource } : {}) };
+      const value = days.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...attribution };
       addTotals(value, row); addApiCost(value.cost!, apiCost(row.provider, row.model, row)); days.set(key, value);
       const id = row.conversationId || 'unknown', conversationKey = `${row.provider}:${id}`;
       const conversation = conversations.get(conversationKey) ?? { key: conversationKey, id, provider: row.provider, project: row.project, firstAt: row.timestamp, lastAt: row.timestamp, days: [], buckets: new Map<string, UsageDay>() };
       conversation.firstAt = Math.min(conversation.firstAt, row.timestamp); conversation.lastAt = Math.max(conversation.lastAt, row.timestamp);
-      const bucket = conversation.buckets.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...(row.account ? { account: row.account } : {}) };
+      const bucket = conversation.buckets.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...attribution };
       addTotals(bucket, row); addApiCost(bucket.cost!, apiCost(row.provider, row.model, row)); conversation.buckets.set(key, bucket); conversations.set(conversationKey, conversation);
       // Retain only timestamps/provider/token counts for current quota windows.
-      if (row.timestamp >= now - 7 * 86400000 && row.timestamp <= now) recent.push({ timestamp: row.timestamp, provider: row.provider, total: row.total, ...(row.account ? { accountId: row.account.id } : {}) });
+      if (row.timestamp >= now - 7 * 86400000 && row.timestamp <= now) recent.push({ timestamp: row.timestamp, provider: row.provider, total: row.total, ...(row.account ? { accountId: row.account.id } : {}), ...(row.accountSource ? { accountSource: row.accountSource } : {}) });
     }
     stats.aggregateMs = performance.now() - aggregateStart; this.readStats = stats;
     return { days: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)), conversations: [...conversations.values()].map(({ buckets, ...row }) => ({ ...row, days: [...buckets.values()] })).sort((a, b) => b.lastAt - a.lastAt), recent: recent.sort((a, b) => a.timestamp - b.timestamp), updatedAt: now, files: files.length, unreadableFiles,
-      malformedLines, undatedRecords, oversizedLines, duplicates, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+      malformedLines, undatedRecords, oversizedLines, duplicates, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...(assignments ? { assignments } : {}) };
   }
 }

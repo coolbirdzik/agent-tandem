@@ -135,7 +135,7 @@ export function quotaEstimates(provider: ConversationProvider, account: Provider
     if (from >= to) return { ...result, reason: 'Quota window has not started' };
     // Device estimates include unknown native sessions without assigning them an account.
     // Records explicitly attributed to a different account are always excluded.
-    const observedTokens = data.recent.filter(row => row.provider === provider && (row.accountId === identity.id || (scope === 'Device' && !row.accountId)) && row.timestamp >= from && row.timestamp <= to).reduce((sum, row) => sum + row.total, 0);
+    const observedTokens = data.recent.filter(row => row.provider === provider && ((!row.accountSource && row.accountId === identity.id) || (scope === 'Device' && (!row.accountId || !!row.accountSource))) && row.timestamp >= from && row.timestamp <= to).reduce((sum, row) => sum + row.total, 0);
     if (!observedTokens) return { ...result, reason: 'No tokens attributed to this account in this window' };
     const tokensPerPercent = observedTokens / window.usedPercent;
     return { ...result, observedTokens, from, to, tokensPerPercent, capacityTokens: tokensPerPercent * 100, remainingTokens: tokensPerPercent * Math.max(0, 100 - window.usedPercent) };

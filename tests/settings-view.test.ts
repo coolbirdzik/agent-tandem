@@ -11,6 +11,14 @@ vi.mock('vscode', () => ({
 import { SettingsView } from '../src/host/settings-view';
 
 describe('Settings host updates', () => {
+  it('routes history assignments and publishes busy/errors even when usage has not changed', async () => {
+    const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } }, invoke = vi.fn();
+    const view = new SettingsView({} as any, () => state, invoke, vi.fn()); view.open();
+    await host.receive({ type: 'usageAttribution', value: { action: 'assign', scope: { provider: 'Codex', conversationId: 'session' }, accountId: 'selected' } });
+    expect(invoke).toHaveBeenLastCalledWith('agentTandem.usageAttribution', { action: 'assign', scope: { provider: 'Codex', conversationId: 'session' }, accountId: 'selected' });
+    host.post.mockClear(); state.attributionBusy = true; view.update(); expect(host.post).toHaveBeenCalledTimes(1);
+    state.attributionBusy = false; state.attributionError = 'Write failed'; view.update(); expect(host.post).toHaveBeenCalledTimes(2); view.dispose();
+  });
   it('opens Accounts directly and forwards account actions through the host allowlist', async () => {
     const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } }, invoke = vi.fn();
     const view = new SettingsView({} as any, () => state, invoke, vi.fn()); view.open('accounts');
@@ -50,6 +58,7 @@ describe('Settings host updates', () => {
     state = { ...state, quotaHistoryError: undefined, quotaHistory: [] }; view.update(); expect(host.post).toHaveBeenCalledTimes(8);
     const meter = { provider: 'Codex' as const, accountId: 'demo', plan: 'plus', label: '5h' as const, from: 1, to: 2, resetsAt: 3, totalTokens: 100, usedPercent: 0 };
     state = { ...state, quotaBaselines: [{ start: meter, latest: meter }] }; view.update(); expect(host.post).toHaveBeenCalledTimes(9);
+    state = { ...state, activeProvider: 'Claude' }; view.update(); expect(host.post).toHaveBeenCalledTimes(10);
     view.dispose();
   });
 });

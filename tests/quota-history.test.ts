@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { mergeQuotaObservations, quotaCycles, quotaTrends, quotaObservations, quotaMeters, observeQuotaMeters, type QuotaObservation } from '../src/core/quota-estimate';
@@ -17,6 +17,14 @@ const sample = (cycle: number, observedTokens = 100, usedPercent = 10): QuotaObs
 });
 
 describe('Quota history and capacity trends', () => {
+  it('loads saved quota during activation even when another process holds the write lock', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-read-'));
+    await new QuotaHistoryStore(directory).record([sample(0)]);
+    const lock = path.join(directory, '.snapshot-lock'), ownerFile = path.join(lock, 'owner.json');
+    await mkdir(lock); const owner = JSON.stringify({ pid: process.pid, token: 'live-quota-write' }); await writeFile(ownerFile, owner);
+    expect(await new QuotaHistoryStore(directory).read()).toHaveLength(1);
+    expect(await readFile(ownerFile, 'utf8')).toBe(owner);
+  });
   const apiStatus = (time: number, total: number, used: number): ProviderAccountStatus => ({ ...account, updatedAt: time,
     quota: { status: 'available', windows: [{ id: 'weekly', label: '7d', usedPercent: used, resetsAt: now + 3 * 86400000 }] },
     usage: { source: 'API', status: 'available', accountId, updatedAt: time, summary: { lifetimeTokens: total } } });

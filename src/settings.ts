@@ -7,7 +7,10 @@ import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-a
 import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaPace, quotaTicks } from './core/quota-pace';
 import { bankedResetDetails } from './core/banked-resets';
+import { quotaStatuses } from './core/quota-status';
+import { statusBarPreferences, type StatusBarField, type StatusBarPreferences } from './core/status-bar-preferences';
 import { ACCOUNT_PROVIDERS, accountProviderName, accountProviderDetail, isChatAccount, type AccountProvider } from './core/account-providers';
+import { validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 const api = acquireVsCodeApi(), send = (type: string, value?: unknown) => api.postMessage({ type, value });
@@ -64,6 +67,65 @@ function renderLoading() {
   loadingRows(el('period-breakdown')); loadingRows(el('model-breakdown')); loadingRows(el('account-breakdown')); loadingRows(el('conversation-breakdown'));
   el('conversation-detail').hidden = true;
 }
+function assignmentScope(): UsageAssignmentScope {
+  return { provider: el<HTMLSelectElement>('attribution-provider').value as ConversationProvider,
+    conversationId: el<HTMLSelectElement>('attribution-conversation').value || undefined,
+    from: el<HTMLInputElement>('attribution-from').value || undefined, to: el<HTMLInputElement>('attribution-to').value || undefined };
+}
+function renderAttributionPreview() {
+  const scope = assignmentScope(), valid = validAssignmentScope(scope);
+  const days = scope.conversationId ? state?.data?.conversations?.find(row => row.provider === scope.provider && row.id === scope.conversationId)?.days ?? [] : state?.data?.days ?? [];
+  const totals = usageBreakdown(days.filter(row => !row.account || !!row.accountSource), { grouping: 'day', provider: scope.provider, from: scope.from, to: scope.to }).totals;
+  el('attribution-preview').textContent = valid ? `${number(totals.total)} tokens · ${number(totals.requests)} requests eligible. Only history without native per-turn evidence is reassigned. New history within this scope follows this choice until removed; the latest matching assignment wins.`
+    : 'Choose a conversation, or enter both dates for all conversations. Dates are inclusive; leave them blank to cover an entire conversation.';
+  el<HTMLButtonElement>('attribution-save').disabled = !state?.data || !!state.attributionBusy || !valid || !el<HTMLSelectElement>('attribution-account').value || !totals.total;
+}
+function openAttribution(provider: ConversationProvider, conversationId?: string) {
+  el<HTMLSelectElement>('attribution-provider').value = provider; renderAttribution();
+  el<HTMLSelectElement>('attribution-conversation').value = conversationId ?? '';
+  const range = conversationId ? {} : dateRange();
+  el<HTMLInputElement>('attribution-from').value = range.from ?? '';
+  el<HTMLInputElement>('attribution-to').value = range.to ?? '';
+  renderAttributionPreview(); el<HTMLDetailsElement>('usage-attribution').open = true;
+  el('usage-attribution').scrollIntoView?.({ block: 'nearest' }); el('attribution-account').focus();
+}
+function renderAttribution() {
+  const provider = el<HTMLSelectElement>('attribution-provider').value as ConversationProvider;
+  const accountSelect = el<HTMLSelectElement>('attribution-account'), previousAccount = accountSelect.value;
+  const accounts = new Map<string, string>();
+  for (const row of state?.data?.days ?? []) if (row.provider === provider && row.account) accounts.set(row.account.id, usageAccountLabel(row.account));
+  const current = usageAccount(provider, state?.accounts?.[provider]?.account);
+  if (current) accounts.set(current.id, `${usageAccountLabel(current)} · Active CLI`);
+  for (const profile of state?.managedAccounts ?? []) if (profile.provider === provider) {
+    const account = usageAccount(provider, profile.status?.account || profile.identity);
+    if (account) accounts.set(account.id, `${profile.label} · ${usageAccountLabel(account)}`);
+  }
+  accountSelect.replaceChildren(new Option('Choose account', ''), new Option('Keep unknown · disable inference', UNKNOWN_ACCOUNT));
+  for (const [id, label] of accounts) accountSelect.add(new Option(label, id));
+  accountSelect.value = previousAccount === UNKNOWN_ACCOUNT || accounts.has(previousAccount) ? previousAccount : '';
+  const conversationSelect = el<HTMLSelectElement>('attribution-conversation'), previousConversation = conversationSelect.value;
+  conversationSelect.replaceChildren(new Option('Date range · all conversations', ''));
+  for (const row of state?.data?.conversations ?? []) if (row.provider === provider && row.id !== 'unknown') conversationSelect.add(new Option(`${state?.conversationTitles?.[row.key] || row.id} · ${row.project || provider}`, row.id));
+  if ([...conversationSelect.options].some(option => option.value === previousConversation)) conversationSelect.value = previousConversation;
+  el('attribution-form').setAttribute('aria-busy', String(!!state?.attributionBusy));
+  el('attribution-form').querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select').forEach(input => { input.disabled = !!state?.attributionBusy; });
+  el('attribution-status').textContent = state?.attributionBusy ? 'Saving history assignment…' : state?.attributionNotice ?? '';
+  el('attribution-error').hidden = !state?.attributionError; el('attribution-error').textContent = state?.attributionError ?? '';
+  const list = el('attribution-assignments'); list.replaceChildren();
+  for (const row of state?.data?.assignments ?? []) {
+    const item = node('div', undefined, 'attribution-assignment'), label = node('span');
+    label.textContent = `${row.provider} · ${row.conversationId ? state?.conversationTitles?.[`${row.provider}:${row.conversationId}`] || row.conversationId : 'All conversations'} · ${row.from || 'Start'} – ${row.to || 'No end date'} → ${row.account ? usageAccountLabel(row.account) : 'Keep unknown'} · User confirmed`;
+    const remove = node('button', 'Remove assignment', 'quiet'); remove.disabled = !!state?.attributionBusy;
+    remove.onclick = () => send('usageAttribution', { action: 'remove', id: row.id }); item.append(label, remove); list.append(item);
+  }
+  renderAttributionPreview();
+}
+function attributionCaption(days: NonNullable<UsageDashboardState['data']>['days'], filters: UsageFilters) {
+  return ([['inferred', 'Inferred from session creator'], ['manual', 'User confirmed']] as const).flatMap(([source, label]) => {
+    const total = usageBreakdown(days.filter(row => row.accountSource === source), filters).totals.total;
+    return total ? [`${label}: ${compact(total)} tokens`] : [];
+  }).join(' · ');
+}
 function page(value: string) {
   currentPage = value;
   el('dashboard').hidden = value !== 'dashboard'; el('preferences').hidden = value !== 'preferences'; el('storage').hidden = value !== 'storage';
@@ -86,6 +148,13 @@ el('account-search').oninput = renderManagedAccounts;
 for (const [id, action] of [['account-add', 'add'], ['account-save', 'importCurrent'], ['account-import', 'importFile']]) el(id!).onclick = () => send('accountAction', { action, provider: el<HTMLSelectElement>('account-provider').value });
 el('conversation-close').onclick = () => { selectedUsageConversation = undefined; el('conversation-detail').hidden = true; };
 el('conversation-search').oninput = () => { conversationLimit = 20; renderConversations(usageFilters()); };
+el('attribution-provider').onchange = renderAttribution;
+for (const id of ['attribution-conversation', 'attribution-account', 'attribution-from', 'attribution-to']) el(id).onchange = renderAttributionPreview;
+el('attribution-form').onsubmit = event => {
+  event.preventDefault();
+  const scope = assignmentScope(), accountId = el<HTMLSelectElement>('attribution-account').value;
+  if (!state?.attributionBusy && validAssignmentScope(scope) && accountId) send('usageAttribution', { action: 'assign', scope, accountId: accountId === UNKNOWN_ACCOUNT ? null : accountId });
+};
 el('dashboard-view').onchange = () => {
   for (const id of ['filter-account', 'filter-provider', 'filter-model']) el<HTMLSelectElement>(id).value = '';
   renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
@@ -104,7 +173,31 @@ el('storage-history-cancel').onclick = () => send('storage');
 el('storage-history-delete').onclick = () => { if (state?.storage?.historyPlan) send('deleteHistory', { token: state.storage.historyPlan.token }); };
 el('open-chat').onclick = () => send('chat'); el('manage-clis').onclick = () => send('clis');
 el('open-vscode-settings').onclick = () => send('vscodeSettings'); el('refresh').onclick = () => send('refresh');
-el<HTMLInputElement>('show-status-quota').onchange = () => send('preferences', { showQuotaInStatusBar: el<HTMLInputElement>('show-status-quota').checked });
+el<HTMLInputElement>('show-status-quota').onchange = () => { renderStatusBarPreview(); send('preferences', { showQuotaInStatusBar: el<HTMLInputElement>('show-status-quota').checked }); };
+for (const [id, key] of [['status-bar-providers', 'providers'], ['status-bar-windows', 'quotaWindows'], ['status-bar-alignment', 'alignment'], ['status-bar-style', 'style']]) {
+  el<HTMLSelectElement>(id!).onchange = () => { renderStatusBarPreview(); send('preferences', { statusBar: { [key!]: el<HTMLSelectElement>(id!).value } }); };
+}
+document.querySelectorAll<HTMLInputElement>('[data-status-field]').forEach(input => {
+  input.onchange = () => { renderStatusBarPreview(); send('preferences', { statusBar: { fields: selectedStatusBarFields() } }); };
+});
+function selectedStatusBarFields(): StatusBarField[] {
+  const selected = [...document.querySelectorAll<HTMLInputElement>('[data-status-field]:checked')].map(input => input.dataset.statusField as StatusBarField);
+  // Preserve custom field ordering configured in VS Code settings.
+  const previous = state?.preferences.statusBar?.fields ?? [];
+  return [...previous.filter(field => selected.includes(field)), ...selected.filter(field => !previous.includes(field))];
+}
+function renderStatusBarPreview() {
+  const enabled = el<HTMLInputElement>('show-status-quota').checked, root = el('status-bar-preview'); root.replaceChildren();
+  const iconsOnly = el<HTMLSelectElement>('status-bar-style').value === 'icons';
+  document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.status-bar-controls select, [data-status-field]').forEach(input => { input.disabled = !enabled || (iconsOnly && (input.dataset.statusField !== undefined || input.id === 'status-bar-windows')); });
+  if (!enabled) { root.append(node('span', 'Status bar hidden', 'muted')); return; }
+  const preferences = statusBarPreferences({ providers: el<HTMLSelectElement>('status-bar-providers').value as StatusBarPreferences['providers'], fields: selectedStatusBarFields(), quotaWindows: el<HTMLSelectElement>('status-bar-windows').value as StatusBarPreferences['quotaWindows'], style: el<HTMLSelectElement>('status-bar-style').value as StatusBarPreferences['style'] });
+  for (const value of quotaStatuses({ accounts: state?.accounts, composeProvider: state?.activeProvider }, preferences)) {
+    const item = node('span', undefined, 'status-bar-preview-item'), icon = node('span', undefined, `codicon codicon-${value.icon}`);
+    icon.setAttribute('aria-hidden', 'true'); item.append(icon, document.createTextNode(value.label)); item.title = value.tooltip;
+    item.setAttribute('role', 'img'); item.setAttribute('aria-label', value.tooltip); root.append(item);
+  }
+}
 el<HTMLSelectElement>('default-grouping').onchange = () => {
   const grouping = el<HTMLSelectElement>('default-grouping').value;
   el<HTMLSelectElement>('filter-group').value = grouping; renderUsage(); send('preferences', { grouping });
@@ -248,19 +341,30 @@ function renderAccountGroups(filters: UsageFilters) {
   const root = el('account-groups'); root.replaceChildren();
   for (const group of dashboardGroups(filters)) {
     const id = group.account?.id ?? UNKNOWN_ACCOUNT, item = node('article', undefined, 'account-group'); item.dataset.provider = group.provider;
+    item.dataset.active = String(!!group.active);
     const heading = node('div', undefined, 'managed-account-heading'); heading.append(providerIcon(group.provider), node('h3', group.label || group.account?.email || 'Unknown account'));
-    if (group.active) heading.append(node('span', 'Active CLI', 'source-label'));
+    if (group.active) heading.append(node('span', 'Active CLI', 'account-group-state'));
     const identity = node('p', `${group.provider} · ${group.account ? usageAccountLabel(group.account) : 'Unattributed history'}`, 'muted');
     const totals = node('div', undefined, 'account-group-totals'), amount = node('strong', compact(group.totals.total)); amount.title = number(group.totals.total);
-    totals.append(amount, node('span', 'Local tokens', 'muted'), node('span', `${number(group.totals.requests)} requests · ${costLabel(group.cost)}`, 'muted'));
+    const meta = node('div', undefined, 'account-group-meta');
+    meta.append(node('span', 'Local tokens', 'muted'), node('span', `${number(group.totals.requests)} requests · ${costLabel(group.cost)}`, 'muted'));
+    totals.append(amount, meta);
     item.append(heading, identity, totals);
+    const source = attributionCaption(state?.data?.days ?? [], { ...filters, provider: group.provider, accountId: id });
+    if (source) item.append(node('p', source, 'muted'));
+    if (!group.account || source) {
+      const assign = node('button', 'Assign history', 'quiet'); assign.onclick = () => openAttribution(group.provider); item.append(assign);
+    }
     const windows = node('div', undefined, 'account-group-windows');
     for (const window of group.status?.quota?.windows ?? []) {
       const row = node('div', undefined, 'account-group-window'), line = node('div');
       line.append(node('span', window.label), node('strong', `${Math.round((100 - window.usedPercent) * 10) / 10}% left`));
       const tick = quotaTicks(group.provider, group.status).find(t => t.windowId === window.id), rate = tick && quotaPace(state?.quotaTicks ?? [], tick).percentPerHour;
       if (rate !== undefined) line.append(node('span', `${number(Math.round(rate * 10) / 10)}% / hour`, 'muted'));
-      row.append(line);
+      row.dataset.low = String(window.usedPercent >= 90);
+      const meter = node('progress'); meter.max = 100; meter.value = Math.max(0, Math.min(100, 100 - window.usedPercent));
+      meter.setAttribute('aria-label', `${group.provider} ${group.label || group.account?.email || 'account'} ${window.label} quota remaining`);
+      row.append(line, meter);
       if (window.resetsAt) row.append(node('small', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
       windows.append(row);
     }
@@ -273,13 +377,14 @@ function renderAccountGroups(filters: UsageFilters) {
       renderUsage(); el<HTMLSelectElement>('filter-account').value = id;
       renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); el('dashboard-detail').scrollIntoView?.({ block: 'start' });
     };
-    item.append(open); root.append(item);
+    open.classList.add('account-group-open'); item.append(open); root.append(item);
   }
   if (!filters.provider && !filters.accountId && !filters.model) for (const profile of state?.managedAccounts ?? []) if (!isChatAccount(profile.provider)) {
     const item = node('article', undefined, 'account-group'), heading = node('div', undefined, 'managed-account-heading');
-    heading.append(accountAppIcon(profile.provider), node('h3', profile.label)); if (profile.active) heading.append(node('span', 'Active IDE', 'source-label'));
+    item.dataset.kind = 'ide';
+    heading.append(accountAppIcon(profile.provider), node('h3', profile.label)); if (profile.active) heading.append(node('span', 'Active IDE', 'account-group-state'));
     item.append(heading, node('p', `${profile.provider} · ${profile.status?.account?.email || profile.identity?.email || 'Saved native sign-in'}`, 'muted'), node('p', 'Usage and quota are available in the app.', 'muted'));
-    const open = node('button', 'Manage account', 'quiet'); open.onclick = () => { accountPlatform = profile.provider; page('accounts'); renderManagedAccounts(); }; item.append(open); root.append(item);
+    const open = node('button', 'Manage account', 'quiet'); open.classList.add('account-group-open'); open.onclick = () => { accountPlatform = profile.provider; page('accounts'); renderManagedAccounts(); }; item.append(open); root.append(item);
   }
   if (!root.children.length) root.append(node('p', state?.status === 'loading' ? 'Loading accounts…' : 'No account usage in this selection.', 'empty'));
 }
@@ -408,6 +513,10 @@ function renderConversations(filters: UsageFilters) {
   const { conversation, result } = selected, t = result.totals;
   el('conversation-title').textContent = selected.title;
   el('conversation-meta').textContent = `${conversation.project || conversation.id} · ${new Date(conversation.firstAt).toLocaleString()} → ${new Date(conversation.lastAt).toLocaleString()}`;
+  const source = attributionCaption(conversation.days, filters);
+  if (source) el('conversation-meta').append(node('span', ` · ${source}`));
+  const assign = node('button', 'Assign this conversation', 'quiet'); assign.disabled = conversation.id === 'unknown' || !!state?.attributionBusy;
+  assign.onclick = () => openAttribution(conversation.provider, conversation.id); el('conversation-meta').append(assign);
   el('conversation-totals').replaceChildren(metric('Tokens', t.total, `${number(t.requests)} requests`), metric('Input', t.input, `${compact(t.cacheRead)} cache read`), metric('Output', t.output, `${compact(t.reasoning)} reasoning`), metric('API cost', result.cost.usd, 'Estimate'));
   const costValue = el('conversation-totals').lastElementChild?.querySelector('strong'); if (costValue) { costValue.textContent = costLabel(result.cost); costValue.title = `${result.cost.usd.toFixed(6)} USD`; }
   const quotaRoot = el('conversation-quota'); quotaRoot.replaceChildren();
@@ -419,7 +528,8 @@ function renderConversations(filters: UsageFilters) {
     const identity = usageAccount(conversation.provider, accountStatus?.account);
     const matched = result.accounts.length === 1 && result.accounts[0]?.account?.id === identity?.id && !!identity;
     const otherKnownAccount = result.accounts.some(row => row.account && row.account.id !== identity?.id);
-    if (trend.tokensPerPercent && (matched || (trend.source === 'Device' && !otherKnownAccount))) {
+    const uncertain = conversation.days.some(row => !!row.accountSource && usageBreakdown([row], filters).totals.total > 0);
+    if (trend.tokensPerPercent && ((matched && !uncertain) || (trend.source === 'Device' && !otherKnownAccount))) {
       const estimate = node('span', `≈ ${number(Math.round(t.total / trend.tokensPerPercent * 10) / 10)}% ${trend.label} equivalent`, 'muted');
       estimate.title = `${trend.source} estimate from tokens per 1%. This is not measured per-conversation quota consumption.`; quotaRoot.append(estimate);
     }
@@ -461,9 +571,9 @@ function renderQuotaEstimates() {
         const amount = node('strong', `≈ ${compact(trend.tokensPerPercent)} tokens / 1%`, 'quota-estimate-value'); amount.title = `${number(Math.round(trend.tokensPerPercent))} tokens per percentage point`;
         const source = node('p', `${trend.source === 'Device' ? 'Device estimate' : trend.source} · ${trend.observations.length} ${trend.observations.length === 1 ? 'cycle' : 'cycles'}`, 'muted quota-estimate-source');
         source.title = trend.source === 'API' ? 'API counters · token increase ÷ quota percentage-point increase' : trend.source === 'Device'
-          ? 'Local history includes sessions with unknown accounts. Other known accounts are excluded; usage on other devices is not recorded.' : 'Local · account-matched token history';
+          ? 'Local history includes unknown, inferred and user-confirmed sessions. Other accounts with native turn evidence are excluded; usage on other devices is not recorded.' : 'Local · account-matched native turn history';
         row.append(amount, source);
-        if (trend.source === 'Device') row.append(node('small', 'Includes sessions without account identity', 'muted'));
+        if (trend.source === 'Device') row.append(node('small', 'Includes history without native turn identity', 'muted'));
         if (trend.changePercent !== undefined) {
           const change = Math.round(trend.changePercent * 10) / 10;
           const direction = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
@@ -606,7 +716,7 @@ function renderUsage() {
     row.append(label, meter, node('span', `${number(usage.requests)} requests · ${cost ? costLabel(cost) : money(0)} API equivalent`, 'muted')); providersRoot.append(row);
   }
   const headers = ['Model', 'Provider', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD'];
-  table(el('account-breakdown'), ['Account', 'Provider', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD'], result.accounts.map(row => [usageAccountLabel(row.account), row.provider, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.cacheWrite, row.totals.total, row.totals.requests, costLabel(row.cost)]), 2);
+  table(el('account-breakdown'), ['Account', 'Provider', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD', 'Attribution'], result.accounts.map(row => [usageAccountLabel(row.account), row.provider, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.cacheWrite, row.totals.total, row.totals.requests, costLabel(row.cost), attributionCaption(state?.data?.days ?? [], { ...filters, provider: row.provider, accountId: row.account?.id ?? UNKNOWN_ACCOUNT }) || (row.account ? 'Native turn evidence' : 'Unknown')]), 2);
   table(el('model-breakdown'), headers, result.models.map(row => [row.model, row.provider, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.cacheWrite, row.totals.total, row.totals.requests, costLabel(row.cost)]), 2);
   const periodsDescending = result.periods.slice().reverse();
   el('period-title').textContent = `${{ day: 'Daily', week: 'Weekly', month: 'Monthly' }[filters.grouping]} breakdown`;
@@ -718,12 +828,19 @@ function render(value: UsageDashboardState) {
   state = value;
   if (!initialized) { initialized = true; el<HTMLSelectElement>('filter-group').value = value.preferences.grouping; }
   el<HTMLInputElement>('show-status-quota').checked = value.preferences.showQuotaInStatusBar;
+  const statusBar = statusBarPreferences(value.preferences.statusBar);
+  el<HTMLSelectElement>('status-bar-providers').value = statusBar.providers;
+  el<HTMLSelectElement>('status-bar-windows').value = statusBar.quotaWindows;
+  el<HTMLSelectElement>('status-bar-alignment').value = statusBar.alignment;
+  el<HTMLSelectElement>('status-bar-style').value = statusBar.style;
+  document.querySelectorAll<HTMLInputElement>('[data-status-field]').forEach(input => { input.checked = statusBar.fields.includes(input.dataset.statusField as StatusBarField); });
+  renderStatusBarPreview();
   el<HTMLSelectElement>('default-grouping').value = value.preferences.grouping;
   el<HTMLButtonElement>('refresh').disabled = value.status === 'loading';
   el('dashboard').setAttribute('aria-busy', String(value.status === 'loading'));
   el('dashboard').dataset.loading = String(value.status === 'loading');
   el('dashboard-status').textContent = value.status === 'loading' ? 'Reading local CLI history…' : value.data ? `Updated ${new Date(value.data.updatedAt).toLocaleString()} · ${value.data.timezone}` : 'Usage history has not been loaded.';
-  renderManagedAccounts(); renderAccountSwitch();
+  renderManagedAccounts(); renderAccountSwitch(); renderAttribution();
   const signature = JSON.stringify([value.status, value.data && { ...value.data, recent: undefined }, value.error,
     value.accounts?.Codex?.account, value.accounts?.Claude?.account, value.conversationTitles]);
   // Account/quota updates need estimates, but leave history tables and filters intact.
@@ -735,7 +852,7 @@ function render(value: UsageDashboardState) {
   const root = el('usage-coverage'), coverage = node('details', undefined, 'usage-details');
   coverage.append(node('summary', 'Data & pricing details')); root.replaceChildren(coverage);
   coverage.append(node('div', 'Local usage includes saved history across projects, archived sessions and subagents. Other devices and deleted history are excluded. Input includes cache; output includes reported reasoning.'));
-  coverage.append(node('div', 'Sessions without native account evidence stay under Unknown account. Device quota estimates include those sessions separately; account-matched Local estimates exclude them.'));
+  coverage.append(node('div', 'Native turn evidence takes priority. Codex creator IDs can infer an account for other history; inferred sessions may include account switches. User-confirmed assignments can replace inference and can be removed. Unmatched history stays under Unknown account. Local quota estimates use native evidence only; Device estimates also include inferred, user-confirmed and unknown history.'));
   const pricing = node('div', `API equivalent uses published standard global token rates checked ${PRICING_CHECKED_AT}, not historical invoices. Prompt-length premiums are estimated per response; older session-wide billing cannot be reconstructed. Fast modes, tool fees, taxes and regional premiums are excluded. Unspecified Claude cache writes use the 5-minute rate. Sources: `);
   for (const provider of ['Codex', 'Claude'] as const) { const link = node('a', provider === 'Codex' ? 'OpenAI API pricing' : 'Claude API pricing'); link.href = PRICING_SOURCES[provider]; pricing.append(link, document.createTextNode(' ')); }
   coverage.append(pricing);

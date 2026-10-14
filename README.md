@@ -42,6 +42,8 @@ Open **History** to find and resume project conversations. **Edit and resend** b
 
 Open **AgentTandem: Manage Accounts** for **Codex, Claude Code, Cursor or Antigravity**.
 
+For a quick switch, click quota in the status bar. The popup lists accounts with remaining quota; select an account to switch and follow its progress there. **Open dashboard** and **Manage accounts** are separate menu items.
+
 1. Select **Add account**, choose an app, then sign in or **Save current sign-in**. You can also **Import JSON**.
 2. Filter by app or search your saved accounts. Select **Switch account** to change the default CLI/IDE sign-in; finish active turns and close IDE windows first.
 3. Follow the switch modal's loading status and timestamped log. **Hide** keeps the switch running; **View switch log** reopens its result. Reopen the IDE after switching.
@@ -53,6 +55,10 @@ Open **AgentTandem: Manage Accounts** for **Codex, Claude Code, Cursor or Antigr
 Cursor/Antigravity quota stays in their app.
 
 ## Usage and storage
+
+Open **Settings → Preferences → Status bar** to choose both agents, the selected chat agent, Codex or Claude Code. Choose which quota, reset countdown, banked resets, account and plan details to show, all quota windows or the first two, and the left or right side. The preview uses your current account data; hover always keeps full quota and reset details.
+
+**Appearance** offers compact icons with quota (default), icons only, or full text. Codex uses a terminal icon and Claude Code a sparkle; `↻ 3` means three banked resets. Icons-only mode keeps agent names and full details in hover and screen-reader labels.
 
 Run **AgentTandem: Open Settings and Usage Dashboard** to view usage **By account**. Select **View usage** for account details or **All accounts** for combined totals. Filter by date, provider or model. Estimates are separate from subscription billing.
 

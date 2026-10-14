@@ -42,11 +42,14 @@ import { ChatQueue } from './core/chat-queue';
 import { ChatQueueStore } from './core/chat-queue-store';
 import { UsageHistory } from './providers/usage-history';
 import type { UsageDashboardState, UsageGrouping } from './core/usage-dashboard';
-import { QuotaStatusBar } from './host/quota-status-bar';
+import { QuotaStatusBar, readStatusBarPreferences } from './host/quota-status-bar';
+import { STATUS_BAR_CONFIGURATION, statusBarPreferenceChanges } from './core/status-bar-preferences';
 import { TrackingStatusBar } from './host/tracking-status-bar';
 import { SettingsView } from './host/settings-view';
 import { AttachmentStore } from './core/attachment-store';
 import { UsageAccountStore } from './core/usage-account-store';
+import { UsageAttributionStore, validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution-store';
+import { knownUsageAccounts } from './providers/usage-account-identities';
 import { QuotaHistoryStore } from './core/quota-history-store';
 import { quotaMeters, quotaObservations, type QuotaObservation } from './core/quota-estimate';
 import { quotaTicks, type QuotaTick } from './core/quota-pace';
@@ -54,7 +57,8 @@ import { QuotaPaceStore } from './core/quota-pace-store';
 import { AccountProfiles, nativeHome } from './core/account-profiles';
 import { codexSessionMetadata } from './providers/conversations';
 import { AccountManager } from './host/account-manager';
-import { isChatAccount } from './core/account-providers';
+import { QuickAccounts } from './host/quick-accounts';
+import { isAccountProvider, isChatAccount } from './core/account-providers';
 import { DesktopAccounts, desktopExecutable, windowsAntigravityCredential } from './core/desktop-accounts';
 import { spawn as launchDesktopProcess } from 'node:child_process';
 import { withStorageLock } from './core/storage-lock';
@@ -89,7 +93,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const accountProfiles = new AccountProfiles(path.join(context.globalStorageUri.fsPath, 'accounts'), undefined, desktopAccounts);
   let savedQuotaTicks: QuotaTick[] = [];
   let quotaHistory: QuotaObservation[] = [], quotaHistoryError: string | undefined;
-  try { quotaHistory = await quotaHistoryStore.record(); }
+  try { quotaHistory = await quotaHistoryStore.read(); }
   catch { quotaHistoryError = 'Could not load quota history. Refresh to retry.'; }
   const reviews = new ReviewStore(path.join(context.globalStorageUri.fsPath, 'reviews'));
   const checkpoints = new CheckpointStore(path.join(context.globalStorageUri.fsPath, 'checkpoints'));
@@ -190,7 +194,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   await Promise.all([restoreAccessModes(), restoreModels(), restoreEfforts(), restoreFastMode()]);
   const preview = new TandemView(context.extensionUri, () => state,
     async (command, selected) => vscode.commands.executeCommand(command, selected), report);
-  const quotaBar = new QuotaStatusBar(), trackingBar = new TrackingStatusBar(), usageHistory = new UsageHistory(undefined, usageAccounts, path.join(context.globalStorageUri.fsPath, 'usage', 'history-cache'));
+  const attributionStore = new UsageAttributionStore(path.join(context.globalStorageUri.fsPath, 'usage'));
+  const quotaBar = new QuotaStatusBar(), trackingBar = new TrackingStatusBar(), usageHistory = new UsageHistory(undefined, usageAccounts, path.join(context.globalStorageUri.fsPath, 'usage', 'history-cache'),
+    { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts) });
   const storage = new StorageManager(context.globalStorageUri.fsPath);
   let storageState: StorageState = { status: 'idle', root: storage.root }, cleanupPlan: CleanupPlan | undefined;
   let historyDeletionPlan: HistoryDeletionPlan | undefined;
@@ -198,11 +204,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let usageState: Pick<UsageDashboardState, 'status' | 'data' | 'error'> = { status: 'idle' };
   let usageJob: Promise<void> | undefined, usageAbort: AbortController | undefined;
   let usageConversationTitles: Record<string, string> = {};
+  let attributionBusy = false, attributionError: string | undefined, attributionNotice: string | undefined;
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, ...accountManager.state, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
-      grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day' } };
+    return { ...usageState, ...accountManager.state, attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+      grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day', statusBar: readStatusBarPreferences(config) }, activeProvider: state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex' };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
     async (command, value) => vscode.commands.executeCommand(command, value), report);
@@ -249,7 +256,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       state.modelCatalogs = { ...state.modelCatalogs, [provider]: undefined };
       await loadAccount(provider, true); await loadModels(provider, true); await recordQuotaHistory(); await refreshUsageDashboard();
     },
-    update: () => settings.update(),
+    update: () => { settings.update(); quickAccounts.update(); },
     observed: async statuses => {
       savedQuotaTicks = await quotaPaceStore.record(statuses.flatMap(status => {
         const provider = status.account?.method === 'Claude account' ? 'Claude' : 'Codex';
@@ -258,7 +265,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       quotaHistory = await quotaHistoryStore.record([], statuses.flatMap(status => quotaMeters(status.account?.method === 'Claude account' ? 'Claude' : 'Codex', status)));
     },
   });
-  function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state); trackingBar.update(state); settings.update(); }
+  const quickAccounts = new QuickAccounts({ state: dashboardState, publish: () => accountManager.publish(),
+    refresh: async () => { await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]); await accountManager.refresh(); await recordQuotaHistory(); },
+    switch: id => accountManager.action({ action: 'switch', id }),
+    open: async page => { await vscode.commands.executeCommand(page === 'dashboard' ? 'agentTandem.openSettings' : 'agentTandem.manageAccounts'); }, report });
+  context.subscriptions.push(quickAccounts);
+  function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state); trackingBar.update(state); settings.update(); quickAccounts.update(); }
   async function recordQuotaHistory(data = usageState.data) {
     try {
       const samples = (['Codex', 'Claude'] as const).flatMap(provider => quotaObservations(provider, state.accounts?.[provider], data));
@@ -707,6 +719,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.captureExternalChanges', async () => { await captureExternalReview(); return state.review; });
 
   register('agentTandem.openSettings', async () => { settings.open(); await refreshAccounts(); return dashboardState(); });
+  register('agentTandem.quickAccounts', async provider => { await quickAccounts.show(isAccountProvider(provider) ? provider : undefined); });
   register('agentTandem.manageAccounts', async () => { settings.open('accounts'); await accountManager.refresh(); return dashboardState(); });
   register('agentTandem.accountAction', async value => { await accountManager.action(value); return dashboardState(); });
   register('agentTandem.openStorage', async () => { settings.open('storage'); await vscode.commands.executeCommand('agentTandem.refreshStorage'); return dashboardState(); });
@@ -714,13 +727,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]); await recordQuotaHistory(); await refreshUsageDashboard(); return dashboardState();
   });
   register('agentTandem.openVSCodeSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`));
+  register('agentTandem.usageAttribution', async value => {
+    if (attributionBusy) throw new Error('Wait for the history assignment to finish.');
+    attributionBusy = true; attributionError = undefined; attributionNotice = undefined; settings.update();
+    try {
+      if (!value || typeof value !== 'object') throw new Error('Invalid history assignment request.');
+      const request = value as { action?: string; id?: string; scope?: UsageAssignmentScope; accountId?: string | null };
+      if (request.action === 'remove' && typeof request.id === 'string') await attributionStore.remove(request.id);
+      else if (request.action === 'assign' && request.scope && validAssignmentScope(request.scope)) {
+        const scope = request.scope;
+        if (scope.conversationId && !usageState.data?.conversations?.some(row => row.provider === scope.provider && row.id === scope.conversationId)) throw new Error('This conversation no longer exists. Refresh the dashboard.');
+        const known = await knownUsageAccounts(accountProfiles, state.accounts);
+        const available = [...known.map(row => row.account), ...(usageState.data?.days.flatMap(row => row.account ? [row.account] : []) ?? [])];
+        const account = request.accountId === null ? null : available.find(row => row.provider === scope.provider && row.id === request.accountId);
+        if (account === undefined) throw new Error('Choose an available account for this provider.');
+        await attributionStore.assign(scope, account);
+      } else throw new Error('Choose a conversation or a valid date range.');
+      if (usageJob) await usageJob;
+      await refreshUsageDashboard();
+      attributionNotice = request.action === 'remove' ? 'Assignment removed. Automatic matching is restored.' : 'History assignment saved. Native turn evidence takes priority.';
+    } catch (error) { attributionError = error instanceof Error ? error.message : 'Could not save history assignment.'; }
+    finally { attributionBusy = false; settings.update(); }
+  });
   register('agentTandem.setDashboardPreferences', async value => {
     if (!value || typeof value !== 'object') throw new Error('Invalid dashboard preference.');
     const selection = value as Record<string, unknown>, config = vscode.workspace.getConfiguration('agentTandem');
     if (selection.showQuotaInStatusBar !== undefined && typeof selection.showQuotaInStatusBar !== 'boolean') throw new Error('Invalid status bar preference.');
     if (selection.grouping !== undefined && !['day', 'week', 'month'].includes(String(selection.grouping))) throw new Error('Invalid dashboard grouping.');
+    const statusChanges = selection.statusBar !== undefined ? statusBarPreferenceChanges(selection.statusBar) : [];
     if (selection.showQuotaInStatusBar !== undefined) await config.update('showQuotaInStatusBar', selection.showQuotaInStatusBar, vscode.ConfigurationTarget.Global);
     if (selection.grouping !== undefined) await config.update('usageDashboardDefaultGrouping', selection.grouping, vscode.ConfigurationTarget.Global);
+    for (const change of statusChanges) await config.update(change.key, change.value, vscode.ConfigurationTarget.Global);
     update();
   });
   register('agentTandem.manageCLIs', async () => { state.screen = 'cli'; update(); await refreshCLIManager(); await preview.open(); });
@@ -1288,7 +1325,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   context.subscriptions.push({ dispose: () => { disposed = true; externalWatcher?.dispose(); clearTimeout(externalTimer); chatAbort?.abort(); usageAbort?.abort(); for (const job of modelJobs.values()) job.abort.abort(); for (const job of accountJobs.values()) job.abort.abort(); generation++; selectionGeneration++; clearInterval(timer); clearInterval(accountTimer); } },
     vscode.workspace.onDidGrantWorkspaceTrust(() => { void refreshReview(state.project, true).catch(report); void refreshCLIManager(); refreshAccounts(); void loadModels(state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex'); }),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('agentTandem.showQuotaInStatusBar') || event.affectsConfiguration('agentTandem.usageDashboardDefaultGrouping')) update();
+      if (event.affectsConfiguration('agentTandem.showQuotaInStatusBar') || event.affectsConfiguration('agentTandem.usageDashboardDefaultGrouping') || Object.values(STATUS_BAR_CONFIGURATION).some(key => event.affectsConfiguration(`agentTandem.${key}`))) update();
       if (event.affectsConfiguration('agentTandem.autoTrackExternalChanges')) void refreshReview(state.project).catch(report);
       if (!['codexExecutable', 'claudeExecutable', 'codexCLISelection', 'claudeCLISelection', 'codexCLIId', 'claudeCLIId'].some(key => event.affectsConfiguration(`agentTandem.${key}`))) return;
       for (const job of modelJobs.values()) job.abort.abort(); modelJobs.clear(); state.modelCatalogs = {};

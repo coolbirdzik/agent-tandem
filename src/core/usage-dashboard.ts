@@ -24,14 +24,16 @@ export function dashboardAccountGroups(days: UsageDay[], filters: UsageFilters, 
   }
   return [...groups.values()].sort((a, b) => Number(!!b.active) - Number(!!a.active) || b.totals.total - a.totals.total);
 }
-export interface UsageDay extends TokenTotals { day: string; provider: ConversationProvider; model: string; cost?: ApiCost; account?: UsageAccount }
-export interface RecentUsage { timestamp: number; provider: ConversationProvider; total: number; accountId?: string }
+export type UsageAccountSource = 'inferred' | 'manual';
+export interface UsageDay extends TokenTotals { day: string; provider: ConversationProvider; model: string; cost?: ApiCost; account?: UsageAccount; accountSource?: UsageAccountSource }
+export interface RecentUsage { timestamp: number; provider: ConversationProvider; total: number; accountId?: string; accountSource?: UsageAccountSource }
 export interface UsageConversation { key: string; id: string; provider: ConversationProvider; project?: string; firstAt: number; lastAt: number; days: UsageDay[] }
 export interface UsageHistoryData {
   days: UsageDay[]; updatedAt: number; files: number; unreadableFiles: number; malformedLines: number;
   undatedRecords: number; duplicates: number; oversizedLines: number; timezone: string;
   recent?: RecentUsage[];
   conversations?: UsageConversation[];
+  assignments?: import('./usage-attribution-store').UsageAssignment[];
 }
 export interface UsageDashboardState {
   quotaTicks?: import('./quota-pace').QuotaTick[];
@@ -39,13 +41,15 @@ export interface UsageDashboardState {
   accountsBusy?: boolean; accountsError?: string; accountsNotice?: string;
   accountSwitch?: import('./account-switch').AccountSwitchOperation;
   accountSwitchBlocked?: string;
+  attributionBusy?: boolean; attributionError?: string; attributionNotice?: string;
   conversationTitles?: Record<string, string>;
   quotaHistory?: import('./quota-estimate').QuotaObservation[]; quotaHistoryError?: string;
   quotaBaselines?: import('./quota-estimate').QuotaBaseline[];
   storage?: import('./storage').StorageState;
   status: 'idle' | 'loading' | 'ready' | 'error'; data?: UsageHistoryData; error?: string;
   accounts?: Partial<Record<ConversationProvider, ProviderAccountStatus>>;
-  preferences: { showQuotaInStatusBar: boolean; grouping: UsageGrouping };
+  activeProvider?: ConversationProvider;
+  preferences: { showQuotaInStatusBar: boolean; grouping: UsageGrouping; statusBar?: import('./status-bar-preferences').StatusBarPreferences };
 }
 export interface UsageFilters { provider?: ConversationProvider; accountId?: string; model?: string; from?: string; to?: string; grouping: UsageGrouping }
 export const emptyTotals = (): TokenTotals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0, requests: 0 });

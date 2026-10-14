@@ -29,6 +29,8 @@ const cleanMeter = (row: QuotaMeter): QuotaMeter => ({ provider: row.provider, a
 export class QuotaHistoryStore {
   baselines: QuotaBaseline[] = [];
   constructor(readonly directory: string) {}
+  /** Atomic JSON reads do not need the capture/write lock during activation. */
+  read(): Promise<QuotaObservation[]> { return this.load(); }
   private async load(): Promise<QuotaObservation[]> {
     try {
       const data = JSON.parse(await readFile(path.join(this.directory, 'quota-history.json'), 'utf8'));
