@@ -11,7 +11,8 @@ createInterface({ input: process.stdin }).on('line', line => {
   if (message.method === 'account/rateLimits/read') {
     if (mode === 'quota-exit') { process.exit(1); return; }
     if (mode === 'quota-error') { process.stdout.write(JSON.stringify({ id: message.id, error: { message: 'secret-token-from-provider' } }) + '\n'); return; }
-    result = { rateLimits: { primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1791580550 }, secondary: { usedPercent: 50, windowDurationMins: 10080 } } };
+    result = { rateLimits: { primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1791580550 }, secondary: { usedPercent: 50, windowDurationMins: 10080 } },
+      rateLimitResetCredits: { availableCount: 2, credits: [{ id: 'never-expose-this', status: 'available', title: 'Full reset', expiresAt: 1791580550 }] } };
   }
   if (message.method === 'account/usage/read') {
     if (mode === 'usage-error') { process.stdout.write(JSON.stringify({ id: message.id, error: { code: -32601, message: 'secret-server-error' } }) + '\n'); return; }

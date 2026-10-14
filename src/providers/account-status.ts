@@ -8,7 +8,9 @@ import { usageAccount } from '../core/usage-account';
 
 export interface AccountIdentity { signedIn: boolean; id?: string; email?: string; plan?: string; organization?: string; method: string }
 export interface QuotaWindow { id: string; label: string; usedPercent: number; resetsAt?: number }
-export interface AccountQuota { status: 'available' | 'unavailable' | 'error'; windows: QuotaWindow[]; detail?: string; credits?: string }
+export interface BankedReset { title?: string; expiresAt?: number }
+export interface BankedResets { availableCount: number; credits?: BankedReset[] }
+export interface AccountQuota { status: 'available' | 'unavailable' | 'error'; windows: QuotaWindow[]; detail?: string; credits?: string; bankedResets?: BankedResets }
 /** Only display fields cross the host/webview boundary; never credentials or raw RPC payloads. */
 export interface ProviderAccountStatus { status: 'loading' | 'ready' | 'error'; account?: AccountIdentity; quota?: AccountQuota; usage?: ProviderTokenActivity; updatedAt?: number; error?: string }
 const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
@@ -27,6 +29,19 @@ function windowLabel(minutes: unknown, fallback: string) {
   if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) return fallback;
   return minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 }
+function codexBankedResets(value: unknown): BankedResets | undefined {
+  const data = object(value);
+  if (!Number.isSafeInteger(data.availableCount) || data.availableCount < 0) return;
+  // The service may cap detail rows; the reported count is authoritative.
+  const credits = Array.isArray(data.credits) ? data.credits.flatMap(value => {
+    const credit = object(value);
+    if (credit.status !== 'available') return [];
+    const expiresAt = seconds(credit.expiresAt);
+    return [{ ...(text(credit.title) ? { title: text(credit.title) } : {}),
+      ...(expiresAt && Number.isFinite(new Date(expiresAt).getTime()) ? { expiresAt } : {}) }];
+  }) : undefined;
+  return { availableCount: data.availableCount, ...(credits !== undefined ? { credits } : {}) };
+}
 export function codexQuota(value: unknown): AccountQuota {
   const result = object(value), primary = object(result.rateLimits), buckets = object(result.rateLimitsByLimitId);
   const primaryId = text(primary.limitId) ?? 'codex';
@@ -43,8 +58,9 @@ export function codexQuota(value: unknown): AccountQuota {
   }
   const credits = object(primary.credits);
   const creditLabel = credits.unlimited === true ? 'Unlimited credits' : text(credits.balance) ? `Credits: ${text(credits.balance)}` : undefined;
-  return { status: windows.length || creditLabel ? 'available' : 'unavailable', windows, ...(creditLabel ? { credits: creditLabel } : {}),
-    ...(result.ordinaryUsageAllowed === false ? { detail: 'Included usage is currently unavailable.' } : !windows.length && !creditLabel ? { detail: 'This account does not report subscription quota.' } : {}) };
+  const bankedResets = codexBankedResets(result.rateLimitResetCredits);
+  return { status: windows.length || creditLabel || bankedResets ? 'available' : 'unavailable', windows, ...(creditLabel ? { credits: creditLabel } : {}), ...(bankedResets ? { bankedResets } : {}),
+    ...(result.ordinaryUsageAllowed === false ? { detail: 'Included usage is currently unavailable.' } : !windows.length && !creditLabel && !bankedResets ? { detail: 'This account does not report subscription quota.' } : {}) };
 }
 export function claudeAccount(value: unknown): AccountIdentity {
   const account = object(value), source = text(account.tokenSource), key = text(account.apiKeySource);

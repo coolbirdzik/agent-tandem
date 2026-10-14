@@ -6,6 +6,7 @@ import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates
 import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-account';
 import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaPace, quotaTicks } from './core/quota-pace';
+import { bankedResetDetails } from './core/banked-resets';
 import { ACCOUNT_PROVIDERS, accountProviderName, accountProviderDetail, isChatAccount, type AccountProvider } from './core/account-providers';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
@@ -211,6 +212,7 @@ function renderAccounts() {
       row.append(label, meter); if (window.resetsAt) row.append(node('span', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
       windows.append(row);
     }
+    for (const line of bankedResetDetails(status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
     if (!windows.children.length) windows.append(node('span', status?.quota?.detail || status?.error || 'Quota unavailable', 'muted'));
     if (status?.status === 'loading') windows.append(node('span', 'Updating…', 'muted'));
     item.append(windows); root.append(item);
@@ -262,6 +264,7 @@ function renderAccountGroups(filters: UsageFilters) {
       if (window.resetsAt) row.append(node('small', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
       windows.append(row);
     }
+    for (const line of bankedResetDetails(group.status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
     if (!windows.children.length) windows.append(node('small', group.account ? group.status?.quota?.detail || 'No quota snapshot' : 'Quota cannot be assigned to unknown history', 'muted'));
     item.append(windows);
     const open = node('button', selected ? 'Viewing usage' : 'View usage', 'quiet'); open.disabled = selected;
@@ -330,6 +333,7 @@ function renderManagedAccounts() {
       if (tick) { const pace = quotaPace(state?.quotaTicks ?? [], tick); if (pace.percentPerHour !== undefined) row.append(node('small', `${number(Math.round(pace.percentPerHour * 10) / 10)}% / hour`, 'muted')); }
       windows.append(row);
     }
+    for (const line of bankedResetDetails(profile.status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
     if (!windows.children.length) windows.append(node('p', profile.status?.error || (isChatAccount(profile.provider) ? profile.status?.quota?.detail || 'Refresh to check sign-in and quota' : 'Sign-in saved locally · quota in app'), 'muted'));
     item.append(windows);
     const actions = node('div', undefined, 'actions');

@@ -25,6 +25,22 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const item of listeners.splice(0)) window.removeEventListener(item.type, item.listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Single tandem webview', () => {
+  it('shows banked resets in the quota summary, hover and account popover and removes stale account data', () => {
+    const expiresAt = Date.parse('2026-11-01T00:00:00Z');
+    const codexState = { ...state, conversation: { conversation: state.conversations![1]!, messages: [] } };
+    render({ ...codexState, accounts: { Codex: { status: 'ready', quota: { status: 'available', windows: [], bankedResets: { availableCount: 2, credits: [{ title: 'Full reset', expiresAt }] } } } } });
+    const summary = document.querySelector<HTMLButtonElement>('[data-account-provider="Codex"]')!;
+    expect(summary.textContent).toContain('2 resets');
+    expect(summary.title).toContain('Banked resets: 2 available');
+    expect(summary.title).toContain(`Expires ${new Date(expiresAt).toLocaleString()}`);
+    summary.click();
+    expect(document.querySelector('.account-popover')!.textContent).toContain('Banked resets: 2 available');
+    expect(document.querySelector('.account-popover')!.textContent).toContain(`Expires ${new Date(expiresAt).toLocaleString()}`);
+    render({ ...codexState, accounts: { Codex: { status: 'ready', quota: { status: 'available', windows: [], bankedResets: { availableCount: 0, credits: [] } } } } });
+    expect(document.querySelector('.account-popover')!.textContent).toContain('Banked resets: 0 available');
+    expect(document.querySelector('.account-popover')!.textContent).not.toContain('Full reset');
+    expect(document.querySelector('.account-summary')!.textContent).not.toContain('2 resets');
+  });
   it('previews a scoped Revert, blocks a stale confirmation and exposes Undo even with no pending files', () => {
     const file = { path: 'source.ts', kind: 'modified' as const, binary: false };
     const review = { revision: 'r1', busy: false, externalTracking: true, files: [file] };

@@ -8,6 +8,24 @@ import { claudeAccount, claudeQuota, codexAccount, codexQuota, readClaudeAccount
 import { usageAccount } from '../src/core/usage-account';
 
 describe('account and quota data', () => {
+  it('reads banked reset counts and expiry details without exposing opaque ids or other payload fields', () => {
+    const quota = codexQuota({ rateLimitResetCredits: { availableCount: 3, credits: [
+      { id: 'never-expose-this', status: 'available', title: 'Full reset', expiresAt: 1791580550, accessToken: 'secret' },
+      { status: 'available', title: 'Reset', expiresAt: null },
+      { status: 'redeemed', title: 'Used reset', expiresAt: 1791580550 },
+    ] } });
+    expect(quota.status).toBe('available');
+    expect(quota.bankedResets).toEqual({ availableCount: 3, credits: [{ title: 'Full reset', expiresAt: 1791580550000 }, { title: 'Reset' }] });
+    expect(JSON.stringify(quota)).not.toContain('never-expose'); expect(JSON.stringify(quota)).not.toContain('secret');
+  });
+  it('preserves zero and count-only banked resets and leaves unsupported data unknown', () => {
+    expect(codexQuota({ rateLimitResetCredits: { availableCount: 0, credits: [] } }).bankedResets).toEqual({ availableCount: 0, credits: [] });
+    expect(codexQuota({ rateLimitResetCredits: { availableCount: 4, credits: null } }).bankedResets).toEqual({ availableCount: 4 });
+    for (const payload of [undefined, null, {}, { availableCount: -1 }, { availableCount: 1.5 }, { availableCount: '2' }]) {
+      expect(codexQuota({ rateLimitResetCredits: payload }).bankedResets).toBeUndefined();
+    }
+    expect(codexQuota({ rateLimitResetCredits: { availableCount: 1, credits: [{ status: 'available', expiresAt: 1e30 }] } }).bankedResets?.credits).toEqual([{}]);
+  });
   it('only copies public account fields', () => {
     expect(codexAccount({ type: 'chatgpt', email: 'a@b.test', planType: 'plus', accessToken: 'secret' })).toEqual({ signedIn: true, method: 'ChatGPT', email: 'a@b.test', plan: 'plus' });
     expect(claudeAccount({ email: 'a@b.test', subscriptionType: 'pro', organization: 'Team', tokenSource: 'oauth', apiKey: 'secret' })).toEqual({ signedIn: true, method: 'Claude account', email: 'a@b.test', plan: 'pro', organization: 'Team' });
@@ -61,6 +79,7 @@ describe('read-only provider queries', () => {
   it.each(['chatgpt', 'usage-error', 'usage-null'])('keeps API activity separate and preserves quota when usage is %s', async mode => {
     const run = await codex(mode), result = await run.job;
     expect(result.quota?.status).toBe('available'); expect(result.usage?.source).toBe('API');
+    expect(result.quota?.bankedResets).toEqual({ availableCount: 2, credits: [{ title: 'Full reset', expiresAt: 1791580550000 }] });
     expect(result.account?.id).toBe('workspace-fixture');
     if (mode === 'chatgpt') {
       expect(result.usage?.accountId).toBe(usageAccount('Codex', result.account)?.id);

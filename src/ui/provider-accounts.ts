@@ -1,5 +1,6 @@
 import type { ConversationProvider } from '../providers/conversations';
 import type { ProviderAccountStatus, QuotaWindow } from '../providers/account-status';
+import { bankedResetDetails } from '../core/banked-resets';
 type Accounts = Partial<Record<ConversationProvider, ProviderAccountStatus>>;
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => {
   const element = document.createElement(tag); if (text !== undefined) element.textContent = text; if (className) element.className = className; return element;
@@ -27,7 +28,7 @@ export class ProviderAccounts {
   render(accounts: Accounts | undefined, project: string | undefined, activeProvider: ConversationProvider, visible = true) {
     this.root.hidden = !project || !visible;
     if (!project || !visible) { this.close(); this.revision = ''; return; }
-    const revision = JSON.stringify([project, activeProvider, accounts?.[activeProvider]]);
+    const revision = JSON.stringify([project, activeProvider, accounts?.[activeProvider], accounts?.[activeProvider]?.quota?.bankedResets?.availableCount ? Math.floor(Date.now() / 60000) : undefined]);
     if (revision === this.revision) return;
     if (this.provider && this.provider !== activeProvider) this.close();
     this.revision = revision; this.accounts = accounts ?? {};
@@ -67,7 +68,9 @@ export class ProviderAccounts {
           quota.append(label);
         }
       } else quota.append(node('span', status?.quota?.credits || (status?.status === 'error' ? 'Refresh to retry' : 'Quota —')));
-      button.title = `${provider} · ${identity}${account?.plan ? ` · ${planLabel(account.plan)}` : ''}\n${status?.quota?.windows.map(window => `${window.label}: ${remaining(window)}`).join(' · ') || 'Quota unavailable'}\nAPI quota remaining · Open account and quota details`;
+      const resets = status?.quota?.bankedResets;
+      if (resets?.availableCount) quota.append(node('span', `${resets.availableCount} resets`, 'banked-reset-count'));
+      button.title = [`${provider} · ${identity}${account?.plan ? ` · ${planLabel(account.plan)}` : ''}`, status?.quota?.windows.map(window => `${window.label}: ${remaining(window)} · ${resetLabel(window)}`).join('\n') || 'Quota unavailable', ...bankedResetDetails(resets), 'API quota remaining · Open account and quota details'].join('\n');
       button.setAttribute('aria-label', button.title);
       button.append(icon, quota, node('span', undefined, 'codicon codicon-chevron-up')); button.lastElementChild!.setAttribute('aria-hidden', 'true');
       button.onclick = () => this.open(provider); this.root.append(button);
@@ -109,6 +112,7 @@ export class ProviderAccounts {
       row.append(meter, node('span', resetLabel(window), 'account-detail-meta')); this.popover.append(row);
     }
     if (status?.quota?.credits) this.popover.append(node('p', status.quota.credits, 'account-detail-meta'));
+    for (const line of bankedResetDetails(status?.quota?.bankedResets)) this.popover.append(node('p', line, 'account-detail-meta banked-reset-detail'));
     if (status?.quota?.detail) this.popover.append(node('p', status.quota.detail, 'account-detail-meta'));
     if (status?.updatedAt) this.popover.append(node('p', `Updated ${new Date(status.updatedAt).toLocaleTimeString()}`, 'account-detail-meta account-updated'));
     this.position();

@@ -25,6 +25,16 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
+  it('shows banked reset counts and expiry in dashboard account cards and managed accounts', () => {
+    const expiresAt = Date.parse('2026-11-01T00:00:00Z');
+    const status = { status: 'ready' as const, account: { signedIn: true, email: 'codex@test', method: 'ChatGPT' }, quota: { status: 'available' as const, windows: [], bankedResets: { availableCount: 2, credits: [{ title: 'Full reset', expiresAt }] } } };
+    render({ ...value, accounts: { Codex: status }, managedAccounts: [{ id: 'codex-profile', provider: 'Codex', label: 'Work', createdAt: 1, status, active: true }] });
+    for (const selector of ['#accounts', '#account-groups', '#managed-accounts']) {
+      const root = document.querySelector(selector)!;
+      expect(root.textContent).toContain('Banked resets: 2 available');
+      expect(root.textContent).toContain(`Expires ${new Date(expiresAt).toLocaleString()}`);
+    }
+  });
   it('shows live switch progress, lets users hide and reopen it, and retains rollback/error logs without reopening on every update', () => {
     const operation: NonNullable<UsageDashboardState['accountSwitch']> = { id: 'operation-one', profileId: 'selected', provider: 'Codex', label: 'Work', startedAt: Date.now(), status: 'running', outcome: 'notChanged', logs: [{ at: Date.now(), level: 'info', message: 'Backing up the current sign-in.' }] };
     render({ ...value, accountsBusy: true, accountSwitch: operation });
