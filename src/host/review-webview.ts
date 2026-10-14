@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { webviewResource } from './webview-resource';
 import { randomBytes } from 'node:crypto';
 import type { ReviewRequest, ReviewState, ReviewStore } from '../core/review';
 import { reviewContext, type ReviewEditorState } from '../core/review-webview';
@@ -29,7 +30,7 @@ export class ReviewWebview implements vscode.Disposable {
       const panel = vscode.window.createWebviewPanel('agentTandem.review', 'AgentTandem · Review', vscode.ViewColumn.Active,
         { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist'), vscode.Uri.joinPath(this.extensionUri, 'media')] });
       this.panel = panel;
-      const resource = (folder: string, file: string) => panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, folder, file)).toString();
+      const resource = (folder: string, file: string) => webviewResource(panel.webview, this.extensionUri, folder, file);
       panel.webview.html = reviewWebviewHtml({ script: resource('dist', 'review-webview.js'), monacoStyle: resource('dist', 'review-webview.css'), worker: resource('dist', 'review-editor-worker.js'), style: resource('media', 'review-editor.css'), icons: resource('media', 'codicons/codicon.css'), cspSource: panel.webview.cspSource, nonce: randomBytes(18).toString('base64') });
       this.listeners.push(panel.onDidDispose(() => { if (this.panel === panel) this.close(); }),
         panel.onDidChangeViewState(() => { if (panel.visible) this.update(); }),

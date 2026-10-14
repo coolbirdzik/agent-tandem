@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import type { UsageDashboardState } from '../core/usage-dashboard';
 import { settingsHtml } from './settings-html';
+import { webviewResource } from './webview-resource';
 
 export class SettingsView implements vscode.Disposable {
   private panel?: vscode.WebviewPanel;
@@ -19,7 +20,7 @@ export class SettingsView implements vscode.Disposable {
     this.panel = panel;
     const webview = panel.webview;
     webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist'), vscode.Uri.joinPath(this.extensionUri, 'media')] };
-    const resource = (folder: string, file: string) => webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, folder, file)).toString();
+    const resource = (folder: string, file: string) => webviewResource(webview, this.extensionUri, folder, file);
     webview.html = settingsHtml({ script: resource('dist', 'settings.js'), style: resource('media', 'settings.css'), icons: resource('media', 'codicons/codicon.css'),
       claude: resource('media', 'claude.svg'), codex: resource('media', 'codex.svg'), cspSource: webview.cspSource, nonce: randomBytes(18).toString('base64') });
     const bridge = webview.onDidReceiveMessage(async data => {

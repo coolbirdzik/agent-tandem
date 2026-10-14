@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { webviewResource } from './webview-resource';
 import { randomBytes } from 'node:crypto';
 import type { ImageComparison } from '../core/media-preview';
 import { imageMime } from '../core/media-preview';
@@ -27,7 +28,7 @@ export class ImageDiff implements vscode.Disposable {
     } else this.panel.reveal(vscode.ViewColumn.Active);
     const panel = this.panel;
     panel.title = title;
-    const resource = (folder: string, name: string) => escape(panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, folder, name)).toString());
+    const resource = (folder: string, name: string) => escape(webviewResource(panel.webview, this.extensionUri, folder, name));
     const nonce = randomBytes(18).toString('base64');
     panel.webview.html = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${resource('media', 'review-editor.css')}"></head><body><header class="review-header"><strong>${escape(file.file)}</strong><div class="header-actions"><button data-action="previous">Previous file</button><button data-action="choose">Choose file</button><button data-action="next">Next file</button></div></header><main id="images" aria-label="Image changes"></main><footer>Saved image snapshots · Before / After</footer><script id="image-data" type="application/json">${JSON.stringify({ images, file: file.file }).replace(/</g, '\\u003c')}</script><script nonce="${nonce}" src="${resource('dist', 'image-diff.js')}"></script></body></html>`;
     return true;

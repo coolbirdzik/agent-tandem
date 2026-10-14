@@ -9,6 +9,7 @@ describe('Marketplace packaging', () => {
     const result = marketplaceManifest(source, { publisher: 'my-publisher' });
     expect(source).toEqual(original);
     expect(result.publisher).toBe('my-publisher');
+    expect(result.extensionKind).toEqual(['workspace']);
     expect(result).not.toHaveProperty('enabledApiProposals');
     expect(result).not.toHaveProperty('enableProposedApi');
     expect(result.contributes.menus).not.toHaveProperty('editor/content');

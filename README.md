@@ -12,6 +12,10 @@
 
 Tracking captures saved, non-ignored files, including manual edits. It cannot reconstruct changes made before tracking starts. Checkpoints are recorded for turns started in AgentTandem.
 
+### WSL and remote workspaces
+
+Install AgentTandem in the WSL/SSH workspace so it can access that environment's files and signed-in Codex/Claude CLIs. After switching from a local development VSIX to the Marketplace extension, uninstall `agent-tandem-local.agent-tandem` in that environment and run **Developer: Reload Window**. Keep one AgentTandem extension enabled: both builds share commands and views. Uninstalling the extension keeps its saved data.
+
 ## Review changes
 
 Select a conversation group to browse its changed files. Use the arrows for changes/files and **Accept all** for the current file. **…** holds Refresh, Native diff and conversation details. Images show saved **Before / After** versions with whole-file actions.

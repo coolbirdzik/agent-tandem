@@ -6,6 +6,7 @@ import { assertPath, decodeText } from '../core/history';
 import type { Session, ViewState } from '../core/types';
 import type { Selection } from '../core/change-preview';
 import { panelHtml } from './panel-html';
+import { webviewResource } from './webview-resource';
 import type { ChangeNavigation } from './change-navigation';
 import { imageMime } from '../core/media-preview';
 export type { Selection } from '../core/change-preview';
@@ -110,7 +111,7 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
   }
   private configure(webview: vscode.Webview, editorTab: boolean) {
     webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist'), vscode.Uri.joinPath(this.extensionUri, 'media')] };
-    const resource = (folder: string, file: string) => webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, folder, file)).toString();
+    const resource = (folder: string, file: string) => webviewResource(webview, this.extensionUri, folder, file);
     webview.html = panelHtml({ script: resource('dist', 'webview.js'), style: resource('media', 'panel.css'), icons: resource('media', 'codicons/codicon.css'), claude: resource('media', 'claude.svg'), codex: resource('media', 'codex.svg'), cspSource: webview.cspSource, nonce: randomBytes(18).toString('base64') }, editorTab);
     const bridge = webview.onDidReceiveMessage(async (message: unknown) => {
       try {

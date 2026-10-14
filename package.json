@@ -39,6 +39,7 @@
     "Other"
   ],
   "main": "./dist/extension.js",
+  "extensionKind": ["workspace"],
   "activationEvents": [
     "onStartupFinished"
   ],
