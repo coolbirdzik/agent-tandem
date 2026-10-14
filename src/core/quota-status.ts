@@ -24,7 +24,7 @@ export function quotaStatus(state: QuotaState, options: Partial<StatusBarPrefere
   const label = preferences.style === 'icons' ? '' : parts.join(' · ');
   const text = `$(${icon})${label ? ` ${label}` : ''}`;
   const details = windows.map(window => `${window.label}: ${Math.round(Math.max(0, 100 - window.usedPercent) * 10) / 10}% remaining${window.resetsAt ? ` · resets ${new Date(window.resetsAt).toLocaleString()}` : ''}`).join('\n');
-  return { provider, tone, icon, label, text, tooltip: [`${name}${account?.email ? ` · ${account.email}` : ''}${account?.plan ? ` · ${account.plan}` : ''}`, details || status?.quota?.detail || status?.error || 'Quota has not been reported by the selected CLI.', status?.quota?.credits, ...bankedResetDetails(resets), 'Open quota & quick account switch · Dashboard in menu'].filter(Boolean).join('\n') };
+  return { provider, tone, icon, label, text, tooltip: [`${name}${account?.email ? ` · ${account.email}` : ''}${account?.plan ? ` · ${account.plan}` : ''}`, details || status?.quota?.detail || status?.error || 'Quota has not been reported by the selected CLI.', status?.quota?.credits, ...bankedResetDetails(resets), 'Open quota & quick account switch · Open usage dashboard from menu'].filter(Boolean).join('\n') };
 }
 
 export function quotaStatuses(state: QuotaState, preferences: StatusBarPreferences) {
