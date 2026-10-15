@@ -6,6 +6,10 @@ import { withStorageLock } from './storage-lock';
 
 const uuid = /^[a-f0-9-]{36}$/i, hash = /^[a-f0-9]{64}$/;
 const grace = 24 * 60 * 60 * 1000;
+// Native Codex homes create linked tool launchers here. Never follow or clean
+// these links; they are unrelated to our snapshot references and candidates.
+const nativeTemporary = (relative: string) => /^accounts\/profiles\/[a-f0-9-]{36}\/tmp(?:\/|$)/i.test(relative);
+const vanishedTemporary = (error: unknown, relative: string) => nativeTemporary(relative) && (error as NodeJS.ErrnoException).code === 'ENOENT';
 export interface StoredFile { relative: string; bytes: number; modified: number; changed: number; inode: number }
 export interface CleanupPlan { token: string; createdAt: number; files: StoredFile[]; bytes: number }
 export interface CleanupResult { removed: number; bytes: number; skipped: number; failures: string[] }
@@ -36,11 +40,20 @@ export class StorageManager {
     const walk = async (directory: string, prefix: string) => {
       let info;
       try { info = await lstat(directory); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Linked storage directory cannot be managed: ${prefix || this.root}`);
-      for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (!info.isDirectory() || info.isSymbolicLink()) {
+        if (nativeTemporary(prefix)) return;
+        throw new Error(`Linked storage directory cannot be managed: ${prefix || this.root}`);
+      }
+      const entries = await readdir(directory, { withFileTypes: true }).catch(error => { if (vanishedTemporary(error, prefix)) return []; throw error; });
+      for (const entry of entries) {
         if (!prefix && entry.name === '.snapshot-lock') continue;
-        const relative = `${prefix}${entry.name}`, full = path.join(directory, entry.name), stat = await lstat(full);
-        if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink > 1)) throw new Error(`Linked storage file cannot be managed: ${relative}`);
+        const relative = `${prefix}${entry.name}`, full = path.join(directory, entry.name);
+        const stat = await lstat(full).catch(error => { if (vanishedTemporary(error, relative)) return undefined; throw error; });
+        if (!stat) continue;
+        if (stat.isSymbolicLink() || (stat.isFile() && stat.nlink > 1)) {
+          if (nativeTemporary(relative)) continue;
+          throw new Error(`Linked storage file cannot be managed: ${relative}`);
+        }
         if (stat.isDirectory()) await walk(full, `${relative}/`);
         else if (stat.isFile()) result.push({ relative, bytes: stat.size, modified: stat.mtimeMs, changed: stat.ctimeMs, inode: stat.ino });
       }

@@ -10,7 +10,7 @@ import type { FileChange, Manifest, Snapshot } from './types';
 import { streamFile } from './blob';
 import { reviewHunks, textSnapshot, encodeSnapshot, type ReviewHunk } from './review-hunks';
 import { withStorageLock } from './storage-lock';
-import { captureConversations, type ReviewCapture, type ReviewConversation, type ConversationEdit } from './review-conversations';
+import { captureConversations, editOverlapsCapture, type ReviewCapture, type ReviewConversation, type ConversationEdit } from './review-conversations';
 import { reviewGroup } from './review-groups';
 import { imageSnapshots, type ImageComparison } from './media-preview';
 import { reviewGitHead, reviewCommittedPaths, reviewCommittedFile, reviewUncommittedPaths, reviewGitEquivalentFiles } from './review-git';
@@ -86,6 +86,7 @@ export class ReviewStore {
           if (!Number.isFinite(capture.from) || !Number.isFinite(capture.to) || capture.from > capture.to) throw new Error('Invalid review capture interval.');
           for (const id of [capture.before, capture.after]) if (id !== undefined && !/^[a-f0-9]{64}$/.test(id)) throw new Error('Invalid capture snapshot.');
           if (capture.conversations !== undefined && (!Array.isArray(capture.conversations) || capture.conversations.some(item => !item || typeof item.key !== 'string' || typeof item.title !== 'string' || !['Codex', 'Claude'].includes(item.provider)))) throw new Error('Invalid review conversation.');
+          if (capture.assignment !== undefined && (capture.assignment !== 'manual' || capture.conversations?.length !== 1)) throw new Error('Invalid manual conversation link.');
         }
       }
     }
@@ -394,7 +395,7 @@ export class ReviewStore {
       for (const file of value.files) if (before.files[file.path] !== file.after) throw new Error(`Pending ${file.path} changed outside review. Resolve its pending review first; your edits were kept.`);
       value.external = before.id;
       value.externalCapturedAt = Date.now();
-      value.notice = 'Saved workspace changes are tracked. Conversation groups use verified native edit history; other edits remain unassigned. Existing changes are the starting baseline.';
+      value.notice = 'Saved workspace changes are tracked. Conversation groups use native edit history or manual links; other edits remain unassigned. Existing changes are the starting baseline.';
       if (before.notice) value.notice += ` ${before.notice}`;
     } else if (!enabled && value.external) {
       await this.scanExternalValue(value);
@@ -418,7 +419,7 @@ export class ReviewStore {
     value.external = after.id;
     value.externalCapturedAt = to;
     value.externalDecidedAt = undefined;
-    value.notice = 'Already applied · Conversation groups use verified native edit history. Other saved edits remain unassigned.';
+    value.notice = 'Already applied · Conversation groups use native edit history or manual links. Other saved edits remain unassigned.';
     if (after.notice) value.notice += ` ${after.notice}`;
   }
   bindConversation(project: string, previous: string, conversation: ReviewConversation) { return this.serial(async () => {
@@ -432,7 +433,7 @@ export class ReviewStore {
     if (value.active) return this.view(value);
     let changed = false;
     for (const file of value.files) for (const capture of file.captures ?? []) {
-      if (capture.conversations?.length || !edits.some(edit => (process.platform === 'win32' ? edit.path.toLowerCase() === file.path.toLowerCase() : edit.path === file.path) && edit.timestamp >= capture.from && edit.timestamp <= capture.to + 10000)) continue;
+      if (capture.conversations?.length || !edits.some(edit => (process.platform === 'win32' ? edit.path.toLowerCase() === file.path.toLowerCase() : edit.path === file.path) && editOverlapsCapture(edit, capture))) continue;
       const blobs = await Promise.all([capture.before, capture.after].map(id => id ? this.history.inspectBlob(id) : undefined));
       if (blobs.some(blob => blob && (blob.binary || blob.size > 4 * 1024 * 1024 || blob.text === undefined))) continue;
       const sources = captureConversations(capture, file.path, blobs[0]?.text, blobs[1]?.text, edits);
@@ -505,6 +506,27 @@ export class ReviewStore {
     if (!files.length) throw new Error('This change has already been reviewed.');
     return files;
   }
+  /** Explicit links cover scripts and binary output without claiming native byte evidence. */
+  setConversationLink(request: ReviewRequest, conversation?: ReviewConversation) { return this.serial(async () => {
+    if (conversation && (!['Codex', 'Claude'].includes(conversation.provider) || typeof conversation.id !== 'string' || !conversation.id || conversation.key !== `${conversation.provider}:${conversation.id}` || typeof conversation.title !== 'string')) throw new Error('Choose a saved conversation.');
+    const value = await this.load(request.project), files = this.selected(value, request);
+    let changed = false;
+    for (const file of files) {
+      if (!file.captures?.length) file.captures = [{ before: file.before, after: file.after, from: 0, to: 0 }];
+      for (const capture of file.captures) {
+        if (conversation ? capture.conversations?.length : capture.assignment !== 'manual') continue;
+        if (conversation) {
+          const { key, id, provider, title } = conversation;
+          capture.conversations = [{ key, id, provider, title }]; capture.assignment = 'manual';
+        } else { delete capture.conversations; delete capture.assignment; }
+        changed = true;
+      }
+    }
+    if (!changed) throw new Error(conversation ? 'These changes already have conversation links.' : 'These changes have no manual links to remove.');
+    value.revision = randomUUID();
+    value.notice = conversation ? 'Conversation link saved manually. Workspace files and review snapshots were kept.' : 'Manual conversation links removed. Automatic matching remains available.';
+    await this.save(value); return this.view(value);
+  }); }
   accept(request: ReviewRequest) { return this.serial(async () => {
     const value = await this.load(request.project, true), selected = this.selected(value, request);
     if (value.external) for (const file of selected) if (await this.fingerprint(request.project, file.path) !== file.after) throw new Error(`Cannot accept ${file.path}: it changed since capture. Refresh the review.`);

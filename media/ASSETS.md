@@ -14,4 +14,6 @@ To regenerate the PNG, render `icon.svg` at its native 256 × 256 size, preservi
 
 ## Provider assets
 
+`provider-icons.ttf` contains two monochrome glyphs generated from `codex.svg` and `claude.svg` for VS Code's native status bar. The `agent-tandem-codex` and `agent-tandem-claude` product icons inherit the status item's theme/quota color. Regenerate with `python scripts/generate-provider-icons.py` (requires `fonttools`); normal extension builds use the committed font without Python. Preferences uses the matching SVG assets.
+
 `codex.svg` is an unchanged copy of `resources/blossom-black.svg` from the installed OpenAI Codex VS Code extension (`openai.chatgpt`, version `26.1002.51308`). That extension uses its matching white SVG for the Codex activity bar. Source: [OpenAI Codex extension](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt). AgentTandem switches the monochrome mark to white in VS Code dark/high contrast themes through CSS.

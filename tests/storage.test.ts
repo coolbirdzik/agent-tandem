@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, utimes, rm, lstat, symlink, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, utimes, rm, lstat, symlink, readdir, link } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
@@ -27,6 +27,43 @@ async function fixture() {
   return { folder, root, project, reviews, checkpoints, manager, orphan, age };
 }
 describe('Snapshot storage management', () => {
+  it('ignores native account runtime links while inspecting and cleaning snapshot storage', async () => {
+    const f = await fixture(), unused = await f.orphan(); await f.age();
+    const profile = path.join(f.root, 'accounts/profiles', randomUUID()), runtime = path.join(profile, 'tmp/arg0/codex-arg0YTLLOf');
+    await mkdir(runtime, { recursive: true });
+    const auth = '{"tokens":{"access_token":"fixture"}}', cache = 'native temporary data';
+    await writeFile(path.join(profile, 'auth.json'), auth); await writeFile(path.join(runtime, 'cache'), cache);
+    const outside = path.join(f.folder, 'native-tools'); await mkdir(outside);
+    await writeFile(path.join(outside, 'codex'), 'native executable');
+    await link(path.join(outside, 'codex'), path.join(runtime, 'apply_patch'));
+    await symlink(outside, path.join(runtime, 'linked-tools'), process.platform === 'win32' ? 'junction' : 'dir');
+    const summary = await f.manager.inspect();
+    expect(summary.status).toBe('ready'); expect(summary.cleanupBlocked).toBeUndefined();
+    expect(summary.total).toBe((await lstat(unused.file)).size + Buffer.byteLength('unused') + Buffer.byteLength(auth) + Buffer.byteLength(cache));
+    const plan = await f.manager.preview();
+    expect(plan.files).toHaveLength(2); expect(plan.files.every(file => file.relative.startsWith('reviews/history/'))).toBe(true);
+    expect(await f.manager.cleanup(plan)).toMatchObject({ removed: 2, skipped: 0, failures: [] });
+    const saved = await f.orphan(f.reviews.history, 'restore history');
+    await f.checkpoints.record(f.project, 'Codex:runtime-links', ['message'], saved.id);
+    const history = (await f.manager.inspect()).histories![0]!;
+    const deletion = await f.manager.previewHistoryDeletion([history.id]);
+    expect(await f.manager.deleteHistory(deletion)).toMatchObject({ checkpointsRemoved: 1, removed: 2, skipped: 0, failures: [] });
+    expect(await readFile(path.join(outside, 'codex'), 'utf8')).toBe('native executable');
+    expect(await readFile(path.join(runtime, 'apply_patch'), 'utf8')).toBe('native executable');
+    expect((await lstat(path.join(runtime, 'linked-tools'))).isSymbolicLink()).toBe(true);
+    expect(await readFile(path.join(profile, 'auth.json'), 'utf8')).toBe(auth);
+    expect(await readFile(path.join(runtime, 'cache'), 'utf8')).toBe(cache);
+  });
+  it.each(['auth', 'snapshot', 'invalid-profile'])('still blocks a linked %s file outside a native profile temporary directory', async kind => {
+    const f = await fixture(); await f.orphan(); await f.age();
+    const outside = path.join(f.folder, 'linked-target'); await writeFile(outside, 'keep');
+    const relative = kind === 'auth' ? `accounts/profiles/${randomUUID()}/auth.json`
+      : kind === 'snapshot' ? `reviews/history/blobs/${'a'.repeat(64)}` : 'accounts/profiles/not-a-profile/tmp/apply_patch';
+    const target = path.join(f.root, relative); await mkdir(path.dirname(target), { recursive: true }); await link(outside, target);
+    await expect(f.manager.inspect()).rejects.toThrow('Linked storage');
+    await expect(f.manager.preview()).rejects.toThrow('Linked storage');
+    expect(await readFile(outside, 'utf8')).toBe('keep');
+  });
   it('groups history by project and conversation, deletes selected checkpoints and keeps shared and unselected snapshots', async () => {
     const f = await fixture(); await f.reviews.begin(f.project, 'setup'); await f.reviews.finish(f.project, 'setup');
     const shared = await f.orphan(f.reviews.history, 'shared'), exclusive = await f.orphan(f.reviews.history, 'exclusive'), unselected = await f.orphan(f.reviews.history, 'unselected');

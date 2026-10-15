@@ -28,7 +28,7 @@ it('keeps separate agent items with independent quota colors, commands and full 
   const [codex, claude] = host.items;
   expect(codex.visible).toBe(true); expect(claude.visible).toBe(true);
   expect(codex.backgroundColor.id).toBe('statusBarItem.errorBackground'); expect(claude.backgroundColor).toBeUndefined();
-  expect(claude.text).toContain('Claude Code'); expect(claude.command).toEqual({ command: 'agentTandem.quickAccounts', title: 'Quota & quick account switch', arguments: ['Claude'] });
+  expect(claude.text).toBe('$(agent-tandem-claude) 5h 80%'); expect(claude.command).toEqual({ command: 'agentTandem.quickAccounts', title: 'Quota & quick account switch', arguments: ['Claude'] });
   expect(codex.accessibilityInformation.label).toBe(codex.tooltip);
   bar.dispose(); expect(host.items.every(item => item.disposed)).toBe(true);
 });
@@ -51,7 +51,15 @@ it('moves both items to the configured side and disposes the old items', () => {
 it('switches to icons only while retaining accessible agent names and full hover details', () => {
   const bar = new QuotaStatusBar(); bar.update(state);
   host.settings.statusBarStyle = 'icons'; bar.update(state);
-  expect(host.items.map(item => item.text)).toEqual(['$(terminal)', '$(sparkle)']);
+  expect(host.items.map(item => item.text)).toEqual(['$(agent-tandem-codex)', '$(agent-tandem-claude)']);
   expect(host.items[0].accessibilityInformation.label).toContain('Codex'); expect(host.items[1].accessibilityInformation.label).toContain('Claude Code');
   expect(host.items[0].tooltip).toContain('5h: 0% remaining'); expect(host.items).toHaveLength(2); bar.dispose();
+});
+it('switches existing items to progress bars while keeping quota alerts and accessible percentages', () => {
+  const bar = new QuotaStatusBar(); bar.update(state);
+  host.settings.statusBarStyle = 'progress'; bar.update(state);
+  expect(host.items.map(item => item.text)).toEqual(['$(agent-tandem-codex) 5h ░░░░░░░░░░ 0%', '$(agent-tandem-claude) 5h ████████░░ 80%']);
+  expect(host.items[0].backgroundColor.id).toBe('statusBarItem.errorBackground');
+  expect(host.items[1].accessibilityInformation.label).toContain('5h: 80% remaining');
+  expect(host.items).toHaveLength(2); bar.dispose();
 });

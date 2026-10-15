@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep Storage inspection and snapshot cleanup working when Codex profile temporary folders contain linked tool launchers; skip those links without following or deleting them, while retaining link guards for credentials and snapshot data.
+
+- Replace generic status-bar symbols with dedicated Codex blossom and Claude starburst icons in every display mode; match the Preferences preview and retain quota colors and accessible labels.
+
 - Default local and Marketplace review to a bundled Monaco Webview with full-file syntax highlighting, inline red/green diffs, search and colored Accept, Reject, Next change and Next file buttons above each edit. Keep native diff available as an option. Preserve snapshot decisions, Undo, group scope and protection for stale previews, newer edits and unsaved buffers.
 - Add direct Previous/Next file navigation and Alt+PageUp/PageDown shortcuts in both review modes, plus a changed-file picker. Native review also provides editor-title controls and a clickable File x/y status-bar counter.
 - Document Tracking on as the first setup step and explain review editor selection in the README and walkthrough.

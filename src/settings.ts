@@ -199,7 +199,7 @@ function renderStatusBarPreview() {
   if (!enabled) { root.append(node('span', 'Status bar hidden', 'muted')); return; }
   const preferences = statusBarPreferences({ providers: el<HTMLSelectElement>('status-bar-providers').value as StatusBarPreferences['providers'], fields: selectedStatusBarFields(), quotaWindows: el<HTMLSelectElement>('status-bar-windows').value as StatusBarPreferences['quotaWindows'], style: el<HTMLSelectElement>('status-bar-style').value as StatusBarPreferences['style'] });
   for (const value of quotaStatuses({ accounts: state?.accounts, composeProvider: state?.activeProvider }, preferences)) {
-    const item = node('span', undefined, 'status-bar-preview-item'), icon = node('span', undefined, `codicon codicon-${value.icon}`);
+    const item = node('span', undefined, 'status-bar-preview-item'), icon = providerIcon(value.provider);
     icon.setAttribute('aria-hidden', 'true'); item.append(icon, document.createTextNode(value.label)); item.title = value.tooltip;
     item.setAttribute('role', 'img'); item.setAttribute('aria-label', value.tooltip); root.append(item);
   }

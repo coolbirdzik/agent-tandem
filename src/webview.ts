@@ -5,7 +5,7 @@ import type { ViewState } from './core/types';
 import type { ConversationProvider } from './providers/conversations';
 import type { ChatEdit, ChatRequest, PromptAnswer } from './providers/chat';
 import type { ReviewRequest, ReviewFile } from './core/review';
-import { fileConversations, reviewGroup } from './core/review-groups';
+import { fileConversations, reviewGroup, hasUnassignedCaptures, hasManualConversationLink } from './core/review-groups';
 import { CLIManagerView } from './cli-manager-view';
 import { Dropdowns } from './ui/dropdown';
 import { ContextStatus } from './ui/context-status';
@@ -368,6 +368,14 @@ function reviewFileRow(state: ViewState, file: ReviewFile, disabled: boolean, gr
   if (file.additions !== undefined) stats.append(create('span', `+${file.additions}`, 'review-added'), create('span', `−${file.deletions ?? 0}`, 'review-deleted'));
   else stats.textContent = file.binary ? 'Binary' : file.kind;
   row.append(stats);
+  for (const [available, type, label, mark] of [
+    [hasUnassignedCaptures(file), 'linkReviewConversation', 'Link to conversation', 'link'],
+    [hasManualConversationLink(file), 'unlinkReviewConversation', 'Remove manual link', 'close'],
+  ] as const) if (available) {
+    const action = button('', () => send(type, request()), disabled);
+    action.className = 'review-file-action'; action.append(icon(mark)); action.title = `${label}: ${file.path}`;
+    action.setAttribute('aria-label', action.title); action.dataset.focusKey = `${prefix}:${type}:${file.path}`; row.append(action);
+  }
   for (const [type, name, title] of [['previewRevert', 'discard', 'Revert'], ['acceptChanges', 'check', 'Accept']]) {
     const action = button(title!, () => send(type!, request()), disabled);
     action.className = 'review-file-action'; action.prepend(icon(name!)); action.title = `${title} ${file.path}`; action.setAttribute('aria-label', action.title); action.dataset.focusKey = `${prefix}:${type}:${file.path}`; row.append(action);
@@ -427,15 +435,17 @@ function renderConversationChanges(state: ViewState, disabled: boolean) {
     const title = create('span', named ? source!.title : key === 'shared' ? 'Shared workspace changes' : 'Unassigned workspace changes', 'conversation-change-title'); heading.append(title);
     heading.append(create('span', `${files.length}`, 'count'), icon('chevron-down')); card.append(heading);
     if (named) {
-      const caption = create('p', `${source!.provider === 'Claude' ? 'Claude Code' : 'Codex'}${key === selected ? ' · Current conversation' : ''}`, 'review-caption conversation-change-caption'); caption.title = source!.id || 'New conversation';
+      const caption = create('p', `${source!.provider === 'Claude' ? 'Claude Code' : 'Codex'}${key === selected ? ' · Current conversation' : ''}${files.some(hasManualConversationLink) ? ' · Includes manual links' : ''}`, 'review-caption conversation-change-caption'); caption.title = source!.id || 'New conversation';
       if (state.conversations?.some(item => item.key === key)) {
         const open = button('', () => send('conversation', key)); open.className = 'review-chat-link'; open.title = 'Open this conversation in AgentTandem chat'; open.setAttribute('aria-label', 'Open conversation'); open.append(icon('comment-discussion'), create('span', 'Open conversation')); caption.append(open);
       }
       body.append(caption);
-    } else body.append(create('p', key === 'shared' ? 'Multiple conversations or mixed edits. Review these files together.' : 'These edits could not be linked to a conversation. Scripts, package updates and manual edits can appear here.', 'review-caption'));
+    } else body.append(create('p', key === 'shared' ? 'Multiple conversations or mixed edits. Review these files together.' : 'No automatic conversation match. Link these files to the conversation that produced them, or review them here.', 'review-caption'));
     const actions = create('div', undefined, 'review-actions');
     const request = (): ReviewRequest => ({ project: state.project!, revision: review.revision, group: key });
     actions.append(button('View changes', () => send('previewReview', request())), button('Revert group', () => send('previewRevert', request()), disabled), button('Accept group', () => send('acceptChanges', request()), disabled));
+    if (files.some(hasUnassignedCaptures)) actions.append(button('Link to conversation', () => send('linkReviewConversation', request()), disabled));
+    if (files.some(hasManualConversationLink)) actions.append(button('Remove manual links', () => send('unlinkReviewConversation', request()), disabled));
     body.append(actions);
     const list = create('div', undefined, 'review-files');
     for (const file of files) list.append(reviewFileRow(state, file, disabled, key, 'changes'));

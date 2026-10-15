@@ -10,3 +10,6 @@ export function reviewGroup(file: ReviewFile): string {
   if (sources.length > 1 || file.captures?.some(capture => !capture.conversations?.length)) return 'shared';
   return sources[0]!.key;
 }
+
+export const hasUnassignedCaptures = (file: ReviewFile) => !file.captures?.length || file.captures.some(capture => !capture.conversations?.length);
+export const hasManualConversationLink = (file: ReviewFile) => !!file.captures?.some(capture => capture.assignment === 'manual');

@@ -1,6 +1,6 @@
 import * as assert from 'node:assert/strict';
 import * as vscode from 'vscode';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, utimes } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -81,9 +81,25 @@ export async function run() {
   ];
   await writeFile(path.join(claudeDir, `${claudeId}.jsonl`), claudeRecords.map(record => JSON.stringify(record)).join('\n') + '\n');
   await writeFile(path.join(codexDir, `rollout-${codexId}.jsonl`), codexRecords.map(record => JSON.stringify(record)).join('\n') + '\n');
+  // Native record timestamps are authoritative even when the file mtime lags.
+  await utimes(path.join(codexDir, `rollout-${codexId}.jsonl`), new Date(0), new Date(0));
   await api.syncConversations(); await vscode.commands.executeCommand('agentTandem.captureExternalChanges');
   const grouped = api.viewState().review!;
   assert.deepEqual(grouped.files.map(file => [file.path, file.captures?.flatMap(capture => capture.conversations?.map(item => item.key) ?? [])]), [['deleted.ts', [`Codex:${codexId}`]], ['source.ts', [`Claude:${claudeId}`]]]);
+  // Generated/binary output can be linked explicitly without changing bytes or native links.
+  await writeFile(path.join(project, 'generated.bin'), Buffer.from([0, 1, 2]));
+  await vscode.commands.executeCommand('agentTandem.captureExternalChanges');
+  const manualRequest = () => ({ project, revision: api.viewState().review!.revision, file: 'generated.bin' });
+  await assert.rejects(async () => vscode.commands.executeCommand('agentTandem.linkReviewConversation', { ...manualRequest(), conversationKey: 'Codex:another-workspace' }), /current workspace/);
+  await vscode.commands.executeCommand('agentTandem.linkReviewConversation', { ...manualRequest(), conversationKey: `Codex:${codexId}` });
+  assert.equal(api.viewState().review!.files.find(file => file.path === 'generated.bin')!.captures![0]!.assignment, 'manual');
+  await vscode.commands.executeCommand('agentTandem.unlinkReviewConversation', manualRequest());
+  assert.equal(api.viewState().review!.files.find(file => file.path === 'generated.bin')!.captures![0]!.conversations, undefined);
+  await vscode.commands.executeCommand('agentTandem.linkReviewConversation', { project, revision: api.viewState().review!.revision, group: 'unassigned', conversationKey: `Codex:${codexId}` });
+  assert.deepEqual(await readFile(path.join(project, 'generated.bin')), Buffer.from([0, 1, 2]));
+  await vscode.commands.executeCommand('agentTandem.acceptChanges', manualRequest());
+  assert.deepEqual(api.viewState().review!.files.map(file => file.path), ['deleted.ts', 'source.ts']);
+  grouped.revision = api.viewState().review!.revision;
   await vscode.commands.executeCommand('agentTandem.reviewLatest');
   assert.equal(api.changeNavigationState()?.total, 2, 'Status-bar Review includes every conversation in the open workspace');
   await vscode.workspace.getConfiguration('agentTandem').update('reviewEditor', 'webview', vscode.ConfigurationTarget.Global);

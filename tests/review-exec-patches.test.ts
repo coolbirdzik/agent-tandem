@@ -8,6 +8,17 @@ const output = (...values: string[]) => [{ type: 'input_text', text: 'Script com
 const conversation = { key: 'Codex:session', id: 'session', provider: 'Codex' as const, title: 'Wrapped patch' };
 
 describe('Codex exec patch evidence', () => {
+  it('uses the tool interval when a wrapper finishes more than ten seconds after capture', () => {
+    const edits = conversationEdits([
+      { type: 'response_item', timestamp: new Date(1100).toISOString(), payload: { type: 'custom_tool_call', name: 'functions.exec', call_id: 'long', input: call } },
+      { type: 'response_item', timestamp: new Date(61000).toISOString(), payload: { type: 'custom_tool_call_output', call_id: 'long', output: output('{}') } },
+    ], conversation, '/project', '/project');
+    expect(edits).toMatchObject([{ startedAt: 1100, timestamp: 61000 }]);
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'old\n', 'new\n', edits)).toEqual([conversation]);
+    expect(captureConversations({ from: 1000, to: 1099 }, 'source.ts', 'old\n', 'new\n', edits)).toBeUndefined();
+    expect(captureConversations({ from: 61001, to: 62000 }, 'source.ts', 'old\n', 'new\n', edits)).toBeUndefined();
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'old\n', 'manual\n', edits)).toBeUndefined();
+  });
   it('matches a completed wrapped patch against the saved bytes and capture interval', () => {
     const records = [
       { type: 'response_item', payload: { type: 'custom_tool_call', name: 'functions.exec', call_id: 'exec-1', input: call } },

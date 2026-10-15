@@ -521,8 +521,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   async function attributeExternalReview(project: string, review: NonNullable<ViewState['review']>, index?: ConversationIndex) {
     const unresolved = review.files.flatMap(file => file.captures ?? []).filter(capture => !capture.conversations?.length && capture.from > 0);
     if (!unresolved.length || review.busy) return review;
-    const from = unresolved.reduce((first, capture) => Math.min(first, capture.from), Infinity);
-    const conversations = (index ?? await source.list(project)).conversations.filter(conversation => conversation.updatedAt >= from);
+    // Filesystem mtimes can lag behind timestamps inside native histories (for
+    // example after a clock change or sync). Only the tool evidence can decide
+    // whether an edit overlaps a capture; cached histories keep retries cheap.
+    const conversations = (index ?? await source.list(project)).conversations;
     const edits = [];
     // Read changed native histories, without starting either provider or rewriting its files.
     for (let i = 0; i < conversations.length; i += 8) {
@@ -1131,6 +1133,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     else await reviewEditor!.open(request, current);
   });
   register('agentTandem.closeReviewPreview', () => { state.reviewPreview = undefined; update(); });
+  const setReviewConversation = async (value: unknown, remove = false) => {
+    const request = reviewRequest(value), version = generation;
+    const ready = () => {
+      if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before linking changes.');
+      if (disposed || version !== generation || request.project !== state.project || request.revision !== state.review?.revision) throw new Error('The project or review changed. Choose the current changes again.');
+      if (chatAbort || reviewing || externalJob || externalSwitching) throw new Error('Wait for the agent and change capture to finish.');
+    };
+    ready();
+    const files = await reviews.editorFiles(request);
+    let conversation;
+    if (!remove) {
+      const index = await source.list(request.project), key = (value as { conversationKey?: unknown }).conversationKey;
+      if (key !== undefined && typeof key !== 'string') throw new Error('Choose a saved conversation.');
+      if (key !== undefined) {
+        conversation = index.conversations.find(item => item.key === key);
+        if (!conversation) throw new Error('This conversation is not available in the current workspace.');
+      } else {
+        const selected = await vscode.window.showQuickPick(index.conversations.map(item => ({ label: item.title, description: item.provider, detail: item.id, conversation: item })), {
+          title: `Link ${files.length} ${files.length === 1 ? 'file' : 'files'} to a conversation`,
+          placeHolder: index.conversations.length ? 'Choose the conversation that produced these changes' : 'No saved conversations in this workspace. Sync conversations and try again.', matchOnDescription: true,
+        });
+        if (!selected) return;
+        conversation = selected.conversation;
+      }
+    }
+    ready();
+    reviewing = true; state.reviewBusy = true; state.error = undefined; update();
+    try {
+      const result = await reviews.setConversationLink(request, conversation);
+      if (disposed || version !== generation || request.project !== state.project) return;
+      state.review = result; state.reviewPreview = undefined; state.revertPreview = undefined;
+      await changeNavigation.refreshReview(request.project, result.files.map(file => ({ file: file.path, original: reviewSnapshotUri(file.before, file.path), modified: reviewSnapshotUri(file.after, file.path), review: { project: request.project, revision: result.revision, group: reviewGroup(file) } })));
+    } finally { reviewing = false; if (!disposed && version === generation && request.project === state.project) { state.reviewBusy = false; update(); } }
+  };
+  register('agentTandem.linkReviewConversation', value => setReviewConversation(value));
+  register('agentTandem.unlinkReviewConversation', value => setReviewConversation(value, true));
   register('agentTandem.refreshReview', async () => { if (state.review?.externalTracking) await captureExternalReview(); else await refreshReview(state.project, true); });
   register('agentTandem.reviewLatest', async () => {
     followRoot();

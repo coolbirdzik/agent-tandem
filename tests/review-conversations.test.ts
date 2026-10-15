@@ -29,6 +29,13 @@ async function fixture() {
   return { root, project, store, set };
 }
 describe('Conversation change evidence', () => {
+  it('skips an overlapping delayed patch already present in the captured baseline', () => {
+    const earlier = conversationEdits(patch('*** Begin Patch\n*** Update File: source.ts\n@@\n header\n+already captured\n*** End Patch', 1200), codex, '/project', '/project');
+    const current = conversationEdits(records('Edit', { file_path: 'source.ts', old_string: 'old', new_string: 'new' }, 1400), claude, '/project', '/project');
+    const before = 'header\nalready captured\nold\n', after = 'header\nalready captured\nnew\n';
+    expect(captureConversations({ from: 1100, to: 1500 }, 'source.ts', before, after, [...earlier, ...current])).toEqual([claude]);
+    expect(captureConversations({ from: 1100, to: 1500 }, 'source.ts', before, after + 'manual\n', [...earlier, ...current])).toBeUndefined();
+  });
   it('matches successful Claude Edit/MultiEdit/Write by exact contents and capture interval', () => {
     const edits = conversationEdits(records('Edit', { file_path: '/project/source.ts', old_string: 'old', new_string: 'new' }, 1200), claude, '/project', '/project');
     expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'old\n', 'new\n', edits)).toEqual([claude]);
@@ -77,6 +84,59 @@ describe('Conversation change evidence', () => {
   });
 });
 describe('Conversation review ownership', () => {
+  it('links script output and binary files explicitly, persists the links, and removes only the selected manual links', async () => {
+    const f = await fixture();
+    await mkdir(path.join(f.project, 'media')); await mkdir(path.join(f.project, 'tests'));
+    const names = ['media/provider-icons.ttf', 'media/screenshots.png', 'tests/quota-status-bar.test.ts', 'tests/settings.test.ts', 'tests/status-bar-preferences.test.ts'];
+    await f.set(names[1]!, '\0old image');
+    for (const name of names.slice(2)) await f.set(name, 'old test\n');
+    await f.store.initializeExternalTracking(f.project);
+    for (const [i, name] of names.entries()) await f.set(name, i < 2 ? `\0binary ${i}` : 'new test\r\n');
+    const pending = await f.store.scanExternal(f.project), request = { project: f.project, revision: pending.revision, group: 'unassigned' };
+    const snapshots = pending.files.map(file => [file.path, file.before, file.after]);
+    const linked = await f.store.setConversationLink(request, codex);
+    expect(linked.files).toHaveLength(5); expect(linked.files.filter(file => file.binary)).toHaveLength(2);
+    expect(linked.files.map(reviewGroup)).toEqual(Array(5).fill(codex.key));
+    expect(linked.files.every(file => file.captures?.every(capture => capture.assignment === 'manual'))).toBe(true);
+    expect(linked.files.map(file => [file.path, file.before, file.after])).toEqual(snapshots);
+    const reloaded = new ReviewStore(f.store.directory);
+    expect((await reloaded.read(f.project)).files).toEqual(linked.files);
+    await expect(reloaded.setConversationLink(request, codex)).rejects.toThrow('updated');
+    const unlinked = await reloaded.setConversationLink({ ...request, revision: linked.revision, group: codex.key, file: names[0] });
+    expect(unlinked.files.filter(file => reviewGroup(file) === 'unassigned').map(file => file.path)).toEqual([names[0]]);
+    expect(unlinked.files.filter(file => reviewGroup(file) === codex.key)).toHaveLength(4);
+    expect(await readFile(path.join(f.project, names[0]!), 'utf8')).toBe('\0binary 0');
+    expect((await reloaded.scanExternal(f.project)).files.map(file => [file.path, file.before, file.after])).toEqual(snapshots);
+  });
+  it('keeps native ownership on shared files when adding and removing explicit links', async () => {
+    const f = await fixture(); await f.store.initializeExternalTracking(f.project);
+    await f.store.begin(f.project, 'native', undefined, claude); await f.set('source.ts', 'native\n'); await f.store.finish(f.project, 'native');
+    await f.set('source.ts', 'script\n'); const pending = await f.store.scanExternal(f.project);
+    const linked = await f.store.setConversationLink({ project: f.project, revision: pending.revision, group: 'shared' }, codex);
+    expect(fileConversations(linked.files[0]!)).toEqual([claude, codex]);
+    const unlinked = await f.store.setConversationLink({ project: f.project, revision: linked.revision, file: 'source.ts' });
+    expect(fileConversations(unlinked.files[0]!)).toEqual([claude]);
+    expect(reviewGroup(unlinked.files[0]!)).toBe('shared');
+    expect(unlinked.files[0]!.captures![0]!.assignment).toBeUndefined();
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('script\n');
+    await f.store.begin(f.project, 'busy');
+    await expect(f.store.setConversationLink({ project: f.project, revision: unlinked.revision }, codex)).rejects.toThrow('Wait for the agent');
+  });
+  it('repairs saved captures when successful patch output arrives after a long wrapper', async () => {
+    const f = await fixture(); await f.store.initializeExternalTracking(f.project);
+    const startedAt = Date.now(); await f.set('source.ts', 'new\n');
+    const pending = await f.store.scanExternal(f.project);
+    const input = `text(await tools.apply_patch(${JSON.stringify('*** Begin Patch\n*** Update File: source.ts\n@@\n-old\n+new\n*** End Patch')}));`;
+    const edits = conversationEdits([
+      { type: 'response_item', timestamp: new Date(startedAt).toISOString(), payload: { type: 'custom_tool_call', name: 'exec', call_id: 'long', input } },
+      { type: 'response_item', timestamp: new Date(Date.now() + 60000).toISOString(), payload: { type: 'custom_tool_call_output', call_id: 'long', output: [{ type: 'input_text', text: 'Script completed\nOutput:\n' }, { type: 'input_text', text: '{}' }] } },
+    ], codex, f.project, f.project);
+    const grouped = await new ReviewStore(f.store.directory).attributeConversations(f.project, edits);
+    expect(grouped.files.map(reviewGroup)).toEqual([codex.key]);
+    expect(grouped.files[0]!.before).toBe(pending.files[0]!.before);
+    expect(grouped.files[0]!.after).toBe(pending.files[0]!.after);
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('new\n');
+  });
   it('repairs previously unassigned captures from wrapped exec history after reload without changing snapshots', async () => {
     const f = await fixture(); await f.store.initializeExternalTracking(f.project);
     await f.set('source.ts', 'new\n'); const at = Date.now(), pending = await f.store.scanExternal(f.project);

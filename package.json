@@ -60,6 +60,16 @@
     }
   },
   "contributes": {
+    "icons": {
+      "agent-tandem-codex": {
+        "description": "AgentTandem Codex provider logo",
+        "default": { "fontPath": "./media/provider-icons.ttf", "fontCharacter": "\\E001" }
+      },
+      "agent-tandem-claude": {
+        "description": "AgentTandem Claude Code provider logo",
+        "default": { "fontPath": "./media/provider-icons.ttf", "fontCharacter": "\\E002" }
+      }
+    },
     "commands": [
       {
         "command": "agentTandem.quickAccounts",
@@ -399,16 +409,18 @@
           "type": "string",
           "enum": [
             "compact",
+            "progress",
             "icons",
             "text"
           ],
           "enumDescriptions": [
             "Distinct agent icons with quota and a short banked reset count.",
+            "Agent icons with detailed progress bars and percentages showing remaining quota.",
             "Agent icons only; hover for account, quota and reset details.",
-            "Full agent names and detail labels."
+            "Agent icons with full detail labels."
           ],
           "default": "compact",
-          "description": "Appearance of the agent quota status items. Compact uses a terminal icon for Codex, a sparkle for Claude Code, and ↻ for banked resets."
+          "description": "Appearance of the agent quota status items. Uses the Codex blossom and Claude starburst provider icons, and ↻ for banked resets."
         },
         "agentTandem.statusBarFields": {
           "type": "array",
@@ -427,7 +439,7 @@
             "quota",
             "bankedResets"
           ],
-          "description": "Details shown beside each agent, in this order: remaining quota, quota reset countdown, banked reset count, account and plan. Hover always shows full details. An empty list shows agent names only."
+          "description": "Details shown beside each agent, in this order: remaining quota, quota reset countdown, banked reset count, account and plan. Hover always shows full details. An empty list shows agent icons only."
         },
         "agentTandem.statusBarQuotaWindows": {
           "type": "string",

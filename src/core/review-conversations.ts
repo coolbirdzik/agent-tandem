@@ -3,9 +3,9 @@ import type { Conversation } from '../providers/conversations';
 import { execPatches } from './review-exec-patches';
 
 export type ReviewConversation = Pick<Conversation, 'key' | 'id' | 'provider' | 'title'>;
-export interface ReviewCapture { before?: string; after?: string; from: number; to: number; conversations?: ReviewConversation[] }
+export interface ReviewCapture { before?: string; after?: string; from: number; to: number; conversations?: ReviewConversation[]; assignment?: 'manual' }
 export interface ConversationEdit {
-  id: string; conversation: ReviewConversation; timestamp: number; path: string;
+  id: string; conversation: ReviewConversation; timestamp: number; startedAt?: number; path: string;
   operation: { kind: 'write'; content: string } | { kind: 'delete' } | { kind: 'edit'; edits: Array<{ old: string; next: string; all: boolean }> } | { kind: 'patch'; chunks: string[][]; added: boolean };
 }
 const obj = (value: unknown): Record<string, any> => value && typeof value === 'object' ? value as Record<string, any> : {};
@@ -21,13 +21,14 @@ export function conversationEdits(records: unknown[], conversation: ReviewConver
     return result;
   };
   let directory = cwd;
-  const calls = new Map<string, { name: string; input: unknown; cwd: string }>(), result: ConversationEdit[] = [];
+  const calls = new Map<string, { name: string; input: unknown; cwd: string; startedAt: number }>(), result: ConversationEdit[] = [];
   const consume = (id: unknown, output: unknown, failed: boolean, timestamp: unknown) => {
     if (typeof id !== 'string') return;
     const call = calls.get(id), at = typeof timestamp === 'string' ? Date.parse(timestamp) : NaN;
     if (!call || failed || !Number.isFinite(at)) return;
     const add = (name: unknown, operation: ConversationEdit['operation']) => {
-      const file = relative(name, call.cwd); if (file) result.push({ id, conversation: source, timestamp: at, path: file, operation });
+      const file = relative(name, call.cwd);
+      if (file) result.push({ id, conversation: source, timestamp: at, ...(Number.isFinite(call.startedAt) && call.startedAt <= at ? { startedAt: call.startedAt } : {}), path: file, operation });
     };
     if (conversation.provider === 'Claude') {
       const input = obj(call.input);
@@ -72,11 +73,11 @@ export function conversationEdits(records: unknown[], conversation: ReviewConver
     if (conversation.provider === 'Claude') {
       const blocks = obj(record.message).content;
       if (Array.isArray(blocks)) for (const block of blocks) {
-        if (block.type === 'tool_use' && typeof block.id === 'string') calls.set(block.id, { name: block.name, input: block.input, cwd: directory });
+        if (block.type === 'tool_use' && typeof block.id === 'string') calls.set(block.id, { name: block.name, input: block.input, cwd: directory, startedAt: Date.parse(record.timestamp) });
         if (block.type === 'tool_result') consume(block.tool_use_id, block.content, block.is_error === true, record.timestamp);
       }
     } else if (record.type === 'response_item') {
-      if (payload.type === 'function_call' || payload.type === 'custom_tool_call') calls.set(payload.call_id, { name: payload.name, input: payload.arguments ?? payload.input, cwd: directory });
+      if (payload.type === 'function_call' || payload.type === 'custom_tool_call') calls.set(payload.call_id, { name: payload.name, input: payload.arguments ?? payload.input, cwd: directory, startedAt: Date.parse(record.timestamp) });
       if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') consume(payload.call_id, payload.output, false, record.timestamp);
     }
   }
@@ -127,17 +128,30 @@ function apply(text: string | undefined, operation: ConversationEdit['operation'
   return lines.map((line, index) => line.content + (index === lines.length - 1 && !trailing ? '' : line.ending || newline)).join('');
 }
 
+/** A wrapper can finish long after the watcher has captured its patch. */
+export function editOverlapsCapture(edit: ConversationEdit, capture: ReviewCapture): boolean {
+  return edit.timestamp >= capture.from && (edit.startedAt === undefined ? edit.timestamp <= capture.to + 10000 : edit.startedAt <= capture.to);
+}
+
 /** Verify a complete content transition; a nearby conversation or path alone is insufficient. */
 export function captureConversations(capture: ReviewCapture, file: string, before: string | undefined, after: string | undefined, edits: ConversationEdit[]): ReviewConversation[] | undefined {
   const samePath = (name: string) => process.platform === 'win32' ? name.toLowerCase() === file.toLowerCase() : name === file;
-  const candidates = edits.filter(edit => samePath(edit.path) && edit.timestamp >= capture.from && edit.timestamp <= capture.to + 10000).sort((a, b) => a.timestamp - b.timestamp);
-  let text = before;
-  const sources = new Map<string, ReviewConversation>();
-  for (const edit of candidates) {
-    const next = apply(text, edit.operation);
-    if (next === false || next === text) continue;
-    text = next; sources.set(edit.conversation.key, edit.conversation);
-    if (text === after && sources.size) return [...sources.values()];
+  const candidates = edits.filter(edit => samePath(edit.path) && editOverlapsCapture(edit, capture)).sort((a, b) => a.timestamp - b.timestamp);
+  const pending = [{ index: 0, text: before, sources: new Map<string, ReviewConversation>() }];
+  let transitions = 0;
+  while (pending.length) {
+    let { index, text, sources } = pending.pop()!;
+    for (; index < candidates.length; index++) {
+      const edit = candidates[index]!, next = apply(text, edit.operation);
+      if (next === false || next === text) continue;
+      // A prior patch can finish after its bytes were already captured. Keep
+      // the branch that skips it rather than forcing every overlapping result
+      // into this transition. Only an exact before/after match proves a link.
+      if (++transitions > 256) return; // Bound ambiguous histories conservatively.
+      pending.push({ index: index + 1, text, sources });
+      text = next; sources = new Map(sources); sources.set(edit.conversation.key, edit.conversation);
+      if (text === after) return [...sources.values()];
+    }
   }
   return;
 }

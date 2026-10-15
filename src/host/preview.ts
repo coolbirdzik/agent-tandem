@@ -135,6 +135,8 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
         commands.cancelRevert = 'agentTandem.cancelRevert';
         commands.undoRevert = 'agentTandem.undoRevert';
         commands.reviewLatest = 'agentTandem.reviewLatest';
+        commands.linkReviewConversation = 'agentTandem.linkReviewConversation';
+        commands.unlinkReviewConversation = 'agentTandem.unlinkReviewConversation';
         if (!Object.hasOwn(commands, type)) throw new Error('Unsupported request.');
         const selected = ['step', 'cumulative', 'file', 'editor-step', 'editor-file', 'editor-cumulative'].includes(type) ? selectionFrom(data.selection) : data.selection;
         await this.invoke(commands[type]!, selected);

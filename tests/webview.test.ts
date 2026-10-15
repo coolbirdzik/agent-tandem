@@ -25,6 +25,24 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const item of listeners.splice(0)) window.removeEventListener(item.type, item.listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Single tandem webview', () => {
+  it('offers scoped conversation links for script and binary changes and labels removable manual links', () => {
+    const names = ['media/provider-icons.ttf', 'media/screenshots/preferences.png', 'tests/quota-status-bar.test.ts', 'tests/settings.test.ts', 'tests/status-bar-preferences.test.ts'];
+    const review = { revision: 'scripts', busy: false, files: names.map((name, i) => ({ path: name, kind: 'modified' as const, binary: i < 2 })) };
+    render({ ...state, screen: 'changes', review });
+    const group = document.querySelector<HTMLElement>('[data-group="unassigned"]')!;
+    [...group.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Link to conversation')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'linkReviewConversation', selection: { project: '/project', revision: 'scripts', group: 'unassigned' } });
+    group.querySelector<HTMLButtonElement>('[aria-label="Link to conversation: media/provider-icons.ttf"]')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'linkReviewConversation', selection: { project: '/project', revision: 'scripts', group: 'unassigned', file: names[0] } });
+    const linked = { ...review, revision: 'linked', files: review.files.map(file => ({ ...file, captures: [{ from: 1, to: 2, conversations: [conversation], assignment: 'manual' as const }] })) };
+    render({ ...state, screen: 'changes', review: linked });
+    expect(document.querySelector('[data-group="unassigned"]')).toBeNull();
+    expect(document.querySelector('.conversation-change-caption')!.textContent).toContain('Includes manual links');
+    document.querySelector<HTMLButtonElement>('[aria-label="Remove manual link: media/provider-icons.ttf"]')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'unlinkReviewConversation', selection: { project: '/project', revision: 'linked', group: conversation.key, file: names[0] } });
+    render({ ...state, screen: 'changes', review: linked, reviewBusy: true });
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Remove manual link: media/provider-icons.ttf"]')!.disabled).toBe(true);
+  });
   it('shows banked resets in the quota summary, hover and account popover and removes stale account data', () => {
     const expiresAt = Date.parse('2026-11-01T00:00:00Z');
     const codexState = { ...state, conversation: { conversation: state.conversations![1]!, messages: [] } };

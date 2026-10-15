@@ -65,9 +65,9 @@ describe('Dashboard grouping and quota presentation', () => {
     const accounts = { Codex: { status: 'ready' as const, account: { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT' }, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 25 }] } },
       Claude: { status: 'ready' as const, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 100 }] } } };
     const value = quotaStatus({ composeProvider: 'Codex', accounts });
-    expect(value.text).toBe('$(terminal) Codex · 5h 75%'); expect(value.tooltip).toContain('codex@test.invalid'); expect(value.tooltip).toContain('usage dashboard');
-    expect(quotaStatus({ conversation: { conversation: { provider: 'Claude' } } as any, accounts }).text).toBe('$(sparkle) Claude Code · 5h 0%');
-    expect(quotaStatus({ composeProvider: 'Claude', accounts: { Claude: { status: 'loading' } } }).text).toContain('Claude Code · …');
+    expect(value.text).toBe('$(agent-tandem-codex) 5h 75%'); expect(value.tooltip).toContain('codex@test.invalid'); expect(value.tooltip).toContain('usage dashboard');
+    expect(quotaStatus({ conversation: { conversation: { provider: 'Claude' } } as any, accounts }).text).toBe('$(agent-tandem-claude) 5h 0%');
+    expect(quotaStatus({ composeProvider: 'Claude', accounts: { Claude: { status: 'loading' } } }).text).toBe('$(agent-tandem-claude) …');
     expect(quotaStatus({}).text).toContain('Quota —');
   });
 });

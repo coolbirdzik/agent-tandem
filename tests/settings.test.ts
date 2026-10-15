@@ -72,8 +72,8 @@ describe('Settings usage dashboard', () => {
   });
   it('previews distinct agent icons and switches appearance without losing selected details', () => {
     render();
-    expect(document.querySelector('#status-bar-preview .codicon-terminal')).not.toBeNull();
-    expect(document.querySelector('#status-bar-preview .codicon-sparkle')).not.toBeNull();
+    expect(document.querySelector('#status-bar-preview .provider-icon[data-provider=Codex]')).not.toBeNull();
+    expect(document.querySelector('#status-bar-preview .provider-icon[data-provider=Claude]')).not.toBeNull();
     choose('status-bar-style', 'icons');
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { style: 'icons' } } });
     const items = [...document.querySelectorAll<HTMLElement>('.status-bar-preview-item')];
@@ -84,16 +84,17 @@ describe('Settings usage dashboard', () => {
     expect(quota.disabled).toBe(true); expect(quota.checked).toBe(true);
     choose('status-bar-style', 'text');
     expect(quota.disabled).toBe(false); expect(quota.checked).toBe(true);
-    expect(document.querySelectorAll('#status-bar-preview .codicon-dashboard')).toHaveLength(2);
-    expect(document.querySelector('#status-bar-preview')!.textContent).toContain('Claude Code · 5h 75%');
+    expect(document.querySelectorAll('#status-bar-preview .provider-icon')).toHaveLength(2);
+    expect(document.querySelector('#status-bar-preview')!.textContent).toContain('5h 75%');
+    expect(document.querySelector('#status-bar-preview')!.textContent).not.toContain('Claude Code');
   });
   it('customizes both status items through Preferences with an accurate preview and host persistence requests', () => {
     render({ ...value, activeProvider: 'Claude' });
-    expect(document.querySelector('#status-bar-preview')!.textContent).toContain('Codex');
-    expect(document.querySelector('#status-bar-preview')!.textContent).toContain('Claude Code · 5h 75%');
+    expect(document.querySelectorAll('#status-bar-preview .provider-icon')).toHaveLength(2);
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Quota —5h 75%');
     choose('status-bar-providers', 'claude');
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { providers: 'claude' } } });
-    expect(document.querySelector('#status-bar-preview')!.textContent).not.toContain('Codex');
+    expect(document.querySelector('#status-bar-preview .provider-icon[data-provider=Codex]')).toBeNull();
     const account = document.querySelector<HTMLInputElement>('[data-status-field="account"]')!; account.checked = true; account.dispatchEvent(new Event('change'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { fields: ['quota', 'bankedResets', 'account'] } } });
     expect(document.querySelector('#status-bar-preview')!.textContent).toContain('claude@example.test');
@@ -105,7 +106,21 @@ describe('Settings usage dashboard', () => {
     render({ ...value, preferences: { ...value.preferences, statusBar: { providers: 'codex', fields: ['plan'], quotaWindows: 'main', alignment: 'left', style: 'compact' } } });
     expect(document.querySelector<HTMLSelectElement>('#status-bar-providers')!.value).toBe('codex');
     expect(account.checked).toBe(false); expect(account.disabled).toBe(false);
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Codex · Plan —');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Plan —');
+  });
+  it('previews and persists progress bars, retains accessible quota and restores the saved mode', () => {
+    render(); choose('status-bar-style', 'progress');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { style: 'progress' } } });
+    const items = [...document.querySelectorAll<HTMLElement>('.status-bar-preview-item')];
+    expect(items.map(item => item.textContent)).toEqual(['Quota —', '5h ███████▌░░ 75%']);
+    expect(items[1]!.getAttribute('aria-label')).toContain('Claude Code');
+    expect(items[1]!.title).toContain('5h: 75% remaining');
+    expect(document.querySelector<HTMLInputElement>('[data-status-field="quota"]')!.disabled).toBe(false);
+    render({ ...value, preferences: { ...value.preferences, statusBar: { providers: 'claude', fields: ['quota'], quotaWindows: 'all', alignment: 'right', style: 'progress' } } });
+    expect(document.querySelector<HTMLSelectElement>('#status-bar-style')!.value).toBe('progress');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('5h ███████▌░░ 75%');
+    choose('status-bar-style', 'compact');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('5h 75%');
   });
   it('shows banked reset counts and expiry in dashboard account cards and managed accounts', () => {
     const expiresAt = Date.parse('2026-11-01T00:00:00Z');
