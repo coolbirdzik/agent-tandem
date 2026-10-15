@@ -2,7 +2,7 @@
   "name": "agent-tandem",
   "displayName": "AgentTandem — Claude Code & Codex Chat, Code Review & Usage",
   "description": "Chat with Claude Code and Codex, review code changes, restore checkpoints, resume conversations and track usage in VS Code.",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "publisher": "agent-tandem-local",
   "private": true,
   "repository": {
@@ -74,8 +74,7 @@
           "fontPath": "./media/provider-icons.ttf",
           "fontCharacter": "\\E002"
         }
-      }
-,
+      },
       "agent-tandem-quota-ring-0": {
         "description": "AgentTandem quota ring at 0/8 remaining",
         "default": {
