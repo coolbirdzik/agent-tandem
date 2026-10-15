@@ -106,7 +106,7 @@ Select **+**, choose **Codex** or **Claude Code**, then choose a model and acces
 
 ## Status bar and preferences
 
-Open **Settings → Preferences** to show both agents, the selected chat agent, Codex only or Claude Code only. Choose compact icons with quota, icons only or full text; select quota windows, reset countdowns, banked resets, account/plan details and left/right placement. Hover retains full details in every style. `↻ 3` means three banked resets.
+Open **Settings → Preferences** to show both agents, the selected chat agent, Codex only or Claude Code only. Choose compact icons with quota, progress bars, quota rings, minimal columns (one column per window plus the lowest percentage), icons only or full text; select quota windows, reset countdowns, banked resets, account/plan details and left/right placement. Codex and Claude Code each take their own text color: keep the quota status color, pick a theme color (follows your color theme) or a custom color; low quota still shows its warning colors. With remaining quota shown, each reset countdown sits right after its window behind a clock icon (`5h 75% 🕑2h14m · 7d 40% 🕑3d4h`; minimal shows only the tightest window's reset); the full-text style keeps `5h reset 2h 14m`. Hover retains full details in every style. `↻ 3` means three banked resets.
 
 <details>
 <summary>Status bar preferences</summary>
@@ -119,7 +119,7 @@ Open **Settings → Preferences** to show both agents, the selected chat agent, 
 
 Open **Settings → Storage** to inspect the extension data folder and storage categories. Filter saved restore history by project/type, select entries and **Review deletion** before removing them.
 
-**Preview cleanup** lists unused snapshots and blobs older than 24 hours. Cleanup rechecks references before deleting; tracking baselines, pending review, active captures, retained checkpoints and Undo remain protected. Workspace files and native Codex/Claude conversation history stay intact. Deleting selected restore history removes the ability to restore those checkpoints.
+**Preview cleanup** lists unused snapshots and blobs older than 10 minutes. **Clean up…** lets you choose what to clean — message checkpoints, restore backups and/or unused snapshots — previews exactly those, then deletes them from the same preview. Cleanup rechecks references before deleting; tracking baselines, pending review, active captures, retained checkpoints and Undo remain protected. Workspace files and native Codex/Claude conversation history stay intact. Deleting selected restore history removes the ability to restore those checkpoints.
 
 <details>
 <summary>Storage manager</summary>

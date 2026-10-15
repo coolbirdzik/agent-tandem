@@ -75,6 +75,133 @@
           "fontCharacter": "\\E002"
         }
       }
+,
+      "agent-tandem-quota-ring-0": {
+        "description": "AgentTandem quota ring at 0/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E010"
+        }
+      },
+      "agent-tandem-quota-ring-1": {
+        "description": "AgentTandem quota ring at 1/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E011"
+        }
+      },
+      "agent-tandem-quota-ring-2": {
+        "description": "AgentTandem quota ring at 2/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E012"
+        }
+      },
+      "agent-tandem-quota-ring-3": {
+        "description": "AgentTandem quota ring at 3/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E013"
+        }
+      },
+      "agent-tandem-quota-ring-4": {
+        "description": "AgentTandem quota ring at 4/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E014"
+        }
+      },
+      "agent-tandem-quota-ring-5": {
+        "description": "AgentTandem quota ring at 5/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E015"
+        }
+      },
+      "agent-tandem-quota-ring-6": {
+        "description": "AgentTandem quota ring at 6/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E016"
+        }
+      },
+      "agent-tandem-quota-ring-7": {
+        "description": "AgentTandem quota ring at 7/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E017"
+        }
+      },
+      "agent-tandem-quota-ring-8": {
+        "description": "AgentTandem quota ring at 8/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E018"
+        }
+      },
+      "agent-tandem-quota-level-0": {
+        "description": "AgentTandem quota column at 0/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E020"
+        }
+      },
+      "agent-tandem-quota-level-1": {
+        "description": "AgentTandem quota column at 1/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E021"
+        }
+      },
+      "agent-tandem-quota-level-2": {
+        "description": "AgentTandem quota column at 2/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E022"
+        }
+      },
+      "agent-tandem-quota-level-3": {
+        "description": "AgentTandem quota column at 3/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E023"
+        }
+      },
+      "agent-tandem-quota-level-4": {
+        "description": "AgentTandem quota column at 4/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E024"
+        }
+      },
+      "agent-tandem-quota-level-5": {
+        "description": "AgentTandem quota column at 5/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E025"
+        }
+      },
+      "agent-tandem-quota-level-6": {
+        "description": "AgentTandem quota column at 6/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E026"
+        }
+      },
+      "agent-tandem-quota-level-7": {
+        "description": "AgentTandem quota column at 7/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E027"
+        }
+      },
+      "agent-tandem-quota-level-8": {
+        "description": "AgentTandem quota column at 8/8 remaining",
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E028"
+        }
+      }
     },
     "commands": [
       {
@@ -416,12 +543,16 @@
           "enum": [
             "compact",
             "progress",
+            "rings",
+            "minimal",
             "icons",
             "text"
           ],
           "enumDescriptions": [
             "Distinct agent icons with quota and a short banked reset count.",
             "Agent icons with detailed progress bars and percentages showing remaining quota.",
+            "Agent icons with a quota ring and percentage for each window.",
+            "Narrowest meter: one column per quota window and only the lowest remaining percentage; hover names each window.",
             "Agent icons only; hover for account, quota and reset details.",
             "Agent icons with full detail labels."
           ],
@@ -445,7 +576,7 @@
             "quota",
             "bankedResets"
           ],
-          "description": "Details shown beside each agent, in this order: remaining quota, quota reset countdown, banked reset count, account and plan. Hover always shows full details. An empty list shows agent icons only."
+          "description": "Details shown beside each agent, in this order: remaining quota, quota reset countdown, banked reset count, account and plan. With remaining quota shown, each reset countdown follows its quota window after a clock icon, shortened to two units such as 2h14m or 3d4h; the Text style keeps the spelled-out form. Hover always shows full details. An empty list shows agent icons only."
         },
         "agentTandem.statusBarQuotaWindows": {
           "type": "string",
@@ -464,6 +595,20 @@
           ],
           "default": "right",
           "description": "Side of the VS Code status bar used for agent quota."
+        },
+        "agentTandem.statusBarCodexColor": {
+          "type": "string",
+          "default": "",
+          "pattern": "^(|statusBar[.]foreground|charts[.](blue|green|orange|purple|red|yellow)|#[0-9a-fA-F]{6})$",
+          "patternErrorMessage": "Leave empty, use a theme color such as charts.blue, or #RRGGBB.",
+          "markdownDescription": "Text color of the Codex status bar item. Empty uses the quota status color (green while quota is healthy). Use a theme color (`statusBar.foreground`, `charts.blue`, `charts.green`, `charts.orange`, `charts.purple`, `charts.red`, `charts.yellow`) or `#RRGGBB`. Low and exhausted quota keep their warning colors."
+        },
+        "agentTandem.statusBarClaudeColor": {
+          "type": "string",
+          "default": "",
+          "pattern": "^(|statusBar[.]foreground|charts[.](blue|green|orange|purple|red|yellow)|#[0-9a-fA-F]{6})$",
+          "patternErrorMessage": "Leave empty, use a theme color such as charts.blue, or #RRGGBB.",
+          "markdownDescription": "Text color of the Claude Code status bar item. Empty uses the quota status color (green while quota is healthy). Use a theme color (`statusBar.foreground`, `charts.blue`, `charts.green`, `charts.orange`, `charts.purple`, `charts.red`, `charts.yellow`) or `#RRGGBB`. Low and exhausted quota keep their warning colors."
         },
         "agentTandem.usageDashboardDefaultGrouping": {
           "type": "string",

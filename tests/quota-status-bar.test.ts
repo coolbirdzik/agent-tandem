@@ -58,8 +58,17 @@ it('switches to icons only while retaining accessible agent names and full hover
 it('switches existing items to progress bars while keeping quota alerts and accessible percentages', () => {
   const bar = new QuotaStatusBar(); bar.update(state);
   host.settings.statusBarStyle = 'progress'; bar.update(state);
-  expect(host.items.map(item => item.text)).toEqual(['$(agent-tandem-codex) 5h ░░░░░░░░░░ 0%', '$(agent-tandem-claude) 5h ████████░░ 80%']);
+  expect(host.items.map(item => item.text)).toEqual(['$(agent-tandem-codex) 5h ░░░░░ 0%', '$(agent-tandem-claude) 5h ████░ 80%']);
   expect(host.items[0].backgroundColor.id).toBe('statusBarItem.errorBackground');
   expect(host.items[1].accessibilityInformation.label).toContain('5h: 80% remaining');
   expect(host.items).toHaveLength(2); bar.dispose();
+});
+it('colors each agent with its own text color while low quota keeps its alert colors', () => {
+  host.settings.statusBarCodexColor = '#ff8800'; host.settings.statusBarClaudeColor = 'charts.purple';
+  const bar = new QuotaStatusBar(); bar.update(state);
+  const [codex, claude] = host.items;
+  expect(claude.color.id).toBe('charts.purple'); expect(codex.color.id).toBe('statusBarItem.errorForeground');
+  bar.update({ ...state, accounts: { ...state.accounts, Codex: { status: 'ready', quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 30 }] } } } });
+  expect(codex.color).toBe('#ff8800');
+  host.settings.statusBarClaudeColor = 'not-a-color'; bar.update(state); expect(claude.color.id).toBe('charts.green'); bar.dispose();
 });

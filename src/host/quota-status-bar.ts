@@ -28,7 +28,10 @@ export class QuotaStatusBar implements vscode.Disposable {
       const item = this.items.get(value.provider)!; item.text = value.text; item.tooltip = value.tooltip;
       const alert = value.tone === 'exhausted' ? 'error' : value.tone === 'warning' ? 'warning' : undefined;
       item.backgroundColor = alert ? new vscode.ThemeColor(`statusBarItem.${alert}Background`) : undefined;
-      item.color = new vscode.ThemeColor(alert ? `statusBarItem.${alert}Foreground` : value.tone === 'healthy' ? 'charts.green' : value.tone === 'loading' ? value.provider === 'Claude' ? 'charts.orange' : 'charts.blue' : 'statusBar.foreground');
+      // A chosen agent color replaces the quota-status color; low quota alerts still win so they stay readable.
+      const custom = value.provider === 'Claude' ? preferences.claudeColor : preferences.codexColor;
+      item.color = !alert && custom ? custom.startsWith('#') ? custom : new vscode.ThemeColor(custom)
+        : new vscode.ThemeColor(alert ? `statusBarItem.${alert}Foreground` : value.tone === 'healthy' ? 'charts.green' : value.tone === 'loading' ? value.provider === 'Claude' ? 'charts.orange' : 'charts.blue' : 'statusBar.foreground');
       item.accessibilityInformation = { label: value.tooltip }; item.show();
     }
   }

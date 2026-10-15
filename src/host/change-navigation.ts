@@ -197,7 +197,11 @@ export class ChangeNavigation {
       if (tab?.input instanceof vscode.TabInputWebview && kind(tab) === 'single' && tab.label === title) { scope.index = index; this.scopes.set(tab, scope); this.update(); await this.persist(); }
       return;
     }
-    await vscode.commands.executeCommand('vscode.diff', file.original, file.modified, title, { preview: true });
+    // `override` (internal TextDocumentShowOptions field) pins the default text
+    // diff. Otherwise files claimed by custom editors (media, PDF, …) open as a
+    // side-by-side custom diff whose original pane VS Code crashes on
+    // ("Cannot read properties of undefined (reading 'selection')").
+    await vscode.commands.executeCommand('vscode.diff', file.original, file.modified, title, { preview: true, override: true });
     const tab = activeTab();
     if (!(tab?.input instanceof vscode.TabInputTextDiff) || !same(tab.input.modified, file.modified)) return;
     scope.index = index; this.scopes.set(tab, scope);

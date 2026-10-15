@@ -7,10 +7,11 @@ import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-a
 import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
 import { bankedResetDetails } from './core/banked-resets';
-import { quotaStatuses } from './core/quota-status';
+import { quotaGlyphCharacter, quotaStatuses } from './core/quota-status';
 import { statusBarPreferences, type StatusBarField, type StatusBarPreferences } from './core/status-bar-preferences';
 import { ACCOUNT_PROVIDERS, accountProviderName, accountProviderDetail, isChatAccount, type AccountProvider } from './core/account-providers';
 import { validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution';
+import type { CleanupKind } from './core/storage';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 const api = acquireVsCodeApi(), send = (type: string, value?: unknown) => api.postMessage({ type, value });
@@ -176,10 +177,30 @@ el('storage-select-visible').onclick = () => { for (const group of visibleHistor
 el('storage-clear-selection').onclick = () => { selectedHistory.clear(); renderStorageHistories(state?.storage); };
 el('storage-history-preview').onclick = () => send('previewHistoryDeletion', { ids: [...selectedHistory] });
 el('storage-history-cancel').onclick = () => send('storage');
+// "Clean up…" opens a category chooser; the extension previews only the chosen kinds.
+const cleanKinds = new Set<CleanupKind>(['checkpoints', 'undo', 'unused']);
+let cleanChooser = false, cleanSignature = '';
+el('storage-clean-all').onclick = () => {
+  cleanChooser = !cleanChooser; renderCleanChoices(state?.storage);
+  if (cleanChooser) { const heading = el('storage-clean-choices-heading'); heading.tabIndex = -1; heading.focus(); }
+};
+el('storage-clean-choices-cancel').onclick = () => { cleanChooser = false; renderCleanChoices(state?.storage); el('storage-clean-all').focus(); };
+el('storage-clean-review').onclick = () => { const kinds = chosenCleanKinds(state?.storage); if (kinds.length) send('previewCleanAll', { kinds }); };
 el('storage-history-delete').onclick = () => { if (state?.storage?.historyPlan) send('deleteHistory', { token: state.storage.historyPlan.token }); };
 el('open-chat').onclick = () => send('chat'); el('manage-clis').onclick = () => send('clis');
 el('open-vscode-settings').onclick = () => send('vscodeSettings'); el('refresh').onclick = () => send('refresh');
 el<HTMLInputElement>('show-status-quota').onchange = () => { renderStatusBarPreview(); send('preferences', { showQuotaInStatusBar: el<HTMLInputElement>('show-status-quota').checked }); };
+// Agent text colors: '' (quota status), a theme color id, or #RRGGBB from the custom picker.
+const statusBarColorControls = { codexColor: 'codex', claudeColor: 'claude' } as const;
+const statusBarColor = (agent: 'codex' | 'claude') => { const select = el<HTMLSelectElement>(`status-bar-${agent}-color`); return select.value === 'custom' ? el<HTMLInputElement>(`status-bar-${agent}-custom`).value : select.value; };
+for (const [key, agent] of Object.entries(statusBarColorControls)) {
+  const select = el<HTMLSelectElement>(`status-bar-${agent}-color`), custom = el<HTMLInputElement>(`status-bar-${agent}-custom`);
+  // The picker's input event only previews; change (picker closed) saves once.
+  const save = () => { custom.hidden = select.value !== 'custom'; renderStatusBarPreview(); send('preferences', { statusBar: { [key]: statusBarColor(agent) } }); };
+  select.onchange = save; custom.onchange = save; custom.oninput = () => renderStatusBarPreview();
+}
+/** CSS for a status bar color value: theme ids map to the webview's --vscode-* variables. */
+const statusBarCss = (value: string) => !value ? '' : value.startsWith('#') ? value : `var(--vscode-${value.replace('.', '-')})`;
 for (const [id, key] of [['status-bar-providers', 'providers'], ['status-bar-windows', 'quotaWindows'], ['status-bar-alignment', 'alignment'], ['status-bar-style', 'style']]) {
   el<HTMLSelectElement>(id!).onchange = () => { renderStatusBarPreview(); send('preferences', { statusBar: { [key!]: el<HTMLSelectElement>(id!).value } }); };
 }
@@ -195,12 +216,20 @@ function selectedStatusBarFields(): StatusBarField[] {
 function renderStatusBarPreview() {
   const enabled = el<HTMLInputElement>('show-status-quota').checked, root = el('status-bar-preview'); root.replaceChildren();
   const iconsOnly = el<HTMLSelectElement>('status-bar-style').value === 'icons';
-  document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.status-bar-controls select, [data-status-field]').forEach(input => { input.disabled = !enabled || (iconsOnly && (input.dataset.statusField !== undefined || input.id === 'status-bar-windows')); });
+  document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.status-bar-controls select, .status-bar-controls input, [data-status-field]').forEach(input => { input.disabled = !enabled || (iconsOnly && (input.dataset.statusField !== undefined || input.id === 'status-bar-windows')); });
   if (!enabled) { root.append(node('span', 'Status bar hidden', 'muted')); return; }
-  const preferences = statusBarPreferences({ providers: el<HTMLSelectElement>('status-bar-providers').value as StatusBarPreferences['providers'], fields: selectedStatusBarFields(), quotaWindows: el<HTMLSelectElement>('status-bar-windows').value as StatusBarPreferences['quotaWindows'], style: el<HTMLSelectElement>('status-bar-style').value as StatusBarPreferences['style'] });
+  const preferences = statusBarPreferences({ providers: el<HTMLSelectElement>('status-bar-providers').value as StatusBarPreferences['providers'], fields: selectedStatusBarFields(), quotaWindows: el<HTMLSelectElement>('status-bar-windows').value as StatusBarPreferences['quotaWindows'], style: el<HTMLSelectElement>('status-bar-style').value as StatusBarPreferences['style'], codexColor: statusBarColor('codex'), claudeColor: statusBarColor('claude') });
   for (const value of quotaStatuses({ accounts: state?.accounts, composeProvider: state?.activeProvider }, preferences)) {
     const item = node('span', undefined, 'status-bar-preview-item'), icon = providerIcon(value.provider);
-    icon.setAttribute('aria-hidden', 'true'); item.append(icon, document.createTextNode(value.label)); item.title = value.tooltip;
+    icon.setAttribute('aria-hidden', 'true'); item.append(icon); item.title = value.tooltip;
+    const custom = value.provider === 'Claude' ? preferences.claudeColor : preferences.codexColor;
+    item.style.color = custom ? statusBarCss(custom) : value.tone === 'healthy' ? statusBarCss('charts.green') : value.tone === 'loading' ? statusBarCss(value.provider === 'Claude' ? 'charts.orange' : 'charts.blue') : '';
+    for (const part of value.label.split(/(\$\([\w-]+\))/).filter(Boolean)) {
+      const glyph = quotaGlyphCharacter(part), codicon = /^\$\(([\w-]+)\)$/.exec(part)?.[1];
+      if (glyph) item.append(node('span', glyph, 'status-bar-glyph'));
+      else if (codicon) { const icon = node('span', undefined, `codicon codicon-${codicon}`); icon.setAttribute('aria-hidden', 'true'); item.append(icon); }
+      else item.append(document.createTextNode(part));
+    }
     item.setAttribute('role', 'img'); item.setAttribute('aria-label', value.tooltip); root.append(item);
   }
 }
@@ -847,7 +876,8 @@ function visibleHistory(storage: UsageDashboardState['storage']) {
 }
 function renderStorageHistories(storage: UsageDashboardState['storage']) {
   const projectFilter = el<HTMLSelectElement>('storage-project'), kindFilter = el<HTMLSelectElement>('storage-kind');
-  const signature = JSON.stringify([storage, [...selectedHistory], projectFilter.value, kindFilter.value]);
+  // Deletion progress has its own renderer; don't rebuild the history list on every tick.
+  const signature = JSON.stringify([storage && { ...storage, progress: undefined }, [...selectedHistory], projectFilter.value, kindFilter.value]);
   if (signature === historySignature) return;
   historySignature = signature;
   const busy = !storage || ['idle', 'loading', 'cleaning'].includes(storage.status), blocked = busy || !!storage?.cleanupBlocked || !!storage?.error;
@@ -885,8 +915,13 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
   el<HTMLButtonElement>('storage-history-cancel').disabled = busy;
   if (preview) {
     const count = preview.histories.reduce((sum, group) => sum + group.count, 0);
+    const kinds = preview.kinds, lost = kinds ? [kinds.includes('checkpoints') && 'every message checkpoint', kinds.includes('undo') && 'every restore backup'].filter((item): item is string => !!item) : [];
+    el('storage-history-plan-heading').textContent = kinds ? `Clean up ${joinWords(kinds.map(kind => cleanKindLabels[kind].toLowerCase()))}` : 'Delete selected restore history';
+    el('storage-history-delete-label').textContent = kinds ? 'Clean up' : 'Delete history';
     el('storage-history-plan-summary').textContent = `${count} restore points · ${fileSize(preview.bytes)} reclaimable · ${preview.files.length} snapshot files`;
-    el('storage-history-impact').textContent = 'The selected checkpoints and restore backups will be permanently unavailable. Your code and chat messages stay as they are. Shared data still needed by Review or other checkpoints is kept.';
+    el('storage-history-impact').textContent = kinds
+      ? `${lost.length ? `${capitalize(joinWords(lost))} will be permanently unavailable. ` : ''}${kinds.includes('unused') ? 'Unused snapshots are removed. ' : ''}Your code, chat messages, pending review and tracking baselines stay as they are.`
+      : 'The selected checkpoints and restore backups will be permanently unavailable. Your code and chat messages stay as they are. Shared data still needed by Review or other checkpoints is kept.';
     const owners = el('storage-history-plan-groups'); owners.replaceChildren();
     for (const group of preview.histories) owners.append(node('li', `${group.project} · ${group.label} · ${group.count} restore points`));
     const files = el('storage-history-plan-files'); files.replaceChildren();
@@ -905,20 +940,71 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
     if (r.failures.length) { const failures = node('ul'); for (const failure of r.failures) failures.append(node('li', failure)); result.append(node('p', 'Some data could not be deleted:'), failures); }
   }
 }
+const storageProgressPhases = { checking: 'Checking references…', history: 'Updating restore history…', removing: 'Removing files…', refreshing: 'Refreshing storage totals…' } as const;
+/** Progress inside the deletion preview that started it: counted while removing files, indeterminate otherwise. */
+function renderStorageProgress(prefix: 'storage-cleanup' | 'storage-history', storage: UsageDashboardState['storage'], active: boolean) {
+  const progress = active && storage?.status === 'cleaning' ? storage.progress ?? { phase: 'checking' as const, done: 0, total: 0, bytes: 0, totalBytes: 0 } : undefined;
+  el(`${prefix}-progress`).hidden = !progress; if (!progress) return;
+  const bar = el<HTMLProgressElement>(`${prefix}-progress-bar`), counted = progress.total > 0 && (progress.phase === 'removing' || progress.phase === 'refreshing');
+  if (counted) bar.value = progress.done / progress.total * 100; else bar.removeAttribute('value');
+  const phase = el(`${prefix}-progress-phase`); if (phase.textContent !== storageProgressPhases[progress.phase]) phase.textContent = storageProgressPhases[progress.phase];
+  el(`${prefix}-progress-count`).textContent = counted ? `${Math.round(progress.done / progress.total * 100)}% · ${progress.done} / ${progress.total} files · ${fileSize(progress.bytes)} of ${fileSize(progress.totalBytes)}` : progress.total ? `${progress.total} files · ${fileSize(progress.totalBytes)}` : '';
+}
+const cleanKindLabels: Record<CleanupKind, string> = { checkpoints: 'Message checkpoints', undo: 'Restore backups', unused: 'Unused snapshots' };
+const joinWords = (words: string[]) => words.length < 2 ? words[0] ?? '' : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`;
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+function cleanKindSummary(storage: UsageDashboardState['storage'], kind: CleanupKind): { detail: string; bytes?: number; available: boolean } {
+  if (kind === 'unused') { const files = storage?.cleanable?.files ?? 0; return { detail: `${plural(files, 'unused file')} · older than 10 min`, bytes: storage?.cleanable?.bytes, available: files > 0 }; }
+  const groups = (storage?.histories ?? []).filter(group => group.kind === kind), points = groups.reduce((sum, group) => sum + group.count, 0);
+  return { detail: kind === 'checkpoints' ? `${plural(points, 'restore point')} in ${plural(groups.length, 'conversation')}` : plural(groups.length, 'backup'), bytes: storage?.histories ? groups.reduce((sum, group) => sum + group.bytes, 0) : undefined, available: groups.length > 0 };
+}
+function chosenCleanKinds(storage: UsageDashboardState['storage']) {
+  return (Object.keys(cleanKindLabels) as CleanupKind[]).filter(kind => cleanKinds.has(kind) && cleanKindSummary(storage, kind).available);
+}
+function renderCleanChoices(storage: UsageDashboardState['storage']) {
+  // The chooser's job ends once its preview is shown.
+  if (storage?.historyPlan?.kinds) cleanChooser = false;
+  const busy = !storage || ['idle', 'loading', 'cleaning'].includes(storage.status), locked = busy || !!storage?.error || !!storage?.cleanupBlocked;
+  el('storage-clean-choices').hidden = !cleanChooser; el('storage-clean-all').setAttribute('aria-expanded', String(cleanChooser));
+  el<HTMLButtonElement>('storage-clean-review').disabled = locked || !chosenCleanKinds(storage).length;
+  const kinds = Object.keys(cleanKindLabels) as CleanupKind[], summaries = kinds.map(kind => cleanKindSummary(storage, kind));
+  const signature = JSON.stringify([cleanChooser, locked, summaries, [...cleanKinds]]);
+  if (signature === cleanSignature) return;
+  cleanSignature = signature;
+  const list = el('storage-clean-kinds'); list.replaceChildren();
+  if (!cleanChooser) return;
+  kinds.forEach((kind, index) => {
+    const summary = summaries[index]!, row = node('label', undefined, 'storage-history-row'), checkbox = node('input');
+    checkbox.type = 'checkbox'; checkbox.checked = summary.available && cleanKinds.has(kind); checkbox.disabled = locked || !summary.available; checkbox.dataset.cleanKind = kind;
+    checkbox.onchange = () => {
+      if (checkbox.checked) cleanKinds.add(kind); else cleanKinds.delete(kind);
+      renderCleanChoices(state?.storage); document.querySelector<HTMLInputElement>(`input[data-clean-kind="${kind}"]`)?.focus();
+    };
+    const copy = node('span', undefined, 'storage-history-copy'); copy.append(node('strong', cleanKindLabels[kind]), node('small', summary.available ? summary.detail : 'Nothing to clean'));
+    const bytes = node('span', summary.bytes === undefined ? '—' : fileSize(summary.bytes), 'storage-history-size');
+    if (kind !== 'unused') bytes.title = 'Referenced snapshot size; data shared with kept history or Review stays.';
+    row.append(checkbox, copy, bytes); list.append(row);
+  });
+}
 function renderStorage(storage: UsageDashboardState['storage']) {
+  renderCleanChoices(storage);
   renderStorageHistories(storage);
+  renderStorageProgress('storage-cleanup', storage, !!storage?.plan); renderStorageProgress('storage-history', storage, !!storage?.historyPlan);
   const busy = !storage || ['idle', 'loading', 'cleaning'].includes(storage.status);
   el('storage').setAttribute('aria-busy', String(busy));
   el('storage-path').textContent = storage?.root ?? 'Available when connected to the extension';
-  el('storage-status').textContent = storage?.status === 'cleaning' ? 'Removing selected storage data…' : busy ? 'Reading AgentTandem storage…' : 'Stored locally on this machine. Select restore history below to review deletion.';
+  const removing = storage?.status === 'cleaning' && storage.progress?.phase === 'removing' ? storage.progress : undefined;
+  el('storage-status').textContent = removing ? `Removing selected storage data · ${removing.done} / ${removing.total} files…` : storage?.status === 'cleaning' ? 'Removing selected storage data…' : busy ? 'Reading AgentTandem storage…' : 'Stored locally on this machine. Select restore history below to review deletion.';
   const error = storage?.error ?? storage?.cleanupBlocked;
   el('storage-error').hidden = !error; el('storage-error').textContent = error ?? '';
   el<HTMLButtonElement>('storage-refresh').disabled = !!storage && ['loading', 'cleaning'].includes(storage.status);
   el<HTMLButtonElement>('storage-preview').disabled = busy || !!error || !storage?.cleanable?.files;
+  el<HTMLButtonElement>('storage-clean-all').disabled = busy || !!error || !!storage?.historyPlan?.kinds || (!storage?.histories?.length && !storage?.cleanable?.files);
   el<HTMLButtonElement>('storage-clean').disabled = busy || !storage?.plan?.files.length;
   el<HTMLButtonElement>('storage-cancel').disabled = busy;
   const totals = el('storage-totals'); totals.replaceChildren();
-  for (const [label, bytes, detail] of [['Total stored', storage?.total, 'AgentTandem extension data only'], ['Safe to clean', storage?.cleanable?.bytes, `${storage?.cleanable?.files ?? 0} unused files · older than 24h`]] as const) {
+  for (const [label, bytes, detail] of [['Total stored', storage?.total, 'AgentTandem extension data only'], ['Safe to clean', storage?.cleanable?.bytes, `${storage?.cleanable?.files ?? 0} unused files · older than 10 min`]] as const) {
     const item = node('div', undefined, 'usage-total'); item.append(node('span', label), node('strong', bytes === undefined ? '—' : fileSize(bytes)), node('small', detail)); totals.append(item);
   }
   if (storage?.categories) table(el('storage-categories'), ['Data', 'Size', 'Files'], storage.categories.map(row => [row.label, fileSize(row.bytes), row.files]));
@@ -946,6 +1032,11 @@ function render(value: UsageDashboardState) {
   el<HTMLSelectElement>('status-bar-windows').value = statusBar.quotaWindows;
   el<HTMLSelectElement>('status-bar-alignment').value = statusBar.alignment;
   el<HTMLSelectElement>('status-bar-style').value = statusBar.style;
+  for (const [key, agent] of Object.entries(statusBarColorControls)) {
+    const color = statusBar[key as keyof typeof statusBarColorControls], select = el<HTMLSelectElement>(`status-bar-${agent}-color`), custom = el<HTMLInputElement>(`status-bar-${agent}-custom`);
+    select.value = color.startsWith('#') ? 'custom' : color; custom.hidden = select.value !== 'custom';
+    if (color.startsWith('#')) custom.value = color.toLowerCase();
+  }
   document.querySelectorAll<HTMLInputElement>('[data-status-field]').forEach(input => { input.checked = statusBar.fields.includes(input.dataset.statusField as StatusBarField); });
   renderStatusBarPreview();
   el<HTMLSelectElement>('default-grouping').value = value.preferences.grouping;

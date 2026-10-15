@@ -33,6 +33,19 @@ button.quiet:hover { background: var(--vscode-list-hoverBackground); }
 .storage-files { max-height: 300px; overflow: auto; padding: 12px 24px; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family); font-size: 11px; }
 .storage-cleanup details { margin-bottom: 18px; }
 .storage-cleanup .actions { display: flex; gap: 8px; }
+.storage-progress { margin: 0 0 16px; }
+.storage-progress-label { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.storage-progress-label span:last-child { color: var(--muted); }
+.storage-progress progress { appearance: none; display: block; width: 100%; height: 6px; margin-top: 8px; border: 0; border-radius: 3px; overflow: hidden; background: var(--line); }
+.storage-progress progress::-webkit-progress-bar { background: var(--line); }
+.storage-progress progress::-webkit-progress-value { background: var(--vscode-progressBar-background, var(--accent)); border-radius: 3px; transition: width .2s ease-out; }
+.storage-progress progress::-moz-progress-bar { background: var(--vscode-progressBar-background, var(--accent)); }
+/* Indeterminate while references are checked: a sliding segment, static under reduced motion. */
+.storage-progress progress:not([value]) { background: linear-gradient(var(--vscode-progressBar-background, var(--accent)), var(--vscode-progressBar-background, var(--accent))) -50% 0 / 30% 100% no-repeat, var(--line); animation: storage-progress-slide 1.2s ease-in-out infinite; }
+.storage-progress progress:not([value])::-webkit-progress-bar { background: transparent; }
+@keyframes storage-progress-slide { to { background-position: 150% 0, 0 0; } }
+@media (prefers-reduced-motion: reduce) { .storage-progress progress:not([value]) { animation: none; background-position: 50% 0, 0 0; } }
+@media (forced-colors: active) { .storage-progress progress { appearance: auto; border: 1px solid CanvasText; } }
 .storage-history-tools { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin: 20px 0 12px; }
 .storage-history-tools label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 11px; }
 .storage-history-tools select { max-width: 340px; }
@@ -454,10 +467,15 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 #conversation-meta button{margin-left:12px}
 @media(max-width:600px){.attribution-assignment{align-items:flex-start;flex-direction:column}}
 .status-bar-controls label{display:grid;gap:8px}
+.status-bar-color{display:flex;gap:6px;align-items:center}
+.status-bar-color select{flex:1;min-width:0}
+.status-bar-color input[type=color]{width:32px;height:26px;padding:0 2px;border:1px solid var(--line);background:transparent;cursor:pointer}
 .status-bar-fields{border:0;padding:0;margin:16px 0;display:flex;flex-wrap:wrap;gap:12px 20px}
 .status-bar-fields legend{padding:0;margin-bottom:12px;font-weight:600}
 .status-bar-fields label{display:flex;align-items:center;gap:6px}
 .status-bar-preview{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--vscode-statusBar-background);color:var(--vscode-statusBar-foreground)}
 .status-bar-preview-item{display:inline-flex;align-items:center;gap:6px;overflow-wrap:anywhere;font-size:12px;padding:2px 8px}
+@font-face{font-family:'AgentTandem Providers';src:url('provider-icons.ttf') format('truetype')}
+.status-bar-glyph{font:normal 16px/1 'AgentTandem Providers'}
 @media (prefers-reduced-motion: reduce) { button { transition: none; } button:active:not(:disabled) { transform: none; } }
 @media (forced-colors: active) { .chart-stack, .provider-meter > span, .model-mix, .model-share { border: 1px solid CanvasText; } .burn-actual, .burn-projection, .burn-assumed { stroke: Highlight; } .burn-ideal { stroke: CanvasText; } .model-swatch { forced-color-adjust: none; } .account-window progress, .account-group-window progress { appearance: auto; border: 1px solid CanvasText; } .account-group[data-active=true], .usage-total:first-child { border-top-color: Highlight; } .account-group-state { border-color: CanvasText; } }

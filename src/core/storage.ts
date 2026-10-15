@@ -5,7 +5,9 @@ import { assertPath } from './history';
 import { withStorageLock } from './storage-lock';
 
 const uuid = /^[a-f0-9-]{36}$/i, hash = /^[a-f0-9]{64}$/;
-const grace = 24 * 60 * 60 * 1000;
+// Blobs and snapshot manifests are written under one lock and referenced under a later one (another
+// window may be mid-capture). Ten minutes covers that gap without making users wait a day to clean.
+const grace = 10 * 60 * 1000;
 // Native Codex homes create linked tool launchers here. Never follow or clean
 // these links; they are unrelated to our snapshot references and candidates.
 const nativeTemporary = (relative: string) => /^accounts\/profiles\/[a-f0-9-]{36}\/tmp(?:\/|$)/i.test(relative);
@@ -20,15 +22,22 @@ export interface StoredHistory {
 export interface HistoryDeletionPlan extends CleanupPlan {
   histories: StoredHistory[];
   records: { relative: string; digest: string; ids: string[] }[];
+  /** Categories chosen in "Clean up…"; absent for restore history picked row by row. */
+  kinds?: CleanupKind[];
 }
+export const CLEANUP_KINDS = ['checkpoints', 'undo', 'unused'] as const;
+export type CleanupKind = typeof CLEANUP_KINDS[number];
 export interface HistoryDeletionResult extends CleanupResult { checkpointsRemoved: number }
+/** Deletion progress: reference checks and history edits are indeterminate; removal counts approved files. */
+export interface StorageProgress { phase: 'checking' | 'history' | 'removing' | 'refreshing'; done: number; total: number; bytes: number; totalBytes: number }
+export type StorageProgressListener = (progress: StorageProgress) => void;
 interface CheckpointRecord { id: string; key: string; snapshot: string; createdAt: number; undo?: boolean; title?: string }
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 export interface StorageState {
   status: 'idle' | 'loading' | 'ready' | 'cleaning' | 'error'; root: string; total?: number;
   categories?: { label: string; bytes: number; files: number }[];
   cleanable?: { bytes: number; files: number }; cleanupBlocked?: string; error?: string;
-  plan?: CleanupPlan; result?: CleanupResult;
+  plan?: CleanupPlan; result?: CleanupResult; progress?: StorageProgress;
   histories?: StoredHistory[]; historyPlan?: HistoryDeletionPlan; historyResult?: HistoryDeletionResult;
 }
 const category = (name: string) => name.startsWith('reviews/') ? 'Review snapshots & tracking' : /^(blobs|snapshots|sessions)\//.test(name) ? 'Recorded demo history' : name.startsWith('checkpoints/') ? 'Message checkpoints & Undo' : name.startsWith('attachments/') ? 'Chat attachments' : name.startsWith('usage/') ? 'Usage & account evidence' : 'Preferences & other data';
@@ -116,7 +125,7 @@ export class StorageManager {
       const value = await this.json(file);
       if (value.id !== id || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) throw new Error(`Invalid snapshot: ${file.relative}`);
       manifests.add(`${scope}:${id}`);
-      const unused = !snapshots[scope].has(id) && (selectedOnly ? released.has(file.relative) : now - file.modified >= grace);
+      const unused = !snapshots[scope].has(id) && (released.has(file.relative) || (!selectedOnly && now - file.modified >= grace));
       for (const [name, blob] of Object.entries(value.files)) { assertPath(name); if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${file.relative}`); if (!unused) blobs[scope].add(blob); }
       if (unused) removable.push(file);
     }
@@ -125,7 +134,7 @@ export class StorageManager {
     for (const scope of ['review', 'demo'] as const) for (const id of blobs[scope]) if (!blobFiles.has(`${scope === 'review' ? 'reviews/history/' : ''}blobs/${id}`)) throw new Error('A protected snapshot blob is missing. Repair storage before cleanup.');
     for (const file of files) {
       const match = /^(reviews\/history\/)?blobs\/([a-f0-9]{64})$/.exec(file.relative);
-      if (match && (selectedOnly ? released.has(file.relative) : now - file.modified >= grace) && !blobs[match[1] ? 'review' : 'demo'].has(match[2]!)) removable.push(file);
+      if (match && (released.has(file.relative) || (!selectedOnly && now - file.modified >= grace)) && !blobs[match[1] ? 'review' : 'demo'].has(match[2]!)) removable.push(file);
     }
     return removable;
   }
@@ -178,29 +187,45 @@ export class StorageManager {
   async previewHistoryDeletion(selected: string[]): Promise<HistoryDeletionPlan> {
     return withStorageLock(this.root, async () => {
       if (!Array.isArray(selected) || !selected.length || selected.some(id => typeof id !== 'string' || !hash.test(id))) throw new Error('Select saved history to delete.');
-      const inventory = await this.inventory(), groups = await this.historyInventory(inventory);
-      const histories: StoredHistory[] = [], removals = new Map<string, Set<string>>(), released = new Set<string>();
-      for (const id of new Set(selected)) {
-        const group = groups.get(id); if (!group) throw new Error('Saved history changed. Refresh and select it again.');
-        const reviewFile = inventory.find(file => file.relative === `reviews/${group.history.projectId}.json`);
-        if (reviewFile && (await this.json(reviewFile)).active) throw new Error('Wait for the agent and change capture to finish before deleting history.');
-        histories.push(group.history);
-        const ids = removals.get(group.relative) ?? new Set<string>(); for (const record of group.records) ids.add(record.id); removals.set(group.relative, ids);
-        for (const relative of group.paths) released.add(relative);
-      }
-      const overrides = new Map<string, CheckpointRecord[]>(), records: HistoryDeletionPlan['records'] = [];
-      for (const [relative, ids] of removals) {
-        const text = await readFile(path.join(this.root, relative), 'utf8');
-        overrides.set(relative, (JSON.parse(text) as CheckpointRecord[]).filter(record => !ids.has(record.id)));
-        records.push({ relative, digest: digest(text), ids: [...ids] });
-      }
-      const files = await this.candidates(inventory, Date.now(), overrides, released, true);
-      return { token: randomUUID(), createdAt: Date.now(), histories, records, files, bytes: files.reduce((sum, file) => sum + file.bytes, 0) };
+      const inventory = await this.inventory();
+      return this.planDeletion(inventory, await this.historyInventory(inventory), selected, false);
     });
   }
-  async deleteHistory(plan: HistoryDeletionPlan): Promise<HistoryDeletionResult> {
+  /** Every history of the chosen kinds, plus unused snapshots past the grace period when `unused` is chosen; deletion revalidates both sets. */
+  async previewKindCleanup(kinds: unknown): Promise<HistoryDeletionPlan> {
+    return withStorageLock(this.root, async () => {
+      if (!Array.isArray(kinds) || !kinds.length || kinds.some(kind => !CLEANUP_KINDS.includes(kind))) throw new Error('Choose what to clean up.');
+      const chosen = CLEANUP_KINDS.filter(kind => kinds.includes(kind)), inventory = await this.inventory(), groups = await this.historyInventory(inventory);
+      const ids = [...groups.values()].filter(group => chosen.includes(group.history.kind)).map(group => group.history.id);
+      const plan = await this.planDeletion(inventory, groups, ids, chosen.includes('unused'));
+      if (!plan.histories.length && !plan.files.length) throw new Error('Nothing to clean up.');
+      return { ...plan, kinds: chosen };
+    });
+  }
+  private async planDeletion(inventory: StoredFile[], groups: Awaited<ReturnType<StorageManager['historyInventory']>>, selected: string[], unused: boolean): Promise<HistoryDeletionPlan> {
+    const histories: StoredHistory[] = [], removals = new Map<string, Set<string>>(), released = new Set<string>();
+    for (const id of new Set(selected)) {
+      const group = groups.get(id); if (!group) throw new Error('Saved history changed. Refresh and select it again.');
+      const reviewFile = inventory.find(file => file.relative === `reviews/${group.history.projectId}.json`);
+      if (reviewFile && (await this.json(reviewFile)).active) throw new Error('Wait for the agent and change capture to finish before deleting history.');
+      histories.push(group.history);
+      const ids = removals.get(group.relative) ?? new Set<string>(); for (const record of group.records) ids.add(record.id); removals.set(group.relative, ids);
+      for (const relative of group.paths) released.add(relative);
+    }
+    const overrides = new Map<string, CheckpointRecord[]>(), records: HistoryDeletionPlan['records'] = [];
+    for (const [relative, ids] of removals) {
+      const text = await readFile(path.join(this.root, relative), 'utf8');
+      overrides.set(relative, (JSON.parse(text) as CheckpointRecord[]).filter(record => !ids.has(record.id)));
+      records.push({ relative, digest: digest(text), ids: [...ids] });
+    }
+    const files = await this.candidates(inventory, Date.now(), overrides, released, !unused);
+    return { token: randomUUID(), createdAt: Date.now(), histories, records, files, bytes: files.reduce((sum, file) => sum + file.bytes, 0) };
+  }
+  async deleteHistory(plan: HistoryDeletionPlan, onProgress?: StorageProgressListener): Promise<HistoryDeletionResult> {
     return withStorageLock(this.root, async () => {
       if (Date.now() - plan.createdAt > 10 * 60 * 1000) throw new Error('History preview expired. Preview again.');
+      const progress = (phase: StorageProgress['phase']) => onProgress?.({ phase, done: 0, total: plan.files.length, bytes: 0, totalBytes: plan.bytes });
+      progress('checking');
       const inventory = await this.inventory(), byPath = new Map(inventory.map(file => [file.relative, file]));
       const updates: { relative: string; records: CheckpointRecord[]; removed: number }[] = [];
       for (const edit of plan.records) {
@@ -220,6 +245,7 @@ export class StorageManager {
       // Validate every reference before removing any checkpoint. Shared blobs stay protected.
       await this.candidates(inventory, Date.now(), overrides, released, true);
       const result: HistoryDeletionResult = { removed: 0, bytes: 0, skipped: 0, failures: [], checkpointsRemoved: 0 };
+      progress('history');
       for (const edit of updates) {
         const full = path.join(this.root, edit.relative), temporary = `${full}.${randomUUID()}.tmp`;
         try {
@@ -229,11 +255,12 @@ export class StorageManager {
         finally { await unlink(temporary).catch(() => undefined); }
       }
       let fresh: StoredFile[];
+      progress('checking');
       try { fresh = await this.candidates(await this.inventory(), Date.now(), new Map(), released, true); }
       catch (error) {
         return { ...result, skipped: plan.files.length, failures: [...result.failures, `Snapshot cleanup: ${error instanceof Error ? error.message : String(error)}`] };
       }
-      const cleaned = await this.removeFiles(plan.files, fresh);
+      const cleaned = await this.removeFiles(plan.files, fresh, onProgress);
       return { ...cleaned, failures: [...result.failures, ...cleaned.failures], checkpointsRemoved: result.checkpointsRemoved };
     });
   }
@@ -256,25 +283,30 @@ export class StorageManager {
       return { token: randomUUID(), createdAt: Date.now(), files, bytes: files.reduce((n, file) => n + file.bytes, 0) };
     });
   }
-  async cleanup(plan: CleanupPlan): Promise<CleanupResult> {
+  async cleanup(plan: CleanupPlan, onProgress?: StorageProgressListener): Promise<CleanupResult> {
     return withStorageLock(this.root, async () => {
       if (Date.now() - plan.createdAt > 10 * 60 * 1000) throw new Error('Cleanup preview expired. Preview again.');
-      return this.removeFiles(plan.files, await this.candidates(await this.inventory(), Date.now()));
+      onProgress?.({ phase: 'checking', done: 0, total: plan.files.length, bytes: 0, totalBytes: plan.bytes });
+      return this.removeFiles(plan.files, await this.candidates(await this.inventory(), Date.now()), onProgress);
     });
   }
-  private async removeFiles(approved: StoredFile[], candidates: StoredFile[]): Promise<CleanupResult> {
+  private async removeFiles(approved: StoredFile[], candidates: StoredFile[], onProgress?: StorageProgressListener): Promise<CleanupResult> {
       const fresh = new Map(candidates.map(file => [file.relative, file]));
       const result: CleanupResult = { removed: 0, bytes: 0, skipped: 0, failures: [] };
+      const totalBytes = approved.reduce((sum, file) => sum + file.bytes, 0);
+      const report = () => onProgress?.({ phase: 'removing', done: result.removed + result.skipped + result.failures.length, total: approved.length, bytes: result.bytes, totalBytes });
+      report();
       for (const file of approved) {
-        if (result.failures.length && file.relative.includes('blobs/')) { result.skipped++; continue; }
+        if (result.failures.length && file.relative.includes('blobs/')) { result.skipped++; report(); continue; }
         const current = fresh.get(file.relative);
-        if (!current || ['bytes', 'modified', 'changed', 'inode'].some(key => current[key as keyof StoredFile] !== file[key as keyof StoredFile])) { result.skipped++; continue; }
+        if (!current || ['bytes', 'modified', 'changed', 'inode'].some(key => current[key as keyof StoredFile] !== file[key as keyof StoredFile])) { result.skipped++; report(); continue; }
         try {
           assertPath(file.relative);
           let full = this.root;
           for (const part of file.relative.split('/')) { full = path.join(full, part); const info = await lstat(full); if (info.isSymbolicLink() || (info.isFile() && info.nlink > 1)) throw new Error('Linked path was kept.'); }
           await unlink(full); result.removed++; result.bytes += file.bytes;
         } catch (error) { result.failures.push(`${file.relative}: ${error instanceof Error ? error.message : String(error)}`); }
+        report();
       }
       return result;
   }

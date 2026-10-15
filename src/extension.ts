@@ -62,7 +62,7 @@ import { isAccountProvider, isChatAccount } from './core/account-providers';
 import { DesktopAccounts, desktopExecutable, windowsAntigravityCredential } from './core/desktop-accounts';
 import { spawn as launchDesktopProcess } from 'node:child_process';
 import { withStorageLock } from './core/storage-lock';
-import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeletionPlan } from './core/storage';
+import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeletionPlan, type StorageProgress } from './core/storage';
 
 export interface ExtensionAPI {
   changeNavigationState(): ChangeNavigationState | undefined;
@@ -647,14 +647,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.openInTab', () => preview.openInTab());
   const storageAction = async (operation: () => Promise<StorageState>) => {
     if (storageJob) throw new Error('Wait for storage management to finish.');
-    storageState = { ...storageState, status: 'loading', error: undefined }; settings.update();
+    storageState = { ...storageState, status: 'loading', error: undefined, progress: undefined }; settings.update();
     const job = (async () => {
       try { storageState = await operation(); }
-      catch (error) { cleanupPlan = undefined; historyDeletionPlan = undefined; storageState = { ...storageState, status: 'error', plan: undefined, historyPlan: undefined, error: error instanceof Error ? error.message : String(error) }; throw error; }
+      catch (error) { cleanupPlan = undefined; historyDeletionPlan = undefined; storageState = { ...storageState, status: 'error', plan: undefined, historyPlan: undefined, progress: undefined, error: error instanceof Error ? error.message : String(error) }; throw error; }
       finally { settings.update(); }
     })();
     storageJob = job;
     try { await job; } finally { if (storageJob === job) storageJob = undefined; }
+  };
+  // Each update posts the whole dashboard state, so per-file ticks are throttled; phase changes and the last file always render.
+  let storageProgressAt = 0;
+  const storageProgress = (progress: StorageProgress) => {
+    storageState = { ...storageState, progress };
+    if (progress.phase === 'removing' && progress.done && progress.done < progress.total && Date.now() - storageProgressAt < 200) return;
+    storageProgressAt = Date.now(); settings.update();
   };
   register('agentTandem.refreshStorage', () => storageAction(async () => { cleanupPlan = undefined; historyDeletionPlan = undefined; return storage.inspect(); }));
   register('agentTandem.previewStorageCleanup', () => storageAction(async () => {
@@ -671,6 +678,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     historyDeletionPlan = await storage.previewHistoryDeletion((value as { ids: string[] }).ids);
     return { ...summary, historyPlan: historyDeletionPlan };
   }));
+  register('agentTandem.previewCleanAll', value => storageAction(async () => {
+    cleanupPlan = undefined;
+    const summary = await storage.inspect();
+    if (summary.cleanupBlocked) throw new Error(summary.cleanupBlocked);
+    historyDeletionPlan = await storage.previewKindCleanup((value as { kinds?: unknown } | undefined)?.kinds);
+    return { ...summary, historyPlan: historyDeletionPlan };
+  }));
   register('agentTandem.deleteHistory', value => storageAction(async () => {
     if (!historyDeletionPlan || !value || typeof value !== 'object' || (value as { token?: unknown }).token !== historyDeletionPlan.token) throw new Error('Preview history deletion before deleting data.');
     if (chatAbort || reviewing || externalSwitching || state.running || externalJob || activeReviewProjects.size) throw new Error('Wait for capture or review to finish before deleting history.');
@@ -678,7 +692,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     // The inline preview names the restore points lost and exact files freed.
     // Its Delete history button is the explicit confirmation; do not ask twice.
     storageState = { ...storageState, status: 'cleaning' }; settings.update();
-    const result = await storage.deleteHistory(approved); historyDeletionPlan = undefined;
+    const result = await storage.deleteHistory(approved, storageProgress); historyDeletionPlan = undefined;
+    storageProgress({ phase: 'refreshing', done: approved.files.length, total: approved.files.length, bytes: result.bytes, totalBytes: approved.bytes });
     state.checkpointPreview = undefined; checkpointPlan = undefined;
     const project = state.project, conversation = state.conversation;
     if (project) {
@@ -696,7 +711,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const answer = await vscode.window.showWarningMessage(`Remove ${approved.files.length} unused snapshot files (${(approved.bytes / 1024 / 1024).toFixed(2)} MB) from AgentTandem storage?`, { modal: true, detail: `Only the files in your preview are eligible. Baselines, pending review, checkpoints, Undo and demo history stay protected. Project files, native Codex/Claude history, attachments and usage records are kept.\n\n${storage.root}` }, 'Clean unused snapshots');
     if (answer !== 'Clean unused snapshots') return { ...(await storage.inspect()), plan: approved };
     storageState = { ...storageState, status: 'cleaning' }; settings.update();
-    const result = await storage.cleanup(approved); cleanupPlan = undefined;
+    const result = await storage.cleanup(approved, storageProgress); cleanupPlan = undefined;
+    storageProgress({ phase: 'refreshing', done: approved.files.length, total: approved.files.length, bytes: result.bytes, totalBytes: approved.bytes });
     return { ...(await storage.inspect()), result };
   }));
   register('agentTandem.revealStorage', () => vscode.commands.executeCommand('revealFileInOS', context.globalStorageUri));

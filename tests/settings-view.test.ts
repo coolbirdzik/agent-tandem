@@ -38,6 +38,7 @@ describe('Settings host updates', () => {
     const view = new SettingsView({} as any, () => state, invoke, report); view.open();
     await host.receive({ type: 'previewHistoryDeletion', value: { ids: ['selected'] } });
     expect(invoke).toHaveBeenLastCalledWith('agentTandem.previewHistoryDeletion', { ids: ['selected'] });
+    await host.receive({ type: 'previewCleanAll', value: { kinds: ['unused'] } }); expect(invoke.mock.lastCall).toEqual(['agentTandem.previewCleanAll', { kinds: ['unused'] }]);
     await host.receive({ type: 'deleteHistory', value: { token: 'approved' } });
     expect(invoke).toHaveBeenLastCalledWith('agentTandem.deleteHistory', { token: 'approved' });
     await host.receive({ type: 'deleteArbitraryPath', value: { path: 'outside' } });
