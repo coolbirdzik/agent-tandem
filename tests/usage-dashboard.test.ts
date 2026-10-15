@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dashboardAccountGroups, emptyTotals, periodKey, usageBreakdown, type UsageDay } from '../src/core/usage-dashboard';
+import { dashboardAccountGroups, emptyTotals, modelColorSlots, periodKey, usageBreakdown, type UsageDay } from '../src/core/usage-dashboard';
 import { quotaStatus } from '../src/core/quota-status';
 import { usageAccount, UNKNOWN_ACCOUNT } from '../src/core/usage-account';
 import { apiCost } from '../src/core/api-pricing';
@@ -69,5 +69,22 @@ describe('Dashboard grouping and quota presentation', () => {
     expect(quotaStatus({ conversation: { conversation: { provider: 'Claude' } } as any, accounts }).text).toBe('$(sparkle) Claude Code · 5h 0%');
     expect(quotaStatus({ composeProvider: 'Claude', accounts: { Claude: { status: 'loading' } } }).text).toContain('Claude Code · …');
     expect(quotaStatus({}).text).toContain('Quota —');
+  });
+});
+describe('Daily model breakdown', () => {
+  const day = (date: string, provider: 'Codex' | 'Claude', model: string, total: number): UsageDay => ({ ...emptyTotals(), day: date, provider, model, input: total, total, requests: 1 });
+  it('groups each period by provider model, largest first, without changing period totals', () => {
+    const result = usageBreakdown([day('2026-10-14', 'Claude', 'opus', 100), day('2026-10-14', 'Claude', 'opus', 50), day('2026-10-14', 'Codex', 'gpt', 300), day('2026-10-15', 'Claude', 'opus', 10)], { grouping: 'day' });
+    expect(result.periods[0]!.models.map(row => [row.provider, row.model, row.totals.total])).toEqual([['Codex', 'gpt', 300], ['Claude', 'opus', 150]]);
+    expect(result.periods[0]!.models.reduce((sum, row) => sum + row.totals.total, 0)).toBe(result.periods[0]!.totals.total);
+    expect(result.periods[1]!.models).toHaveLength(1);
+  });
+  it('keeps model colors stable across filters and folds models beyond the palette into Other', () => {
+    const days = Array.from({ length: 10 }, (_, index) => day('2026-10-14', 'Claude', `model-${index}`, 1000 - index));
+    const slots = modelColorSlots(days);
+    expect(slots.get('Claude\0model-0')).toBe(0); expect(slots.get('Claude\0model-6')).toBe(6);
+    expect(slots.get('Claude\0model-7')).toBe(-1); expect(slots.get('Claude\0model-9')).toBe(-1);
+    expect(modelColorSlots(days.slice(0, 8)).get('Claude\0model-7')).toBe(7);
+    expect(modelColorSlots([day('2026-10-14', 'Codex', 'same', 1), day('2026-10-14', 'Claude', 'same', 2)]).size).toBe(2);
   });
 });

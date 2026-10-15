@@ -284,6 +284,14 @@ export class UsageHistory {
       await setImmediate();
     }
     stats.parseMs = performance.now() - parseStart;
+    // A provider with exactly one known identity on this device (signed in, saved or native metadata), and no
+    // turn evidence for another, can own history without evidence, e.g. Claude Code sessions run outside the extension.
+    const soleAccounts = new Map<ConversationProvider, UsageAccount | null>();
+    for (const { account } of known ?? []) {
+      const previous = soleAccounts.get(account.provider);
+      soleAccounts.set(account.provider, previous === null || (previous && previous.id !== account.id) ? null : account);
+    }
+    for (const row of records.values()) if (row.account && soleAccounts.get(row.provider)?.id !== row.account.id) soleAccounts.set(row.provider, null);
     const claudeSessions = new Map<string, UsageAccount | null>();
     for (const row of records.values()) {
       if (row.provider !== 'Claude' || !row.conversationId) continue;
@@ -306,7 +314,7 @@ export class UsageHistory {
         if (assignment) { row.account = assignment.account ?? undefined; row.accountSource = 'manual'; }
         else if (!row.accountConflict && !row.creatorConflict) {
           const session = row.provider === 'Claude' && row.conversationId ? claudeSessions.get(row.conversationId) : undefined;
-          if (session !== null) row.account = (row.creatorAccountId ? creators.get(`${row.provider}:${row.creatorAccountId}`) : session) ?? undefined;
+          if (session !== null) row.account = (row.creatorAccountId ? creators.get(`${row.provider}:${row.creatorAccountId}`) : session ?? soleAccounts.get(row.provider)) ?? undefined;
           if (row.account) row.accountSource = 'inferred';
         }
       }

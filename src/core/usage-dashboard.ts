@@ -76,7 +76,7 @@ export function usageBreakdown(days: UsageDay[], filters: UsageFilters) {
   const totals = emptyTotals(), cost = emptyApiCost();
   const providers = new Map<string, { totals: TokenTotals; cost: ApiCost }>(), models = new Map<string, { totals: TokenTotals; cost: ApiCost }>();
   const accounts = new Map<string, { provider: ConversationProvider; account?: UsageAccount; totals: TokenTotals; cost: ApiCost }>();
-  const periods = new Map<string, { key: string; totals: TokenTotals; cost: ApiCost; Codex: number; Claude: number }>();
+  const periods = new Map<string, { key: string; totals: TokenTotals; cost: ApiCost; Codex: number; Claude: number; models: Map<string, { totals: TokenTotals; cost: ApiCost }> }>();
   for (const row of selected) {
     const rowCost = row.cost ?? { ...emptyApiCost(), unpricedTokens: row.total };
     addTotals(totals, row); addApiCost(cost, rowCost);
@@ -86,10 +86,22 @@ export function usageBreakdown(days: UsageDay[], filters: UsageFilters) {
     for (const [map, key] of [[providers, row.provider], [models, `${row.provider}\0${row.model}`]] as const) {
       const value = map.get(key) ?? { totals: emptyTotals(), cost: emptyApiCost() }; addTotals(value.totals, row); addApiCost(value.cost, rowCost); map.set(key, value);
     }
-    const key = periodKey(row.day, filters.grouping), period = periods.get(key) ?? { key, totals: emptyTotals(), cost: emptyApiCost(), Codex: 0, Claude: 0 };
+    const key = periodKey(row.day, filters.grouping), period = periods.get(key) ?? { key, totals: emptyTotals(), cost: emptyApiCost(), Codex: 0, Claude: 0, models: new Map() };
     addTotals(period.totals, row); addApiCost(period.cost, rowCost); period[row.provider] += row.total; periods.set(key, period);
+    const modelKey = `${row.provider}\0${row.model}`, periodModel = period.models.get(modelKey) ?? { totals: emptyTotals(), cost: emptyApiCost() };
+    addTotals(periodModel.totals, row); addApiCost(periodModel.cost, rowCost); period.models.set(modelKey, periodModel);
   }
   return { totals, cost, accounts: [...accounts.values()].sort((a, b) => b.totals.total - a.totals.total), providers: [...providers].map(([key, value]) => ({ key, ...value })).sort((a, b) => b.totals.total - a.totals.total),
-    models: [...models].map(([key, value]) => { const [provider, model] = key.split('\0'); return { provider: provider!, model: model!, ...value }; }).sort((a, b) => b.totals.total - a.totals.total),
-    periods: [...periods.values()].sort((a, b) => a.key.localeCompare(b.key)) };
+    models: modelRows(models), periods: [...periods.values()].map(period => ({ ...period, models: modelRows(period.models) })).sort((a, b) => a.key.localeCompare(b.key)) };
+}
+function modelRows(models: Map<string, { totals: TokenTotals; cost: ApiCost }>) {
+  return [...models].map(([key, value]) => { const [provider, model] = key.split('\0'); return { key, provider: provider as ConversationProvider, model: model!, ...value }; }).sort((a, b) => b.totals.total - a.totals.total);
+}
+export const MODEL_COLOR_SLOTS = 8;
+/** Colors follow the model, not the filtered rank: slots come from all recorded history; the rest share Other (-1). */
+export function modelColorSlots(days: UsageDay[]): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const row of days) totals.set(`${row.provider}\0${row.model}`, (totals.get(`${row.provider}\0${row.model}`) ?? 0) + row.total);
+  const ranked = [...totals].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return new Map(ranked.map(([key], index) => [key, index < MODEL_COLOR_SLOTS - 1 || ranked.length === MODEL_COLOR_SLOTS ? index : -1]));
 }

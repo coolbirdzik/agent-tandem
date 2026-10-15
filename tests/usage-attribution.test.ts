@@ -92,6 +92,26 @@ describe('Restoring historical account attribution', () => {
     await writeFile(file, metadata(claudeOne.email, 'wrong-org'));
     expect((await knownUsageAccounts(profiles)).find(row => row.account.id === claudeOne.id)?.nativeAccountIds).toEqual([]);
   });
+  it('infers the sole known Claude account for sessions without native evidence, but not once a second identity is known', async () => {
+    const f = await fixture();
+    await claudeFile(f, 'plain', [message('plain', 'plain')]);
+    const sole = await new UsageHistory(f.homes, f.ledger, f.cache, { store: f.store, knownAccounts: async () => [{ account: claudeOne, nativeAccountIds: [] }, { account: claudeOne, nativeAccountIds: [] }] }).read();
+    expect(sole.days[0]).toMatchObject({ total: 110, account: claudeOne, accountSource: 'inferred' });
+    expect((await new UsageHistory(f.homes, f.ledger, f.cache, claudeOptions(f)).read()).days[0]?.account).toBeUndefined();
+    await f.ledger.record('Claude:other', claudeTwo);
+    await claudeFile(f, 'other', [message('other', 'other')]);
+    const seen = await new UsageHistory(f.homes, f.ledger, f.cache, { store: f.store, knownAccounts: async () => [{ account: claudeOne, nativeAccountIds: [] }] }).read();
+    expect(seen.conversations?.find(row => row.id === 'plain')?.days[0]?.account).toBeUndefined();
+  });
+  it('matches Claude bridge owners when the signed-in identity reports the organization name', async () => {
+    const f = await fixture(), profiles = new AccountProfiles(path.join(f.root, 'profiles')), profile = await profiles.create('Claude');
+    const named = usageAccount('Claude', { signedIn: true, email: claudeOne.email, method: 'Claude account', organization: 'Org One' })!;
+    await profiles.identify(profile.id, { signedIn: true, email: claudeOne.email, organization: 'Org One', method: 'Claude account' });
+    await writeFile(path.join(profiles.home(profile.id), '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: claudeOne.email, accountUuid: 'owner-one', organizationUuid: 'org-one', organizationName: 'Org One' } }));
+    expect((await knownUsageAccounts(profiles)).find(row => row.account.id === named.id)?.nativeAccountIds).toEqual([claudeHistoryOwner('owner-one', 'org-one')]);
+    await profiles.identify(profile.id, { signedIn: false, method: 'Claude account' });
+    expect((await knownUsageAccounts(profiles)).some(row => row.account.id === named.id)).toBe(true);
+  });
   it('recovers the Claude display identity from metadata when no SDK or saved identity is available', async () => {
     const f = await fixture(), profiles = new AccountProfiles(path.join(f.root, 'profiles')), profile = await profiles.create('Claude');
     await writeFile(path.join(profiles.home(profile.id), '.claude.json'), JSON.stringify({ oauthAccount: {

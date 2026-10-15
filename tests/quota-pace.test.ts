@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { quotaPace, quotaTicks, type QuotaTick } from '../src/core/quota-pace';
+import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration, type QuotaTick } from '../src/core/quota-pace';
 import { QuotaPaceStore } from '../src/core/quota-pace-store';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -38,4 +38,33 @@ describe('Observed quota burn rate', () => {
       expect(quotaPace(await store.record([], now), next, now).percentPerHour).toBe(10);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+});
+describe('Quota burn-down', () => {
+  const tick = (at: number, usedPercent: number, jitter = 0): QuotaTick => ({ provider: 'Claude', accountId: 'one', plan: 'pro', windowId: 'five_hour', label: '5h', resetsAt: now + 3 * hour + jitter, at, usedPercent });
+  it('reads window lengths from quota labels', () => {
+    expect(quotaWindowDuration('5h')).toBe(5 * hour); expect(quotaWindowDuration('Opus · 7d')).toBe(7 * 24 * hour);
+    expect(quotaWindowDuration('90m')).toBe(90 * 60000); expect(quotaWindowDuration('Primary')).toBeUndefined();
+  });
+  it('anchors the cycle at 0% used, joins jittered reset times and projects the cycle average to reset', () => {
+    // Window: now - 2h .. now + 3h. 40% used in 2h = 20%/h, so 60% left runs out in 3h, exactly at reset.
+    const burn = quotaBurnDown([tick(now - hour, 20, 15), tick(now - 3 * hour, 90)], tick(now, 40, -900), now);
+    expect(burn.start).toBe(now - 2 * hour - 900); expect(burn.anchored).toBe(true);
+    expect(burn.points.map(point => point.remaining)).toEqual([80, 60]);
+    expect(burn.percentPerHour).toBeCloseTo(20, 2); expect(burn.remaining).toBe(60);
+    expect(burn.idealRemaining).toBeCloseTo(60, 1); expect(burn.projectedAtReset).toBeCloseTo(0, 1);
+    const fast = quotaBurnDown([], tick(now, 80), now);
+    expect(fast.beforeReset).toBe(true); expect(fast.exhaustsAt).toBe(now + 0.5 * hour);
+    expect(quotaPace([tick(now - hour / 2, 30, 40)], tick(now, 40), now).percentPerHour).toBe(20);
+  });
+  it('restarts from observed samples after a correction and bounds stored points', () => {
+    const burn = quotaBurnDown([tick(now - 90 * 60000, 50), tick(now - hour, 10)], tick(now, 30), now);
+    expect(burn.anchored).toBe(false); expect(burn.percentPerHour).toBe(20);
+    const many = Array.from({ length: 2000 }, (_, index) => tick(now - 2 * hour + index * 3000, index / 100));
+    expect(quotaBurnDown(many, tick(now, 25), now).points.length).toBeLessThanOrEqual(241);
+  });
+});
+it('keeps the current sample when an idle rolling window starts just after it', () => {
+  const current: QuotaTick = { provider: 'Codex', accountId: 'one', plan: 'plus', windowId: 'codex:primary', label: '5h', resetsAt: now + 5 * 3600000 + 500, at: now, usedPercent: 0 };
+  const burn = quotaBurnDown([], current, now);
+  expect(burn.start).toBe(now); expect(burn.points).toEqual([{ at: now, remaining: 100 }]); expect(burn.percentPerHour).toBeUndefined();
 });

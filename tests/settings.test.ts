@@ -189,12 +189,14 @@ describe('Settings usage dashboard', () => {
     const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
     const identity = { signedIn: true, email: 'one@test', method: 'ChatGPT', plan: 'plus' };
     const accountId = usageAccount('Codex', identity)!.id;
-    const status = { status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const, windows: [{ id: 'primary', label: '5h', usedPercent: 50, resetsAt: now + 5 * 3600000 }] } };
-    const tick = { provider: 'Codex' as const, accountId, plan: 'plus', windowId: 'primary', label: '5h', resetsAt: now + 5 * 3600000, at: now - 3600000, usedPercent: 25 };
+    const status = { status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const, windows: [{ id: 'primary', label: '5h', usedPercent: 50, resetsAt: now + 4.5 * 3600000 }] } };
+    const tick = { provider: 'Codex' as const, accountId, plan: 'plus', windowId: 'primary', label: '5h', resetsAt: now + 4.5 * 3600000, at: now - 3600000, usedPercent: 25 };
     const profile = { id: '11111111-1111-4111-8111-111111111111', provider: 'Codex' as const, label: 'Work', identity, createdAt: now, status };
     const state = { ...value, accounts: { Codex: status }, quotaTicks: [tick], managedAccounts: [profile] };
     render(state); expect(document.querySelector('#quota-pace')!.textContent).toContain('25% / hour');
     expect(document.querySelector('#quota-pace')!.textContent).toContain('before reset');
+    expect(document.querySelector('#quota-pace .burn-verdict')!.getAttribute('data-state')).toBe('over');
+    expect(document.querySelector('#quota-pace polyline')!.getAttribute('points')).toBeTruthy();
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'page', page: 'accounts' } }));
     expect(document.querySelector<HTMLElement>('#managed-accounts')!.hidden).toBe(false);
     document.querySelector<HTMLButtonElement>('#managed-account-list button')!.click();
@@ -299,12 +301,12 @@ describe('Settings usage dashboard', () => {
   });
   it('keeps history rows on quota/status updates and rebuilds them after a usage refresh', () => {
     render(); choose('filter-range', 'all');
-    const row = document.querySelector('#model-breakdown tbody tr')!;
+    const row = document.querySelector('#period-breakdown tr.model-row')!;
     expect(row).toBeTruthy();
     render({ ...value, accounts: { Claude: { ...value.accounts!.Claude!, status: 'loading' } } });
-    expect(document.querySelector('#model-breakdown tbody tr')).toBe(row);
+    expect(document.querySelector('#period-breakdown tr.model-row')).toBe(row);
     render({ ...value, data: { ...value.data!, files: value.data!.files + 1 } });
-    expect(document.querySelector('#model-breakdown tbody tr')).not.toBe(row);
+    expect(document.querySelector('#period-breakdown tr.model-row')).not.toBe(row);
   });
   it('shows storage location, cleanup preview and failures, and sends only the approved preview token', () => {
     render({ ...value, storage: { status: 'ready', root: 'C:/profile/globalStorage/agent-tandem', total: 4096, categories: [{ label: 'Review snapshots & tracking', bytes: 4096, files: 3 }], cleanable: { bytes: 1024, files: 1 }, plan: { token: 'preview', createdAt: Date.now(), bytes: 1024, files: [{ relative: 'reviews/history/blobs/old', bytes: 1024, modified: 0, changed: 0, inode: 1 }] } } });
@@ -361,8 +363,9 @@ describe('Settings usage dashboard', () => {
     const quotaBefore = document.querySelector('#quota-estimates')!.textContent;
     choose('filter-account', one.id);
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('200');
-    expect(document.querySelector('#model-breakdown')!.textContent).toContain('one-model');
-    expect(document.querySelector('#model-breakdown')!.textContent).not.toContain('two-model');
+    expect(document.querySelector('#period-breakdown')!.textContent).toContain('one-model');
+    expect(document.querySelector('#period-breakdown')!.textContent).not.toContain('two-model');
+    expect(document.querySelector('#chart-legend')!.textContent).toContain('one-model');
     expect(document.querySelectorAll('#account-breakdown tbody tr')).toHaveLength(1);
     expect(document.querySelector('#quota-estimates')!.textContent).not.toBe(quotaBefore);
     expect(document.querySelector('#quota-estimates')!.textContent).toContain('one@test.invalid');
@@ -405,7 +408,6 @@ describe('Settings usage dashboard', () => {
     } });
     expect(document.querySelector('#api-cost-total')!.getAttribute('title')).toBe('4.965000 USD for priced token usage');
     expect(document.querySelector('#api-cost-parts')!.textContent).toContain('Cache write');
-    expect(document.querySelector('#model-breakdown')!.textContent).toContain('API USD');
     expect(document.querySelector('#period-breakdown')!.textContent).toContain('API USD');
     const quota = document.querySelector('#quota-estimates')!;
     expect(quota.textContent).toContain('tokens / 1%');
@@ -444,7 +446,8 @@ describe('Settings usage dashboard', () => {
     expect((document.getElementById('filter-range') as HTMLSelectElement).value).toBe('today');
     expect((document.getElementById('filter-group') as HTMLSelectElement).value).toBe('day');
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('600');
-    expect(document.querySelectorAll('#period-breakdown tbody tr')).toHaveLength(1);
+    expect(document.querySelectorAll('#period-breakdown tr.period-row')).toHaveLength(1);
+    expect(document.querySelectorAll('#period-breakdown tr.model-row')).toHaveLength(1);
     expect(document.querySelectorAll('.chart-column')).toHaveLength(2);
     expect(document.querySelector('#period-breakdown td.total-cell')!.getAttribute('title')).toBe('600');
     choose('filter-range', 'all'); expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('1,200');
@@ -458,10 +461,14 @@ describe('Settings usage dashboard', () => {
   it('opens dashboard first, renders global totals/accounts, and filters provider/model without losing controls on refresh', () => {
     render(); choose('filter-range', 'all'); expect(document.getElementById('dashboard')!.hidden).toBe(false); expect(document.getElementById('preferences')!.hidden).toBe(true);
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('1,200');
-    expect(document.querySelectorAll('#model-breakdown tbody tr')).toHaveLength(2);
+    expect(document.querySelectorAll('#period-breakdown tr.model-row')).toHaveLength(3);
+    expect(document.querySelectorAll('#chart-legend > span')).toHaveLength(2);
+    const swatches = () => [...document.querySelectorAll<HTMLElement>('#chart-legend .model-swatch')].map(item => item.style.background);
+    const colors = swatches(); expect(new Set(colors).size).toBe(2);
     expect(document.querySelector('#accounts')!.textContent).toContain('claude@example.test');
     expect(document.querySelector('#accounts')!.textContent).toContain('75% left');
     choose('filter-provider', 'Codex'); expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('800');
+    expect(colors).toContain(swatches()[0]); expect(swatches()).toHaveLength(1);
     expect(document.querySelectorAll('#filter-model option')).toHaveLength(2);
     choose('filter-model', 'codex-model'); render({ ...value, status: 'loading' });
     expect((document.getElementById('filter-model') as HTMLSelectElement).value).toBe('codex-model');
@@ -471,8 +478,14 @@ describe('Settings usage dashboard', () => {
   });
   it('regroups all usage by week/month and applies custom date ranges without inflating totals', () => {
     render(); choose('filter-range', 'all'); choose('filter-group', 'month');
-    expect(document.querySelector('#period-title')!.textContent).toBe('Monthly breakdown');
-    expect(document.querySelectorAll('#period-breakdown tbody tr')).toHaveLength(2);
+    expect(document.querySelector('#period-title')!.textContent).toBe('Monthly breakdown by model');
+    expect(document.querySelectorAll('#period-breakdown tr.period-row')).toHaveLength(2);
+    const toggle = document.querySelector<HTMLButtonElement>('#period-breakdown .period-toggle')!, models = document.querySelectorAll('#period-breakdown tr.model-row').length;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true'); toggle.click();
+    expect(document.querySelectorAll('#period-breakdown tr.model-row').length).toBeLessThan(models);
+    expect(document.querySelector('#period-breakdown .period-toggle')!.getAttribute('aria-expanded')).toBe('false');
+    document.getElementById('period-toggle-all')!.click(); expect(document.querySelectorAll('#period-breakdown tr.model-row')).toHaveLength(0);
+    document.getElementById('period-toggle-all')!.click(); expect(document.querySelectorAll('#period-breakdown tr.model-row')).toHaveLength(models);
     choose('filter-group', 'week'); expect(document.querySelector('#period-caption')!.textContent).toContain('Monday');
     choose('filter-range', 'custom'); choose('filter-from', '2026-10-01'); choose('filter-to', '2026-10-31');
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('1,000');
@@ -497,9 +510,10 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#dashboard-error')!.textContent).toBe('History unavailable');
     const days = Array.from({ length: 75 }, (_, i) => row(`2026-${String(Math.floor(i / 25) + 1).padStart(2, '0')}-${String(i % 25 + 1).padStart(2, '0')}`, 'Codex', '<img src=x onerror=alert(1)>', 200));
     render({ ...value, data: { ...value.data!, days } });
-    expect(document.querySelector('#model-breakdown img')).toBeNull(); expect(document.querySelector('#model-breakdown')!.textContent).toContain('<img');
-    expect(document.querySelectorAll('#period-breakdown tbody tr')).toHaveLength(60);
-    document.querySelector<HTMLButtonElement>('#period-breakdown button')!.click(); expect(document.querySelectorAll('#period-breakdown tbody tr')).toHaveLength(75);
+    expect(document.querySelector('#period-breakdown img:not(.provider-icon)')).toBeNull(); expect(document.querySelector('#period-breakdown .model-name')!.textContent).toContain('<img');
+    expect(document.querySelector('#chart-legend img')).toBeNull(); expect(document.querySelector('#chart-legend')!.textContent).toContain('<img');
+    expect(document.querySelectorAll('#period-breakdown tr.period-row')).toHaveLength(60);
+    document.querySelector<HTMLButtonElement>('#period-breakdown > button')!.click(); expect(document.querySelectorAll('#period-breakdown tr.period-row')).toHaveLength(75);
     expect(document.querySelectorAll('.chart-column')).toHaveLength(30);
   });
 });

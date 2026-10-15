@@ -1,11 +1,11 @@
-import { dashboardAccountGroups, emptyTotals, localDay, periodKey, usageBreakdown, type TokenTotals, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
+import { dashboardAccountGroups, emptyTotals, localDay, modelColorSlots, periodKey, usageBreakdown, type TokenTotals, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
 import type { ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
 import { PRICING_CHECKED_AT, PRICING_SOURCES, type ApiCost } from './core/api-pricing';
 import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates, quotaMeters, quotaMeterKey, quotaObservations, quotaTrends } from './core/quota-estimate';
 import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-account';
 import { apiActivityBreakdown } from './core/api-token-activity';
-import { quotaPace, quotaTicks } from './core/quota-pace';
+import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
 import { bankedResetDetails } from './core/banked-resets';
 import { quotaStatuses } from './core/quota-status';
 import { statusBarPreferences, type StatusBarField, type StatusBarPreferences } from './core/status-bar-preferences';
@@ -27,6 +27,7 @@ const money = (value: number) => moneyFormat.format(value);
 const costLabel = (cost: ApiCost) => !cost.pricedTokens && cost.unpricedTokens ? 'Unpriced' : `${money(cost.usd)}${cost.unpricedTokens ? ' + unpriced' : ''}`;
 let state: UsageDashboardState | undefined, initialized = false, currentPage = 'dashboard';
 let periodLimit = 60, modelSignature = '', accountSignature = '';
+const collapsedPeriods = new Set<string>(); let periodsCollapsed = false, modelSlots = new Map<string, number>();
 let conversationLimit = 20, selectedUsageConversation: string | undefined;
 let accountPlatform: AccountProvider | '' = '';
 let observedSwitchId: string | undefined;
@@ -64,7 +65,7 @@ function renderLoading() {
   for (let i = 0; i < 9; i++) bars.append(skeleton('bar')); chart.append(bars);
   el('chart-max').textContent = ''; el('chart-mid').textContent = '';
   el('chart-caption').replaceChildren(skeleton('caption')); loadingRows(el('provider-breakdown'), 2);
-  loadingRows(el('period-breakdown')); loadingRows(el('model-breakdown')); loadingRows(el('account-breakdown')); loadingRows(el('conversation-breakdown'));
+  el('chart-legend').replaceChildren(); loadingRows(el('period-breakdown')); loadingRows(el('account-breakdown')); loadingRows(el('conversation-breakdown'));
   el('conversation-detail').hidden = true;
 }
 function assignmentScope(): UsageAssignmentScope {
@@ -483,18 +484,60 @@ function renderAccountSwitch() {
   el('account-switch-close').textContent = running ? 'Hide' : 'Close';
   if (operation.id !== observedSwitchId) { observedSwitchId = operation.id; if (running) showSwitchDialog(); }
 }
+const svgNode = <K extends keyof SVGElementTagNameMap>(tag: K, attributes: Record<string, string | number>) => {
+  const value = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [key, item] of Object.entries(attributes)) value.setAttribute(key, String(item)); return value;
+};
+const percent = (value: number) => `${number(Math.round(value * 10) / 10)}%`;
+const burnTime = (at: number, long: boolean) => new Date(at).toLocaleString(undefined, long ? { weekday: 'short', hour: '2-digit', minute: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
 function renderQuotaPace() {
   const root = el('quota-pace'); root.replaceChildren();
   for (const provider of ['Codex', 'Claude'] as const) if (accountInScope(provider)) for (const tick of quotaTicks(provider, dashboardAccountStatus(provider))) {
-    const pace = quotaPace(state?.quotaTicks ?? [], tick), item = node('article', undefined, 'quota-pace-card');
-    const heading = node('div', undefined, 'quota-pace-heading'); heading.append(providerIcon(provider), node('span', `${provider} · ${tick.label}`)); item.append(heading);
-    const value = node('strong', pace.percentPerHour === undefined ? '—' : `${number(Math.round(pace.percentPerHour * 10) / 10)}% / hour`);
-    value.title = 'Measured change in API quota over the last observed hour. Includes usage outside this conversation.'; item.append(value);
-    const detail = node('p', pace.percentPerHour === undefined ? 'Collecting quota samples' : pace.percentPerHour === 0 ? 'No quota increase observed' : pace.exhaustsAt ? `At this pace: ${new Date(pace.exhaustsAt).toLocaleString()}${pace.beforeReset ? ' · before reset' : ''}` : '—', 'muted');
-    item.dataset.low = String(pace.beforeReset); item.append(detail);
-    const chart = node('div', undefined, 'quota-pace-chart'); chart.setAttribute('aria-label', `${provider} ${tick.label} observed quota usage`);
-    for (const sample of pace.samples.slice(-30)) { const bar = node('span'); bar.style.height = `${Math.max(3, sample.usedPercent)}%`; bar.title = `${new Date(sample.at).toLocaleTimeString()} · ${sample.usedPercent}% used`; chart.append(bar); }
-    item.append(chart); root.append(item);
+    const burn = quotaBurnDown(state?.quotaTicks ?? [], tick), pace = quotaPace(state?.quotaTicks ?? [], tick), measured = quotaWindowDuration(tick.label) !== undefined;
+    // The cycle average needs a known window start; the last observed hour is the fallback.
+    const rate = burn.percentPerHour ?? pace.percentPerHour, exhaustsAt = rate && rate > 0 ? tick.at + burn.remaining / rate * 3600000 : undefined;
+    // Extrapolating the first tenth of a cycle overreacts to a single burst, so it informs without warning.
+    const early = measured && tick.at - burn.start < (burn.end - burn.start) / 10;
+    const beforeReset = !early && exhaustsAt !== undefined && exhaustsAt < burn.end, atReset = rate === undefined ? undefined : Math.max(0, burn.remaining - Math.max(0, rate) * (burn.end - tick.at) / 3600000);
+    const long = burn.end - burn.start > 36 * 3600000, span = Math.max(1, burn.end - burn.start), name = provider === 'Claude' ? 'Claude Code' : provider;
+    const x = (at: number) => Math.min(1000, Math.max(0, (at - burn.start) / span * 1000)), y = (remaining: number) => 100 - remaining;
+    const item = node('article', undefined, 'quota-pace-card'); item.dataset.provider = provider; item.dataset.low = String(beforeReset);
+    const heading = node('div', undefined, 'quota-pace-heading'); heading.append(providerIcon(provider), node('span', `${name} · ${tick.label}`)); item.append(heading);
+    item.append(node('strong', `${percent(burn.remaining)} left`));
+    const verdict = node('p', undefined, 'burn-verdict'), icon = node('span', undefined, 'codicon'); icon.setAttribute('aria-hidden', 'true');
+    verdict.dataset.state = rate === undefined || early ? 'pending' : beforeReset ? 'over' : 'ok';
+    icon.classList.add(rate === undefined ? 'codicon-history' : early ? 'codicon-info' : beforeReset ? 'codicon-warning' : 'codicon-pass');
+    verdict.append(icon, node('span', rate === undefined ? 'Collecting quota samples' : early ? `Early in cycle${exhaustsAt && exhaustsAt < burn.end ? ` · this pace runs out ≈ ${burnTime(exhaustsAt, long)}` : ''}` : beforeReset ? `Runs out ≈ ${burnTime(exhaustsAt!, long)} · before reset` : rate <= 0 ? 'No quota increase observed' : `On track · ≈ ${percent(atReset!)} left at reset`));
+    item.append(verdict);
+    const facts = [burn.idealRemaining === undefined ? '' : `Even pace ${percent(burn.idealRemaining)} left`, burn.percentPerHour === undefined ? '' : `Cycle ${percent(burn.percentPerHour)} / hour`,
+      pace.percentPerHour === undefined ? '' : `Last hour ${percent(pace.percentPerHour)} / hour`].filter(Boolean);
+    const detail = node('p', facts.join(' · ') || '—', 'muted burn-facts'); detail.title = 'Measured change in API quota. Includes usage outside this conversation and on other devices.'; item.append(detail);
+    const plot = node('div', undefined, 'burn-plot'); plot.setAttribute('role', 'img');
+    plot.setAttribute('aria-label', `${name} ${tick.label} burn-down: ${percent(burn.remaining)} left${burn.idealRemaining === undefined ? '' : `, even pace ${percent(burn.idealRemaining)}`}. ${verdict.textContent}`);
+    const svg = svgNode('svg', { viewBox: '0 0 1000 100', preserveAspectRatio: 'none', 'aria-hidden': 'true' });
+    for (const level of [100, 50]) svg.append(svgNode('line', { x1: 0, x2: 1000, y1: y(level), y2: y(level), class: 'burn-grid' }));
+    svg.append(svgNode('line', { x1: 0, x2: 1000, y1: 100, y2: 100, class: 'burn-baseline' }));
+    if (measured) svg.append(svgNode('line', { x1: 0, y1: 0, x2: 1000, y2: 100, class: 'burn-ideal' }));
+    const first = burn.points[0]!, last = burn.points[burn.points.length - 1]!;
+    if (burn.anchored) svg.append(svgNode('line', { x1: 0, y1: 0, x2: x(first.at), y2: y(first.remaining), class: 'burn-assumed' }));
+    svg.append(svgNode('polyline', { points: burn.points.map(point => `${x(point.at)},${y(point.remaining)}`).join(' '), class: 'burn-actual' }));
+    if (rate && rate > 0) {
+      const until = Math.min(exhaustsAt!, burn.end);
+      svg.append(svgNode('line', { x1: x(last.at), y1: y(last.remaining), x2: x(until), y2: y(Math.max(0, last.remaining - rate * (until - last.at) / 3600000)), class: 'burn-projection' }));
+    }
+    const dot = node('span', undefined, 'burn-dot'); dot.style.left = `${x(last.at) / 10}%`; dot.style.top = `${y(last.remaining)}%`;
+    const scale = node('span', '100%', 'burn-scale'), cross = node('span', undefined, 'burn-crosshair'), tip = node('span', undefined, 'burn-tooltip'); cross.hidden = tip.hidden = true;
+    plot.append(svg, scale, dot, cross, tip);
+    plot.onpointermove = event => {
+      const box = plot.getBoundingClientRect(), at = burn.start + (event.clientX - box.left) / Math.max(1, box.width) * span;
+      const nearest = burn.points.reduce((best, point) => Math.abs(point.at - at) < Math.abs(best.at - at) ? point : best), left = x(nearest.at) / 10;
+      tip.replaceChildren(node('strong', burnTime(nearest.at, long)), node('span', `${percent(nearest.remaining)} left`), ...(measured ? [node('span', `Even pace ${percent(100 - (nearest.at - burn.start) / span * 100)}`, 'muted')] : []));
+      cross.style.left = tip.style.left = `${left}%`; tip.dataset.side = left > 55 ? 'left' : 'right'; cross.hidden = tip.hidden = false;
+    };
+    plot.onpointerleave = () => { cross.hidden = tip.hidden = true; };
+    const axis = node('div', undefined, 'burn-axis-labels'); axis.append(node('span', measured ? burnTime(burn.start, long) : `Since ${burnTime(burn.start, long)}`), node('span', `Reset ${burnTime(burn.end, long)}`));
+    item.append(plot, axis);
+    if (burn.stale) item.append(node('small', 'Quota sample is older than 5 minutes', 'muted'));
+    root.append(item);
   }
   if (!root.children.length) root.append(node('p', 'Refresh account quota to start measuring.', 'empty'));
 }
@@ -639,6 +682,71 @@ function renderCost(cost: ApiCost) {
     const item = node('div'); item.append(node('span', label, 'muted'), node('strong', money(value))); parts.append(item);
   }
 }
+type UsageResult = ReturnType<typeof usageBreakdown>;
+type ModelRow = UsageResult['models'][number];
+/** Colors follow the model across filters; models beyond the palette share Other. */
+const modelSlot = (key: string) => modelSlots.get(key) ?? -1;
+const modelColor = (key: string) => modelSlot(key) >= 0 ? `var(--model-${modelSlot(key) + 1})` : 'var(--model-other)';
+const slotOrder = (key: string) => modelSlot(key) < 0 ? Number.MAX_SAFE_INTEGER : modelSlot(key);
+const bySlot = (a: ModelRow, b: ModelRow) => slotOrder(a.key) - slotOrder(b.key) || b.totals.total - a.totals.total;
+const providerName = (provider: ConversationProvider) => provider === 'Claude' ? 'Claude Code' : provider;
+const modelLines = (models: ModelRow[]) => models.map(row => `${row.model} (${providerName(row.provider)}): ${number(row.totals.total)}`).join('\n');
+function modelStack(models: ModelRow[]) {
+  const stack = node('div', undefined, 'chart-stack'), total = models.reduce((sum, row) => sum + row.totals.total, 0), segments = new Map<string, number>();
+  for (const row of models.slice().sort(bySlot)) segments.set(modelColor(row.key), (segments.get(modelColor(row.key)) ?? 0) + row.totals.total);
+  // Flex columns stack top-down; the first stable slot sits on the baseline.
+  for (const [color, value] of [...segments].reverse()) { const segment = node('div', undefined, 'chart-segment'); segment.style.background = color; segment.style.height = `${total ? value / total * 100 : 0}%`; stack.append(segment); }
+  return stack;
+}
+function swatch(key: string) { const value = node('i', undefined, 'model-swatch'); value.style.background = modelColor(key); value.setAttribute('aria-hidden', 'true'); return value; }
+function renderModelLegend(models: ModelRow[], total: number) {
+  const root = el('chart-legend'); root.replaceChildren();
+  const share = (value: number) => total ? `${Math.round(value / total * 100)}%` : '0%';
+  for (const row of models.filter(row => modelSlot(row.key) >= 0).sort(bySlot)) {
+    const item = node('span'); item.title = `${row.model} · ${providerName(row.provider)} · ${number(row.totals.total)} tokens`;
+    item.append(swatch(row.key), node('span', row.model), node('small', share(row.totals.total))); root.append(item);
+  }
+  const other = models.filter(row => modelSlot(row.key) < 0);
+  if (other.length) {
+    const item = node('span'); item.title = modelLines(other);
+    item.append(swatch(''), node('span', `${other.length} other ${other.length === 1 ? 'model' : 'models'}`), node('small', share(other.reduce((sum, row) => sum + row.totals.total, 0)))); root.append(item);
+  }
+}
+const periodExpanded = (key: string) => periodsCollapsed ? collapsedPeriods.has(key) : !collapsedPeriods.has(key);
+function renderPeriods(periods: UsageResult['periods']) {
+  const root = el('period-breakdown'); root.replaceChildren();
+  const toggleAll = el('period-toggle-all'); toggleAll.textContent = periodsCollapsed ? 'Expand all' : 'Collapse all'; toggleAll.hidden = !periods.length;
+  if (!periods.length) { root.append(node('p', 'No recorded usage matches these filters.', 'empty')); return; }
+  const table = node('table', undefined, 'period-table'), head = node('thead'), heading = node('tr'), body = node('tbody');
+  ['Period / model', 'Model mix', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD'].forEach((text, index) => { const cell = node('th', text, index >= 2 ? 'numeric' : ''); cell.scope = 'col'; heading.append(cell); });
+  head.append(heading);
+  const numbers = (line: HTMLElement, totals: TokenTotals, cost: ApiCost) => {
+    for (const [value, total] of [[totals.input], [totals.output], [totals.cacheRead], [totals.cacheWrite], [totals.total, true], [totals.requests]] as Array<[number, boolean?]>) {
+      const cell = node('td', compact(value), `numeric${total ? ' total-cell' : ''}`); cell.title = number(value); line.append(cell);
+    }
+    line.append(node('td', costLabel(cost), 'numeric'));
+  };
+  for (const period of periods) {
+    const expanded = periodExpanded(period.key), line = node('tr', undefined, 'period-row'), name = node('td', undefined, 'period-name');
+    const toggle = node('button', undefined, 'period-toggle'); toggle.setAttribute('aria-expanded', String(expanded));
+    const chevron = node('span', undefined, `codicon codicon-chevron-${expanded ? 'down' : 'right'}`); chevron.setAttribute('aria-hidden', 'true');
+    toggle.append(chevron, node('span', period.key), node('small', `${period.models.length} ${period.models.length === 1 ? 'model' : 'models'}`, 'muted'));
+    toggle.onclick = () => { if (collapsedPeriods.has(period.key)) collapsedPeriods.delete(period.key); else collapsedPeriods.add(period.key); renderUsage(); };
+    name.append(toggle); line.append(name);
+    const mix = node('td', undefined, 'model-mix-cell'), bar = node('div', undefined, 'model-mix'); bar.title = modelLines(period.models);
+    for (const row of period.models.slice().sort(bySlot)) { const segment = node('span'); segment.style.background = modelColor(row.key); segment.style.flexGrow = String(row.totals.total); bar.append(segment); }
+    mix.append(bar); line.append(mix); numbers(line, period.totals, period.cost); body.append(line);
+    if (expanded) for (const row of period.models) {
+      const detail = node('tr', undefined, 'model-row'), model = node('td', undefined, 'model-name'), share = period.totals.total ? row.totals.total / period.totals.total * 100 : 0;
+      const label = node('div', undefined, 'model-label'); label.append(swatch(row.key), providerIcon(row.provider), node('span', row.model)); model.append(label); model.title = `${row.model} · ${providerName(row.provider)}`;
+      const shareCell = node('td', undefined, 'model-share-cell'), wrap = node('div', undefined, 'model-share-wrap'), meter = node('div', undefined, 'model-share'), fill = node('span');
+      fill.style.width = `${share}%`; fill.style.background = modelColor(row.key); meter.append(fill); wrap.append(meter, node('small', `${Math.round(share)}%`, 'muted')); shareCell.append(wrap);
+      detail.append(model, shareCell); numbers(detail, row.totals, row.cost); body.append(detail);
+    }
+  }
+  table.append(head, body); root.append(table);
+}
+el('period-toggle-all').onclick = () => { periodsCollapsed = !periodsCollapsed; collapsedPeriods.clear(); renderUsage(); };
 function renderUsage() {
   if (!state || (state.status === 'loading' && !state.data)) {
     const range = dateRange(); renderApiActivity({ ...range, grouping: el<HTMLSelectElement>('filter-group').value as UsageGrouping }); renderLoading(); return;
@@ -686,6 +794,7 @@ function renderUsage() {
     metric('Input tokens', t.input, `${compact(Math.max(0, t.input - t.cacheRead - t.cacheWrite))} uncached · ${compact(t.cacheWrite)} cache write`),
     metric('Output tokens', t.output, `${compact(t.reasoning)} reasoning tokens included`),
     metric('Cache read', t.cacheRead, `${t.input ? Math.round(t.cacheRead / t.input * 100) : 0}% of input served from cache`));
+  modelSlots = modelColorSlots(state.data?.days ?? []);
   const chart = el('usage-chart'); chart.replaceChildren();
   const periods = result.periods.slice(-30), single = rangeSelect.value === 'today'; chart.dataset.single = String(single);
   const max = Math.max(1, ...periods.map(row => single ? Math.max(row.Codex, row.Claude) : row.totals.total));
@@ -696,22 +805,22 @@ function renderUsage() {
     const row = periods[0]!;
     for (const provider of ['Codex', 'Claude'] as const) {
       if (filters.provider && filters.provider !== provider) continue;
-      const label = provider === 'Claude' ? 'Claude Code' : provider, column = node('div', undefined, 'chart-column');
-      column.title = `${row.key}\n${label}: ${number(row[provider])}`; column.setAttribute('role', 'img'); column.setAttribute('aria-label', column.title);
-      const bar = node('div', undefined, `chart-stack chart-${provider.toLowerCase()}`); bar.style.height = `${row[provider] / max * 100}%`;
+      const label = provider === 'Claude' ? 'Claude Code' : provider, column = node('div', undefined, 'chart-column'), models = row.models.filter(model => model.provider === provider);
+      column.title = `${row.key} · ${label}: ${number(row[provider])}\n${modelLines(models)}`; column.setAttribute('role', 'img'); column.setAttribute('aria-label', column.title);
+      const bar = modelStack(models); bar.style.height = `${row[provider] / max * 100}%`;
       const value = node('span', compact(row[provider]), 'chart-value'); value.style.bottom = `${row[provider] / max * 100}%`;
       column.append(value, bar, node('span', label, 'chart-date')); chart.append(column);
     }
   } else periods.forEach((row, index) => {
-    const column = node('div', undefined, 'chart-column'); column.title = `${row.key}\nCodex: ${number(row.Codex)}\nClaude Code: ${number(row.Claude)}\nTotal: ${number(row.totals.total)}`;
+    const column = node('div', undefined, 'chart-column'); column.title = `${row.key} · ${number(row.totals.total)} tokens\n${modelLines(row.models)}`;
     column.setAttribute('role', 'img'); column.setAttribute('aria-label', column.title);
-    const stack = node('div', undefined, 'chart-stack'); stack.style.height = `${row.totals.total / max * 100}%`;
-    for (const provider of ['Codex', 'Claude'] as const) { const bar = node('div', undefined, `chart-${provider.toLowerCase()}`); bar.style.height = `${row.totals.total ? row[provider] / row.totals.total * 100 : 0}%`; stack.append(bar); }
+    const stack = modelStack(row.models); stack.style.height = `${row.totals.total / max * 100}%`;
     column.append(stack);
     if (index === 0 || index === periods.length - 1 || index % Math.max(1, Math.ceil(periods.length / 5)) === 0) column.append(node('span', filters.grouping === 'month' ? row.key : row.key.slice(5), 'chart-date'));
     chart.append(column);
   });
-  el('chart-caption').textContent = 'Local · ' + (single ? 'Tokens by provider · your local day' : result.periods.length > 30 ? `Latest 30 of ${result.periods.length} ${filters.grouping}s · full breakdown below` : `${result.periods.length} ${filters.grouping}${result.periods.length === 1 ? '' : 's'}`);
+  el('chart-caption').textContent = 'Local · ' + (single ? 'Tokens by provider and model · your local day' : result.periods.length > 30 ? `Latest 30 of ${result.periods.length} ${filters.grouping}s · stacked by model · full breakdown below` : `${result.periods.length} ${filters.grouping}${result.periods.length === 1 ? '' : 's'} · stacked by model`);
+  renderModelLegend(result.models, t.total);
   const providersRoot = el('provider-breakdown'); providersRoot.replaceChildren();
   for (const provider of ['Codex', 'Claude'] as const) {
     const usage = result.providers.find(row => row.key === provider)?.totals ?? emptyTotals(), percent = t.total ? usage.total / t.total * 100 : 0;
@@ -721,13 +830,11 @@ function renderUsage() {
     const cost = result.providers.find(row => row.key === provider)?.cost;
     row.append(label, meter, node('span', `${number(usage.requests)} requests · ${cost ? costLabel(cost) : money(0)} API equivalent`, 'muted')); providersRoot.append(row);
   }
-  const headers = ['Model', 'Provider', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD'];
   table(el('account-breakdown'), ['Account', 'Provider', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD', 'Attribution'], result.accounts.map(row => [usageAccountLabel(row.account), row.provider, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.cacheWrite, row.totals.total, row.totals.requests, costLabel(row.cost), attributionCaption(state?.data?.days ?? [], { ...filters, provider: row.provider, accountId: row.account?.id ?? UNKNOWN_ACCOUNT }) || (row.account ? 'Native turn evidence' : 'Unknown')]), 2);
-  table(el('model-breakdown'), headers, result.models.map(row => [row.model, row.provider, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.cacheWrite, row.totals.total, row.totals.requests, costLabel(row.cost)]), 2);
   const periodsDescending = result.periods.slice().reverse();
-  el('period-title').textContent = `${{ day: 'Daily', week: 'Weekly', month: 'Monthly' }[filters.grouping]} breakdown`;
-  el('period-caption').textContent = filters.grouping === 'week' ? 'Weeks start Monday' : filters.grouping === 'day' ? 'Calendar days in your local timezone' : 'Calendar months in your local timezone';
-  table(el('period-breakdown'), ['Period', 'Codex', 'Claude', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD'], periodsDescending.slice(0, periodLimit).map(row => [row.key, row.Codex, row.Claude, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.cacheWrite, row.totals.total, row.totals.requests, costLabel(row.cost)]));
+  el('period-title').textContent = `${{ day: 'Daily', week: 'Weekly', month: 'Monthly' }[filters.grouping]} breakdown by model`;
+  el('period-caption').textContent = `${filters.grouping === 'week' ? 'Weeks start Monday' : `Calendar ${filters.grouping === 'day' ? 'days' : 'months'} in your local timezone`} · select a period to show or hide its models`;
+  renderPeriods(periodsDescending.slice(0, periodLimit));
   if (periodsDescending.length > periodLimit) {
     const more = node('button', `Show ${Math.min(60, periodsDescending.length - periodLimit)} more`, 'quiet'); more.onclick = () => { periodLimit += 60; renderUsage(); }; el('period-breakdown').append(more);
   }
@@ -858,7 +965,7 @@ function render(value: UsageDashboardState) {
   const root = el('usage-coverage'), coverage = node('details', undefined, 'usage-details');
   coverage.append(node('summary', 'Data & pricing details')); root.replaceChildren(coverage);
   coverage.append(node('div', 'Local usage includes saved history across projects, archived sessions and subagents. Other devices and deleted history are excluded. Input includes cache; output includes reported reasoning.'));
-  coverage.append(node('div', 'Native turn evidence takes priority. Codex creator IDs, Claude bridge owners and consistent Claude response identities can infer an account for other history in the same session; inferred sessions may include account switches. User-confirmed assignments can replace inference and can be removed. Unmatched history stays under Unknown account. Local quota estimates use native evidence only; Device estimates also include inferred, user-confirmed and unknown history.'));
+  coverage.append(node('div', 'Native turn evidence takes priority. Codex creator IDs, Claude bridge owners and consistent Claude response identities can infer an account for other history in the same session; inferred sessions may include account switches. When a provider has only one known account on this device, history without evidence is inferred for it. User-confirmed assignments can replace inference and can be removed. Unmatched history stays under Unknown account. Local quota estimates use native evidence only; Device estimates also include inferred, user-confirmed and unknown history.'));
   const pricing = node('div', `API equivalent uses published standard global token rates checked ${PRICING_CHECKED_AT}, not historical invoices. Prompt-length premiums are estimated per response; older session-wide billing cannot be reconstructed. Fast modes, tool fees, taxes and regional premiums are excluded. Unspecified Claude cache writes use the 5-minute rate. Sources: `);
   for (const provider of ['Codex', 'Claude'] as const) { const link = node('a', provider === 'Codex' ? 'OpenAI API pricing' : 'Claude API pricing'); link.href = PRICING_SOURCES[provider]; pricing.append(link, document.createTextNode(' ')); }
   coverage.append(pricing);

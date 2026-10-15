@@ -16,10 +16,14 @@ export async function knownUsageAccounts(profiles: AccountProfiles, current: Par
     if (entry.provider === 'Claude') {
       try { claudeOwner = JSON.parse(await readFile(claudeMetadata(entry.home), 'utf8')).oauthAccount; } catch { /* Metadata is optional. */ }
     }
-    const account = usageAccount(entry.provider, entry.identity ?? (typeof claudeOwner?.emailAddress === 'string' ? {
+    // The SDK reports the organization name; prefer it so metadata-only identities match signed-in ones.
+    const organizationName = typeof claudeOwner?.organizationName === 'string' ? claudeOwner.organizationName.trim() : '';
+    const organization = organizationName || claudeOwner?.organizationUuid;
+    // A signed-out or stale saved identity must not hide the identity in native metadata.
+    const account = usageAccount(entry.provider, entry.identity) ?? usageAccount(entry.provider, typeof claudeOwner?.emailAddress === 'string' ? {
       signedIn: true, method: 'Claude account', email: claudeOwner.emailAddress,
-      ...(typeof claudeOwner.organizationUuid === 'string' ? { organization: claudeOwner.organizationUuid } : {}),
-    } : undefined));
+      ...(typeof organization === 'string' ? { organization } : {}),
+    } : undefined);
     if (!account) continue;
     const nativeAccountIds = account.nativeAccountId ? [account.nativeAccountId] : [];
     if (entry.provider === 'Codex') {
@@ -31,7 +35,7 @@ export async function knownUsageAccounts(profiles: AccountProfiles, current: Par
         if (typeof claims?.email === 'string' && claims.email.trim().toLowerCase() === account.email && typeof auth.tokens?.account_id === 'string' && auth.tokens.account_id.trim()) nativeAccountIds.push(auth.tokens.account_id.trim());
       } catch { /* Native identity can still match its reported workspace ID. */ }
     } else if (typeof claudeOwner?.emailAddress === 'string' && claudeOwner.emailAddress.trim().toLowerCase() === account.email &&
-      (!account.organization || account.organization === claudeOwner.organizationUuid)) {
+      (!account.organization || account.organization === claudeOwner.organizationUuid || (!!organizationName && account.organization === organizationName))) {
       const owner = claudeHistoryOwner(claudeOwner.accountUuid, claudeOwner.organizationUuid);
       if (owner) nativeAccountIds.push(owner);
     }
