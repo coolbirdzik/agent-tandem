@@ -2,7 +2,7 @@
   "name": "agent-tandem",
   "displayName": "AgentTandem — Claude Code & Codex Chat, Code Review & Usage",
   "description": "Chat with Claude Code and Codex, review code changes, restore checkpoints, resume conversations and track usage in VS Code.",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "publisher": "agent-tandem-local",
   "private": true,
   "repository": {
@@ -63,11 +63,17 @@
     "icons": {
       "agent-tandem-codex": {
         "description": "AgentTandem Codex provider logo",
-        "default": { "fontPath": "./media/provider-icons.ttf", "fontCharacter": "\\E001" }
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E001"
+        }
       },
       "agent-tandem-claude": {
         "description": "AgentTandem Claude Code provider logo",
-        "default": { "fontPath": "./media/provider-icons.ttf", "fontCharacter": "\\E002" }
+        "default": {
+          "fontPath": "./media/provider-icons.ttf",
+          "fontCharacter": "\\E002"
+        }
       }
     },
     "commands": [
