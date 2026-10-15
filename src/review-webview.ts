@@ -14,45 +14,23 @@ const icon = (name: string) => { const node = create('span', '', `codicon codico
 let state: ReviewEditorState = { files: [], busy: true }, signature = '', active = 0;
 let sections: HTMLElement[] = [];
 let codeEditor: ReviewCodeEditor | undefined;
-let contextSignature = '';
 const send = (type: string, extra: Record<string, unknown> = {}) => {
   if (state.busy) return;
   api.postMessage({ type, revision: state.revision, file: state.file?.path, ...extra });
 };
 const save = () => api.setState({ file: state.file?.path, line: state.file?.hunks[active]?.newLine, scroll: codeEditor?.scrollTop ?? 0 });
-function toggleChanges(open: boolean, focus = true) {
-  element('agent-changes-panel').hidden = !open;
-  element('agent-changes').setAttribute('aria-expanded', String(open));
-  if (focus) { if (open) element('agent-change-list').querySelector<HTMLButtonElement>('button')?.focus(); else element('agent-changes').focus(); }
-}
 function renderContext() {
   const context = state.context;
   element('review-context').hidden = !context;
   element('context-actions').hidden = !context;
-  if (!context) { element('files').title = ''; toggleChanges(false, false); return; }
+  if (!context) { element('files').title = ''; return; }
   element('context-provider').textContent = context.conversation?.provider === 'Claude' ? 'Claude Code' : context.conversation?.provider ?? 'Workspace';
   element('context-title').textContent = context.title;
   element('context-title').title = context.title;
   element('files').title = context.title;
-  element('agent-changes').title = `Show ${context.files.length} pending files · ${context.title}`;
-  element('agent-changes-label').textContent = context.conversation ? 'Agent changes' : 'Workspace changes';
-  element('agent-changes-count').textContent = String(context.files.length);
-  element('agent-changes-heading').textContent = context.conversation ? 'Agent changes' : 'Workspace changes';
-  element('agent-changes-title').textContent = context.title;
-  const key = JSON.stringify([state.project, state.revision, state.file?.path, context.group]);
-  if (key === contextSignature) return;
-  contextSignature = key;
-  const list = element('agent-change-list'); list.replaceChildren();
-  const binding = { revision: state.revision, file: state.file?.path };
-  for (const file of context.files) {
-    const row = button('', 'file', 'agent-change-file', `Review ${file.path}`, () => send('selectAgentFile', { ...binding, target: file.path }));
-    const copy = create('span', '', 'agent-change-copy'); copy.append(create('span', file.path, 'agent-change-path'), create('span', file.kind, 'agent-change-kind'));
-    row.append(copy);
-    if (file.additions !== undefined || file.deletions !== undefined) {
-      const stats = create('span', '', 'agent-change-stats'); stats.append(create('span', `+${file.additions ?? 0}`, 'added-count'), create('span', `−${file.deletions ?? 0}`, 'deleted-count')); row.append(stats);
-    }
-    row.setAttribute('aria-current', String(file.path === state.file?.path)); row.dataset.path = file.path; list.append(row);
-  }
+  element('agent-changes').title = 'Open workspace changes in the AgentTandem sidebar';
+  element('agent-changes-label').textContent = 'Open workspace changes in AgentTandem';
+  element('agent-changes-count').textContent = String(state.files.length);
 }
 function button(label: string, glyph: string, className: string, title: string, action: () => void) {
   const node = create('button', '', className); node.type = 'button'; node.title = title;
@@ -106,8 +84,8 @@ function decide(type: string, hunk?: string, index = active, binding = { revisio
   state = { ...state, busy: true }; controls();
 }
 function controls() {
-  document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>('.review-header button,.review-context button,.file-toolbar button,.file-toolbar select,.block-actions button,.agent-change-file').forEach(node => node.disabled = state.busy);
-  element<HTMLButtonElement>('agent-changes').disabled = state.busy || !state.context?.files.length;
+  document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>('.review-header button,.review-context button,.file-toolbar button,.file-toolbar select,.block-actions button').forEach(node => node.disabled = state.busy);
+  element<HTMLButtonElement>('agent-changes').disabled = state.busy || !state.files.length;
   element<HTMLButtonElement>('open-conversation').disabled = state.busy || !state.context?.canOpenConversation;
   element('open-conversation').title = state.context?.canOpenConversation ? 'Open this conversation in AgentTandem' : state.context?.conversation ? 'This recorded conversation is no longer available in AgentTandem.' : 'These changes do not belong to a single verified conversation.';
   element<HTMLButtonElement>('native').disabled = state.busy || !state.file;
@@ -169,15 +147,13 @@ element<HTMLSelectElement>('files').onchange = event => send('selectFile', { fil
 element('next').onclick = () => navigate(1); element('previous').onclick = () => navigate(-1);
 element('next-file').onclick = () => navigateFile(1); element('previous-file').onclick = () => navigateFile(-1);
 element('native').onclick = () => send('native'); element('refresh').onclick = () => send('refresh'); element('undo').onclick = () => send('undo');
-element('agent-changes').onclick = () => toggleChanges(element('agent-changes-panel').hidden);
-element('close-agent-changes').onclick = () => toggleChanges(false);
+element('agent-changes').onclick = () => send('workspaceChanges');
 element('open-conversation').onclick = () => send('conversation');
 const more = element<HTMLDetailsElement>('review-more');
 more.addEventListener('click', event => { if (event.target instanceof Element && event.target.closest('button')) more.open = false; });
 document.addEventListener('click', event => { if (more.open && event.target instanceof Node && !more.contains(event.target)) more.open = false; });
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape' && more.open) { event.preventDefault(); more.open = false; more.querySelector<HTMLElement>('summary')?.focus(); return; }
-  if (event.key === 'Escape' && !element('agent-changes-panel').hidden) { event.preventDefault(); toggleChanges(false); return; }
   if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || (event.target instanceof Element && !event.target.closest('.monaco-editor .inputarea,.monaco-editor .native-edit-context') && event.target.closest('input,textarea,select,[contenteditable="true"]'))) return;
   const key = event.key.toLowerCase();
   if (!['arrowdown', 'arrowup', 'pagedown', 'pageup', 'y', 'n'].includes(key)) return;

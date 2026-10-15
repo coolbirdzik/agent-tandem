@@ -24,6 +24,7 @@ describe('Observed quota burn rate', () => {
     const status = { status: 'ready' as const, account: { signedIn: true, email: 'claude@test', method: 'Claude account' }, updatedAt: now,
       quota: { status: 'available' as const, windows: [{ id: 'five_hour', label: '5h', resetsAt: now + hour, usedPercent: 0 }] } };
     expect(quotaTicks('Claude', status, now)).toHaveLength(1);
+    expect(quotaTicks('Claude', { ...status, quotaCached: true }, now)).toEqual([]);
     expect(quotaTicks('Claude', { ...status, updatedAt: now - 6 * 60000 }, now)).toEqual([]);
     expect(quotaTicks('Claude', { ...status, account: undefined }, now)).toEqual([]);
   });

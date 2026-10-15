@@ -24,7 +24,7 @@ export const quotaMeterKey = (row: QuotaMeter | QuotaObservation) => JSON.string
 export function quotaMeters(provider: ConversationProvider, account: ProviderAccountStatus | undefined, now = Date.now()): QuotaMeter[] {
   const identity = usageAccount(provider, account?.account), usage = account?.usage;
   const totalTokens = usage?.summary?.lifetimeTokens;
-  if (!identity || account?.status !== 'ready' || account.quota?.status !== 'available' || usage?.status !== 'available' || usage.accountId !== identity.id ||
+  if (!identity || account?.status !== 'ready' || account.quotaCached || account.quota?.status !== 'available' || usage?.status !== 'available' || usage.accountId !== identity.id ||
     !Number.isSafeInteger(totalTokens) || totalTokens! < 0 || !usage.updatedAt || !account.updatedAt || account.updatedAt > now || usage.updatedAt > now ||
     now - account.updatedAt > 5 * 60000 || Math.abs(account.updatedAt - usage.updatedAt) > 2 * 60000) return [];
   const to = Math.min(account.updatedAt, usage.updatedAt);
@@ -125,6 +125,7 @@ export function quotaEstimates(provider: ConversationProvider, account: Provider
     const window: QuotaWindow | undefined = account?.quota?.windows.find(row => row.label === (label === '5h' ? '5h' : '7d'));
     const result: QuotaEstimate = { label };
     if (!window || account?.status !== 'ready' || account.quota?.status !== 'available') return { ...result, reason: 'Quota unavailable' };
+    if (account.quotaCached) return { ...result, reason: 'Refresh quota to estimate' };
     result.usedPercent = window.usedPercent;
     const identity = usageAccount(provider, account.account);
     if (!identity) return { ...result, reason: 'Account identity unavailable' };

@@ -6,7 +6,7 @@ export interface QuotaTick { provider: ConversationProvider; accountId: string; 
 const tickKey = (row: QuotaTick) => JSON.stringify([row.provider, row.accountId, row.plan, row.windowId, row.resetsAt]);
 export function quotaTicks(provider: ConversationProvider, status?: ProviderAccountStatus, now = Date.now()): QuotaTick[] {
   const identity = usageAccount(provider, status?.account);
-  if (!identity || status?.status !== 'ready' || status.quota?.status !== 'available' || !status.updatedAt || status.updatedAt > now || now - status.updatedAt > 300000) return [];
+  if (!identity || status?.status !== 'ready' || status.quotaCached || status.quota?.status !== 'available' || !status.updatedAt || status.updatedAt > now || now - status.updatedAt > 300000) return [];
   return status.quota.windows.filter(row => row.resetsAt && row.resetsAt > status.updatedAt! && Number.isFinite(row.usedPercent) && row.usedPercent >= 0 && row.usedPercent <= 100).map(row => ({ provider, accountId: identity.id, plan: status.account?.plan || '', windowId: row.id, label: row.label, resetsAt: row.resetsAt!, at: status.updatedAt!, usedPercent: row.usedPercent }));
 }
 export function quotaPace(ticks: QuotaTick[], current: QuotaTick, now = Date.now()) {

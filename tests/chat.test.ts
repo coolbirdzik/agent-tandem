@@ -353,6 +353,17 @@ describe('Claude SDK chat', () => {
     await expect(runClaudeChat({ ...request, provider: 'Claude', conversationKey: 'Claude:original', fork: { userIndex: 0, userTexts: ['first'] } }, sink().callbacks, new AbortController(), sdk.query, process.execPath, { getSessionMessages: async () => [] })).rejects.toThrow('Provider history changed');
     expect(sdk.fn).not.toHaveBeenCalled();
   });
+  it('forks Claude using displayed user text when native history includes IDE context', async () => {
+    const context = '<ide_opened_file>The user opened the file /Users/hung/Code/pm-event/checkin-app/package.json in the IDE. This may or may not be related to the current task.</ide_opened_file>';
+    const sdk = fakeQuery([{ type: 'result', subtype: 'success', session_id: 'fork', is_error: false }]);
+    await runClaudeChat({ ...request, provider: 'Claude', conversationKey: 'Claude:original', fork: { userIndex: 1, userTexts: ['first', 'rung được rồi mà, thử không cần patch xem'] } }, sink().callbacks, new AbortController(), sdk.query, process.execPath, { getSessionMessages: async () => [
+      { uuid: 'u1', type: 'user', message: { content: `${context}\nfirst` } },
+      { uuid: 'a1', type: 'assistant', message: { content: 'answer' } },
+      { uuid: 'u2', type: 'user', message: { content: `${context}\nrung được rồi mà, thử không cần patch xem` } },
+    ] });
+    expect(sdk.fn.mock.calls[0]![0].options).toMatchObject({ resume: 'original', resumeSessionAt: 'a1', forkSession: true });
+    expect(sdk.fn.mock.calls[0]![0].prompt).toBe(request.text);
+  });
   it('Stop closes a stalled SDK iterator once and returns interrupted within a bounded time', async () => {
     const abort = new AbortController(), close = vi.fn();
     const sdk = (() => { setTimeout(() => abort.abort(), 50); return { next: () => new Promise(() => undefined), close }; }) as unknown as typeof query;

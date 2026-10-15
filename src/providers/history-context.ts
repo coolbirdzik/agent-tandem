@@ -1,3 +1,16 @@
+/** Claude's IDE prepends this metadata to the saved user prompt. */
+export function claudeUserText(text: string): string {
+  let source = text;
+  while (true) {
+    const block = /^\s*<ide_opened_file>([\s\S]*?)<\/ide_opened_file>(?:\r?\n)?/.exec(source);
+    // Match the native envelope only. Keep explanations, fenced examples and
+    // arbitrary XML that the user actually wrote, including incomplete tags.
+    if (!block || !/^The user opened the file .+ in the IDE\. This may or may not be related to the current task\.$/.test(block[1]!.trim())) return source;
+    source = source.slice(block[0].length);
+    if (!source.trim()) return '';
+  }
+}
+
 /** Legacy rollouts encode runtime context as user-role response items. */
 export function isRuntimeContextOnly(text: string): boolean {
   const source = text.trim();

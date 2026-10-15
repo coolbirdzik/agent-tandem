@@ -197,6 +197,44 @@ describe('Project conversation sync', () => {
     expect(messages.map(message => message.role)).toEqual(['assistant', 'tool', 'tool']);
     expect(messages[2]?.text).toBe('Applied'); expect(messages[2]?.toolCallId).toBe('t1');
   });
+  const openedFile = '<ide_opened_file>The user opened the file /Users/hung/Code/pm-event/checkin-app/package.json in the IDE. This may or may not be related to the current task.</ide_opened_file>';
+  it.each(['string', 'blocks', 'crlf'])('hides Claude IDE context prepended to a real request (%s)', format => {
+    const prompt = 'rung được rồi mà, thử không cần patch xem', raw = `${openedFile}${format === 'crlf' ? '\r\n' : '\n'}${prompt}`;
+    const records = [{ uuid: 'u1', type: 'user', message: { content: format === 'blocks' ? [{ type: 'text', text: openedFile }, { type: 'text', text: prompt }] : raw } }];
+    expect(claudeMessages(records)).toEqual([{ id: 'u1', role: 'user', text: prompt }]);
+    expect(records[0]!.message.content).toEqual(format === 'blocks' ? [{ type: 'text', text: openedFile }, { type: 'text', text: prompt }] : raw);
+  });
+  it('hides context-only Claude user text while retaining attachments, assistant replies and tool output', () => {
+    const messages = claudeMessages([
+      { uuid: 'context', type: 'user', message: { content: openedFile } },
+      { uuid: 'image', type: 'user', message: { content: [{ type: 'text', text: openedFile }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } }] } },
+      { uuid: 'assistant', type: 'assistant', message: { content: openedFile } },
+      { uuid: 'result', type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: openedFile }] } },
+    ]);
+    expect(messages.map(message => [message.id, message.role, message.text])).toEqual([
+      ['image', 'user', '[Image]'], ['assistant', 'assistant', openedFile], ['result:0', 'tool', openedFile],
+    ]);
+    expect(messages[0]!.attachments?.[0]).toMatchObject({ mimeType: 'image/png', data: 'AQID' });
+  });
+  it('keeps literal Claude IDE-tag examples, incomplete metadata and user formatting', () => {
+    const texts = [`Explain this: ${openedFile}`, `\`\`\`xml\n${openedFile}\n\`\`\``, '<ide_opened_file>My own example</ide_opened_file>\nExplain it', '<ide_opened_file>The user opened the file /project/file.ts', '  keep my indentation\n'];
+    expect(claudeMessages(texts.map((text, index) => ({ uuid: `u${index}`, type: 'user', message: { content: text } }))).map(message => message.text)).toEqual(texts);
+    expect(claudeMessages([{ uuid: 'u', type: 'user', message: { content: `${openedFile}\n  keep my indentation\n` } }])[0]!.text).toBe('  keep my indentation\n');
+  });
+  it('keeps Claude IDE context hidden when native history is reopened and refreshed', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-claude-context-')); roots.push(root);
+    const records = [{ uuid: 'u1', type: 'user', message: { content: `${openedFile}\nFirst request` } }];
+    const sdk: ClaudeHistoryAPI = {
+      listSessions: async () => [{ sessionId: 'native', cwd: '/repo', summary: 'Native chat', lastModified: records.length }],
+      getSessionMessages: async () => records,
+    };
+    const reader = new ProjectConversations(async () => sdk, root);
+    let conversation = (await reader.list('/repo')).conversations[0]!;
+    expect((await reader.read(conversation, '/repo')).messages.map(message => message.text)).toEqual(['First request']);
+    records.push({ uuid: 'u2', type: 'user', message: { content: `${openedFile}\nSecond request` } });
+    conversation = (await reader.list('/repo')).conversations[0]!;
+    expect((await reader.read(conversation, '/repo')).messages.map(message => message.text)).toEqual(['First request', 'Second request']);
+  });
 });
 
 

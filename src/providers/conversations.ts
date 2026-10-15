@@ -3,7 +3,7 @@ import { open, readdir, realpath, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import os from 'node:os';
-import { isRuntimeContextOnly } from './history-context';
+import { claudeUserText, isRuntimeContextOnly } from './history-context';
 import { codexHistoryUsage, claudeHistoryUsage, type ContextUsage } from './context-usage';
 import { chatAttachments, type ChatAttachment } from '../core/attachments';
 import { conversationEdits, type ConversationEdit } from '../core/review-conversations';
@@ -81,7 +81,7 @@ export function claudeMessages(records: Array<{ uuid: string; type: string; mess
   return records.flatMap(record => {
     const msg = object(record.message), blocks = msg.content;
     const result: ConversationMessage[] = [];
-    const text = contentText(blocks);
+    const raw = contentText(blocks), text = record.type === 'user' ? claudeUserText(raw) : raw;
     if (text && (record.type === 'user' || record.type === 'assistant')) {
       const attachments = record.type === 'user' ? contentAttachments(blocks) : undefined;
       result.push({ id: record.uuid, role: record.type, text, ...(attachments ? { attachments } : {}) });

@@ -11,6 +11,8 @@ describe('Tracking status bar', () => {
     const review = { revision: 'r', busy: false, externalTracking: true, files: [{ path: 'a', kind: 'added' as const, binary: false }] };
     expect(trackingStatus('/project', true, review)).toMatchObject({ active: true, text: '$(diff) Review · 1 file' });
     expect(trackingStatus('/project', true, review).tooltip).toContain('manual edits');
+    expect(trackingStatus('/project', true, review).tooltip).toContain('Workspace: /project');
+    expect(trackingStatus('/project', true, review).tooltip).toContain('all pending changes in this workspace');
     expect(trackingStatus('/project', true, { ...review, externalTracking: false }).text).toContain('Review · 1 file');
     expect(trackingStatus('/project', true, review, true).text).toContain('sync~spin');
   });

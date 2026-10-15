@@ -68,6 +68,7 @@ describe('Quota history and capacity trends', () => {
     const mismatch = apiStatus(now, 1000, 16); mismatch.usage!.accountId = 'other';
     expect(quotaMeters('Codex', mismatch, now)).toEqual([]);
     const stale = apiStatus(now - 6 * 60000, 1000, 16); expect(quotaMeters('Codex', stale, now)).toEqual([]);
+    const cached = { ...apiStatus(now, 1000, 16), quotaCached: true }; expect(quotaMeters('Codex', cached, now)).toEqual([]);
   });
   it('weights all cycles by used quota and compares the latest cycle with earlier history', () => {
     const [trend] = quotaTrends('Codex', account, [sample(0), sample(1, 900, 30), sample(2, 800, 20)]);

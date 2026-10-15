@@ -69,8 +69,29 @@ describe('Conversation change evidence', () => {
     const second = conversationEdits(patch('*** Begin Patch\n*** Update File: source.ts\n@@\n-middle\n+new\n*** End Patch', 1300), codex, '/project', '/project');
     expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'old\n', 'new\n', [...first, ...second])).toEqual([claude, codex]);
   });
+  it.each(['@@\n-old\n+new', '@@\n keep\n-old\n+new\n tail'])('preserves mixed line endings while verifying patch evidence: %s', chunk => {
+    const before = 'head\r\nkeep\nold\r\ntail\n', after = 'head\r\nkeep\nnew\r\ntail\n';
+    const edits = conversationEdits(patch(`*** Begin Patch\n*** Update File: source.ts\n${chunk}\n*** End Patch`, 1200), codex, '/project', '/project');
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', before, after, edits)).toEqual([codex]);
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', before, after.replace(/\r?\n/g, '\r\n'), edits)).toBeUndefined();
+  });
 });
 describe('Conversation review ownership', () => {
+  it('repairs previously unassigned captures from wrapped exec history after reload without changing snapshots', async () => {
+    const f = await fixture(); await f.store.initializeExternalTracking(f.project);
+    await f.set('source.ts', 'new\n'); const at = Date.now(), pending = await f.store.scanExternal(f.project);
+    expect(pending.files.map(reviewGroup)).toEqual(['unassigned']);
+    const input = `text(await tools.apply_patch(${JSON.stringify('*** Begin Patch\n*** Update File: source.ts\n@@\n-old\n+new\n*** End Patch')}));`;
+    const edits = conversationEdits([
+      { type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', call_id: 'exec', input } },
+      { type: 'response_item', timestamp: new Date(at).toISOString(), payload: { type: 'custom_tool_call_output', call_id: 'exec', output: [{ type: 'input_text', text: 'Script completed\nOutput:\n' }, { type: 'input_text', text: '{}' }] } },
+    ], codex, f.project, f.project);
+    const reloaded = new ReviewStore(f.store.directory), matched = await reloaded.attributeConversations(f.project, edits);
+    expect(matched.files.map(reviewGroup)).toEqual([codex.key]);
+    expect(matched.files[0]!.before).toBe(pending.files[0]!.before); expect(matched.files[0]!.after).toBe(pending.files[0]!.after);
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('new\n');
+    expect((await new ReviewStore(f.store.directory).read(f.project)).files).toEqual(matched.files);
+  });
   it('persists native conversation identity, binds drafts and limits grouped decisions/editor navigation', async () => {
     const f = await fixture(); await f.store.initializeExternalTracking(f.project);
     await f.store.begin(f.project, 'first', undefined, { ...claude, key: 'Claude:draft', id: '' }); await f.set('source.ts', 'claude\n');
@@ -136,7 +157,11 @@ describe('Conversation review ownership', () => {
     await mkdir(path.join(home, 'projects', 'workspace'), { recursive: true }); await mkdir(path.join(nativeCodex, 'sessions'), { recursive: true });
     const now = Date.now();
     await writeFile(path.join(home, 'projects', 'workspace', `${claude.id}.jsonl`), records('Write', { file_path: 'source.ts', content: 'new\n' }, now).map(record => JSON.stringify(record)).join('\n') + '\n');
-    await writeFile(path.join(nativeCodex, 'sessions', 'rollout.jsonl'), [{ type: 'session_meta', payload: { id: codex.id, cwd: f.project } }, ...patch('*** Begin Patch\n*** Update File: source.ts\n@@\n-old\n+new\n*** End Patch', now)].map(record => JSON.stringify(record)).join('\n') + '\n');
+    await writeFile(path.join(nativeCodex, 'sessions', 'rollout.jsonl'), [
+      { type: 'session_meta', payload: { id: codex.id, cwd: f.project } },
+      { type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', call_id: 'wrapped', input: `text(await tools.apply_patch(${JSON.stringify('*** Begin Patch\n*** Update File: source.ts\n@@\n-old\n+new\n*** End Patch')}));` } },
+      { type: 'response_item', timestamp: new Date(now).toISOString(), payload: { type: 'custom_tool_call_output', call_id: 'wrapped', output: [{ type: 'input_text', text: 'Script completed\nOutput:\n' }, { type: 'input_text', text: '{}' }] } },
+    ].map(record => JSON.stringify(record)).join('\n') + '\n');
     const source = new ProjectConversations(async () => ({ listSessions: async () => [{ sessionId: claude.id, summary: claude.title, cwd: f.project, lastModified: now }], getSessionMessages: async () => [] }), nativeCodex, home);
     const index = await source.list(f.project); expect(index.conversations).toHaveLength(2);
     for (const conversation of index.conversations) expect(await source.edits(conversation, f.project)).toMatchObject([{ path: 'source.ts', conversation: { key: conversation.key }, timestamp: now }]);

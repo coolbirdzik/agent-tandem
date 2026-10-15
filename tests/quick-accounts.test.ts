@@ -24,10 +24,52 @@ function fixture() {
     { id: 'second', provider: 'Codex', label: 'Work', identity: { ...identity, email: 'two@example.test' }, status: { ...status, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 61.5 }] } }, createdAt: 1 },
     { id: 'cursor', provider: 'Cursor', label: 'Studio', identity: { signedIn: true, method: 'Cursor account', email: 'studio@example.test' }, createdAt: 1 },
   ] };
-  const deps = { state: () => state, publish: vi.fn(async () => {}), refresh: vi.fn(async () => {}), switch: vi.fn(async (_id: string) => {}), open: vi.fn(async (_page: string) => {}), report: vi.fn() };
+  const deps = { state: () => state, publish: vi.fn(async () => {}), refresh: vi.fn(async (_signal: AbortSignal) => {}), switch: vi.fn(async (_id: string) => {}), open: vi.fn(async (_page: string) => {}), report: vi.fn() };
   const popup = new QuickAccounts(deps); return { state, deps, popup, picker: () => host.pickers.at(-1)! };
 }
 describe('Quick quota/account popup', () => {
+  it('displays the last quota and its timestamp through loading and failed native refreshes', async () => {
+    const f = fixture(), previous = f.state.accounts!.Codex!;
+    for (const phase of ['loading', 'error'] as const) {
+      f.state.accounts!.Codex = { ...previous, status: phase, quotaCached: true, updatedAt: Date.now() - 3600000, ...(phase === 'error' ? { error: 'Offline' } : {}) };
+      await f.popup.show('Codex'); const row = f.picker().items.find((i: any) => i.id === 'first');
+      expect(row.description).toBe('5h 75% left'); expect(row.detail).toContain('Cached quota');
+      if (phase === 'error') expect(row.detail).toContain('Offline');
+      expect(f.picker().items.find((i: any) => i.id === 'second').action).toBe('switch');
+    }
+    f.popup.dispose();
+  });
+  it('allows a switch while automatic quota refresh is pending and cancels that refresh', async () => {
+    const f = fixture(); let finish!: () => void;
+    f.deps.refresh.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    const showing = f.popup.show('Codex');
+    await vi.waitFor(() => expect(f.deps.refresh).toHaveBeenCalledOnce());
+    const picker = f.picker(), signal = f.deps.refresh.mock.calls[0]![0];
+    expect(picker.busy).toBe(true);
+    expect(picker.items.find((i: any) => i.id === 'second').action).toBe('switch');
+    picker.refresh(); expect(f.deps.refresh).toHaveBeenCalledOnce();
+    picker.accept('Work'); expect(f.deps.switch).toHaveBeenCalledWith('second'); expect(signal.aborted).toBe(true);
+    finish(); await showing; expect(f.deps.report).not.toHaveBeenCalled(); f.popup.dispose();
+  });
+  it('keeps account selection enabled during a manual quota refresh', async () => {
+    const f = fixture(); await f.popup.show('Codex'); let fail!: (error: Error) => void;
+    f.deps.refresh.mockImplementation(() => new Promise<void>((_resolve, reject) => { fail = reject; }));
+    f.picker().refresh(); const signal = f.deps.refresh.mock.calls[1]![0];
+    f.picker().accept('Work'); expect(f.deps.switch).toHaveBeenCalledWith('second'); expect(signal.aborted).toBe(true);
+    fail(new Error('Account refresh cancelled.'));
+    await vi.waitFor(() => expect(f.picker().busy).toBe(false)); expect(f.deps.report).not.toHaveBeenCalled(); f.popup.dispose();
+  });
+  it('cancels refresh on hide and ignores its late completion after reopening', async () => {
+    const f = fixture(); let finish!: () => void;
+    f.deps.refresh.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const showing = f.popup.show(); await vi.waitFor(() => expect(f.deps.refresh).toHaveBeenCalledOnce());
+    const old = f.picker(), signal = f.deps.refresh.mock.calls[0]![0]; old.hide(); expect(signal.aborted).toBe(true);
+    await f.popup.show(); const picker = f.picker();
+    let switched!: () => void; f.deps.switch.mockImplementation(() => new Promise<void>(resolve => { switched = resolve; }));
+    picker.accept('Work'); finish(); await showing;
+    expect(picker.busy).toBe(true); expect(old.dispose).toHaveBeenCalledOnce();
+    switched(); await vi.waitFor(() => expect(picker.busy).toBe(false)); f.popup.dispose();
+  });
   it('shows account quota immediately, prioritizes the clicked provider and opens no dashboard on click or refresh', async () => {
     const f = fixture(); await f.popup.show('Cursor'); const picker = f.picker();
     expect(picker.items[0].label).toBe('Cursor'); expect(picker.items.find((i: any) => i.id === 'second').description).toBe('5h 38.5% left');

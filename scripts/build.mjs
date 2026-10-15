@@ -3,6 +3,7 @@ import { mkdir, copyFile } from 'node:fs/promises';
 await mkdir('dist', { recursive: true });
 await copyFile('node_modules/@anthropic-ai/claude-agent-sdk/LICENSE.md', 'dist/claude-sdk-LICENSE.md');
 await copyFile('node_modules/diff/LICENSE', 'dist/diff-LICENSE.txt');
+await copyFile('node_modules/acorn/LICENSE', 'dist/acorn-LICENSE.txt');
 await copyFile('node_modules/monaco-editor/LICENSE', 'dist/monaco-LICENSE.txt');
 await copyFile('node_modules/monaco-editor/ThirdPartyNotices.txt', 'dist/monaco-ThirdPartyNotices.txt');
 await copyFile('node_modules/ignore/LICENSE-MIT', 'dist/ignore-LICENSE.txt');

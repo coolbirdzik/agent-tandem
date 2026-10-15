@@ -13,6 +13,7 @@ import { withStorageLock } from './storage-lock';
 import { captureConversations, type ReviewCapture, type ReviewConversation, type ConversationEdit } from './review-conversations';
 import { reviewGroup } from './review-groups';
 import { imageSnapshots, type ImageComparison } from './media-preview';
+import { reviewGitHead, reviewCommittedPaths, reviewCommittedFile, reviewUncommittedPaths, reviewGitEquivalentFiles } from './review-git';
 
 const execute = promisify(execFile);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -25,6 +26,7 @@ export interface ReviewRequest { project: string; revision: string; file?: strin
 export interface ReviewHunkRequest extends ReviewRequest { file: string; hunk: string }
 interface PendingReview {
   version: 1; project: string; revision: string; files: ReviewFile[];
+  gitHead?: string | null;
   active?: { requestId: string; before: string; from?: number; conversation?: ReviewConversation }; external?: string; externalCapturedAt?: number; externalDecidedAt?: Record<string, number>; externalPreference?: boolean; notice?: string;
   revertUndo?: { id: string; createdAt: number; files: RevertFile[]; phase?: 'reverting' | 'undoing' };
 }
@@ -40,21 +42,22 @@ export interface CheckpointPlan { target: string; current: string; revision: str
 /** Workspace changes are already applied. Review owns snapshots and decisions only. */
 export class ReviewStore {
   readonly history: HistoryStore;
-  constructor(readonly directory: string) {
+  constructor(readonly directory: string, private canReadGit = () => true) {
     this.history = new HistoryStore(path.join(directory, 'history'), undefined, path.dirname(directory));
   }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     return withStorageLock(path.dirname(this.directory), operation);
   }
   private filename(project: string) { const resolved = path.resolve(project); return path.join(this.directory, `${hash(process.platform === 'win32' ? resolved.toLowerCase() : resolved)}.json`); }
-  private async load(project: string): Promise<PendingReview> {
+  private async load(project: string, reconcileCommits = false): Promise<PendingReview> {
     let value: PendingReview;
     try { value = JSON.parse(await readFile(this.filename(project), 'utf8')); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      return { version: 1, project, revision: randomUUID(), files: [] };
+      value = { version: 1, project, revision: randomUUID(), files: [] };
     }
     if (value.version !== 1 || value.project !== project || typeof value.revision !== 'string' || !Array.isArray(value.files)) throw new Error('Invalid pending change review.');
+    if (value.gitHead !== undefined && value.gitHead !== null && (typeof value.gitHead !== 'string' || !/^[a-f0-9]{40,64}$/.test(value.gitHead))) throw new Error('Invalid review Git commit.');
     if (value.external !== undefined && !/^[a-f0-9-]{36}$/i.test(value.external)) throw new Error('Invalid external review baseline.');
     if (value.externalPreference !== undefined && typeof value.externalPreference !== 'boolean') throw new Error('Invalid external tracking preference.');
     if (value.externalCapturedAt !== undefined && !Number.isFinite(value.externalCapturedAt)) throw new Error('Invalid external capture timestamp.');
@@ -87,6 +90,7 @@ export class ReviewStore {
       }
     }
     if (value.revertUndo?.phase) await this.recoverRevert(value);
+    if (reconcileCommits && !value.active && await this.acceptCommitted(value)) await this.save(value);
     return value;
   }
   private async save(value: PendingReview) {
@@ -96,7 +100,88 @@ export class ReviewStore {
     finally { await unlink(temporary).catch(() => undefined); }
   }
   private view(value: PendingReview): ReviewState { return { revision: value.revision, files: value.files, busy: !!value.active, notice: value.notice, ...(value.external ? { externalTracking: true } : {}), ...(value.revertUndo ? { undo: { id: value.revertUndo.id, createdAt: value.revertUndo.createdAt, files: value.revertUndo.files.map(entry => entry.original.path) } } : {}) }; }
-  read(project: string) { return this.serial(async () => this.view(await this.load(project))); }
+  read(project: string) { return this.serial(async () => this.view(await this.load(project, true))); }
+
+  private async acceptCommitted(value: PendingReview): Promise<boolean> {
+    if (!this.canReadGit()) return false;
+    const head = await reviewGitHead(value.project);
+    if (head === undefined || value.gitHead === head) return false;
+    if (head === null) { value.gitHead = null; return true; }
+    const initializing = value.gitHead === undefined;
+    const names = initializing ? value.files.map(file => file.path) : await reviewCommittedPaths(value.project, value.gitHead!, head);
+    const dirty = names.length ? await reviewUncommittedPaths(value.project, head) : new Set<string>();
+    const committed: Record<string, string | undefined> = Object.create(null), current: Record<string, string | undefined> = Object.create(null);
+    for (const name of names) {
+      assertPath(name);
+      const temporary = path.join(this.directory, `${randomUUID()}.git-review`);
+      const normalizedFile = `${temporary}.normalized`;
+      await mkdir(this.directory, { recursive: true });
+      try {
+        const kind = await reviewCommittedFile(value.project, head, name, temporary);
+        if (kind === 'unsupported') continue;
+        const id = kind === 'file' ? await this.history.putFileBlob(temporary) : undefined;
+        const pending = value.files.find(file => file.path === name);
+        if (initializing && id !== pending?.after && (kind !== 'file' || dirty.has(name))) continue;
+        committed[name] = id;
+        if (pending || (kind === 'file' && !dirty.has(name))) {
+          try { current[name] = await this.history.putFileBlob(await this.safePath(value.project, name)); }
+          catch (error) {
+            const replaced = kind === 'deleted' && ((error instanceof ReviewTargetError && error.nonFile) || (error as NodeJS.ErrnoException).code === 'ENOTDIR');
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !replaced) throw error;
+            current[name] = undefined;
+          }
+          // Git can commit LF bytes without rewriting an LF worktree even when
+          // checkout filters would produce CRLF. Keep its clean working bytes.
+          if (kind === 'file' && !dirty.has(name)) committed[name] = current[name];
+          else if (id && current[name]) {
+            const [left, right] = await Promise.all([this.history.inspectBlob(id), this.history.inspectBlob(current[name]!)]);
+            if (left.text !== undefined && right.text !== undefined && !left.binary && !right.binary) {
+              const crlf = right.text.includes('\r\n') && !right.text.replace(/\r\n/g, '').includes('\n');
+              const normalized = crlf ? left.text.replace(/\r?\n/g, '\r\n') : !right.text.includes('\r\n') ? left.text.replace(/\r\n/g, '\n') : left.text;
+              if (normalized !== left.text) {
+                const bytes = encodeSnapshot(normalized, await this.history.readBlob(id));
+                await writeFile(normalizedFile, bytes, { flag: 'wx' });
+                if (await reviewGitEquivalentFiles(value.project, name, temporary, normalizedFile)) committed[name] = await this.history.putBlob(bytes);
+              }
+            }
+          }
+        }
+      } finally { await unlink(temporary).catch(() => undefined); await unlink(normalizedFile).catch(() => undefined); }
+    }
+    // A second commit during the scan is reconciled on the next refresh.
+    if (await reviewGitHead(value.project) !== head) return false;
+    if (Object.keys(committed).length) {
+      const before: Snapshot = { id: randomUUID(), files: Object.create(null) }, after: Snapshot = { id: randomUUID(), files: Object.create(null) };
+      const to = Date.now(), from = Math.min(to, ...value.files.filter(file => Object.hasOwn(current, file.path)).flatMap(file => file.captures?.map(capture => capture.from) ?? []));
+      for (const [name, id] of Object.entries(current)) {
+        if (committed[name]) before.files[name] = committed[name]!;
+        if (id) after.files[name] = id;
+      }
+      const previous = new Map(value.files.filter(file => Object.hasOwn(committed, file.path)).map(file => [file.path, file]));
+      value.files = value.files.filter(file => !Object.hasOwn(committed, file.path));
+      await this.mergeChanges(value, before, after, { from, to });
+      for (const file of value.files) {
+        const prior = previous.get(file.path);
+        if (!prior) continue;
+        // Historical captures still identify the authors of the remaining edits.
+        // Only bytes changed since the last capture need new, unassigned evidence.
+        const captures = prior.captures ?? [{ before: prior.before, after: prior.after, from: 0, to: 0 }];
+        file.captures = [...captures, ...(prior.after === file.after ? [] : [{ before: prior.after, after: file.after,
+          from: Math.min(to, Math.max(from, ...captures.map(capture => capture.to))), to }])];
+      }
+      // Already reconciled working bytes must not be captured a second time.
+      // Other committed paths start at HEAD so their next edits remain reviewable.
+      await this.saveExternalBaseline(value, { ...committed, ...current });
+      if (value.revertUndo) {
+        value.revertUndo.files = value.revertUndo.files.filter(entry => !Object.hasOwn(committed, entry.original.path));
+        if (!value.revertUndo.files.length) value.revertUndo = undefined;
+      }
+      value.revision = randomUUID();
+      value.notice = 'Committed changes were accepted automatically. Uncommitted changes remain available for review.';
+    }
+    value.gitHead = head;
+    return true;
+  }
 
   private async safePath(project: string, name: string, resolvedRoot?: string) {
     assertPath(name);
@@ -224,7 +309,7 @@ export class ReviewStore {
     return { ...snapshot, notice };
   }
   begin(project: string, requestId: string, signal?: AbortSignal, conversation?: ReviewConversation) { return this.serial(async () => {
-    const value = await this.load(project);
+    const value = await this.load(project, true);
     if (value.active) throw new Error('A change review is still capturing an agent turn.');
     if (value.external) await this.scanExternalValue(value);
     const previous = value.external ? await this.history.snapshot(value.external) : undefined;
@@ -249,6 +334,7 @@ export class ReviewStore {
     if (value.external) { value.external = after.id; value.externalCapturedAt = to; }
     value.files.sort((a, b) => a.path.localeCompare(b.path)); value.active = undefined; value.revision = randomUUID();
     value.notice = [recovered ? 'Recovered changes from an interrupted agent turn.' : undefined, after.notice].filter(Boolean).join(' ') || undefined;
+    await this.acceptCommitted(value);
     await this.save(value); return this.view(value);
   }
   private async mergeChanges(value: PendingReview, before: Snapshot, after: Snapshot, capture?: Omit<ReviewCapture, 'before' | 'after'>) {
@@ -294,11 +380,11 @@ export class ReviewStore {
     value.external = snapshot.id;
   }
   initializeExternalTracking(project: string, enabledByDefault = true) { return this.serial(async () => {
-    const value = await this.load(project);
+    const value = await this.load(project, true);
     if (!enabledByDefault || value.externalPreference !== undefined || value.external || value.active) return this.view(value);
     return this.setExternalValue(value, true);
   }); }
-  setExternalTracking(project: string, enabled: boolean) { return this.serial(async () => this.setExternalValue(await this.load(project), enabled)); }
+  setExternalTracking(project: string, enabled: boolean) { return this.serial(async () => this.setExternalValue(await this.load(project, true), enabled)); }
   private async setExternalValue(value: PendingReview, enabled: boolean) {
     const project = value.project;
     if (value.active) throw new Error('Wait for the active agent turn to finish.');
@@ -319,7 +405,7 @@ export class ReviewStore {
     await this.save(value); return this.view(value);
   }
   scanExternal(project: string) { return this.serial(async () => {
-    const value = await this.load(project);
+    const value = await this.load(project, true);
     if (!value.external) return this.view(value);
     if (value.active) throw new Error('Wait for the active agent turn to finish.');
     await this.scanExternalValue(value); await this.save(value); return this.view(value);
@@ -357,7 +443,7 @@ export class ReviewStore {
   }); }
   /** Preview the complete saved workspace, including files now ignored or deleted. */
   prepareCheckpoint(project: string, target: string) { return this.serial(async (): Promise<CheckpointPlan> => {
-    const value = await this.load(project);
+    const value = await this.load(project, true);
     if (value.active) throw new Error('Wait for the agent and change capture to finish.');
     if (value.external) throw new Error('Stop external change tracking before restoring a checkpoint.');
     const saved = await this.history.snapshot(target);
@@ -372,7 +458,7 @@ export class ReviewStore {
     return { target, current: current.id, revision: value.revision, files };
   }); }
   restoreCheckpoint(project: string, plan: CheckpointPlan, backup?: (snapshot: string) => Promise<void>) { return this.serial(async () => {
-    const value = await this.load(project);
+    const value = await this.load(project, true);
     if (value.active) throw new Error('Wait for the agent and change capture to finish.');
     if (value.external) throw new Error('Stop external change tracking before restoring a checkpoint.');
     if (value.revision !== plan.revision) throw new Error('Changes were reviewed after this preview. Preview the checkpoint again.');
@@ -420,7 +506,7 @@ export class ReviewStore {
     return files;
   }
   accept(request: ReviewRequest) { return this.serial(async () => {
-    const value = await this.load(request.project), selected = this.selected(value, request);
+    const value = await this.load(request.project, true), selected = this.selected(value, request);
     if (value.external) for (const file of selected) if (await this.fingerprint(request.project, file.path) !== file.after) throw new Error(`Cannot accept ${file.path}: it changed since capture. Refresh the review.`);
     await this.saveExternalBaseline(value, Object.fromEntries(selected.map(file => [file.path, file.after])));
     value.files = value.files.filter(file => !selected.includes(file)); value.revision = randomUUID(); value.notice = undefined;
@@ -487,7 +573,7 @@ export class ReviewStore {
     await this.save(value); return this.view(value);
   }
   undoRevert(project: string, id: string) { return this.serial(async () => {
-    const value = await this.load(project), undo = value.revertUndo;
+    const value = await this.load(project, true), undo = value.revertUndo;
     if (value.active) throw new Error('Wait for the agent and change capture to finish.');
     if (!undo || undo.id !== id) throw new Error('This Revert is no longer available to Undo.');
     // Other conversations can keep changing; only this Revert's files must still match.
@@ -528,7 +614,7 @@ export class ReviewStore {
   }); }
   decideHunk(request: ReviewHunkRequest, revert: boolean) { return this.serial(async () => {
     if (typeof request.file !== 'string' || !request.file || typeof request.hunk !== 'string') throw new Error('Choose a change to review.');
-    const value = await this.load(request.project), file = this.selected(value, request)[0]!;
+    const value = await this.load(request.project, true), file = this.selected(value, request)[0]!;
     const data = await this.hunkData(file), hunk = data.hunks.find(item => item.id === request.hunk);
     if (!hunk) throw new Error('This change is stale. Review the updated preview.');
     const text = revert
@@ -565,7 +651,7 @@ export class ReviewStore {
     value.revision = randomUUID(); value.notice = undefined; await this.save(value); return this.view(value);
   }); }
   revert(request: ReviewRequest) { return this.serial(async () => {
-    const value = await this.load(request.project), selected = this.selected(value, request);
+    const value = await this.load(request.project, true), selected = this.selected(value, request);
     return this.applyRevert(value, selected.map(file => ({ original: file, after: file.before })));
   }); }
   editorFiles(request: ReviewRequest) { return this.serial(async () => {

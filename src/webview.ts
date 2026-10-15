@@ -432,7 +432,7 @@ function renderConversationChanges(state: ViewState, disabled: boolean) {
         const open = button('', () => send('conversation', key)); open.className = 'review-chat-link'; open.title = 'Open this conversation in AgentTandem chat'; open.setAttribute('aria-label', 'Open conversation'); open.append(icon('comment-discussion'), create('span', 'Open conversation')); caption.append(open);
       }
       body.append(caption);
-    } else body.append(create('p', key === 'shared' ? 'Multiple conversations or mixed edits. Review these files together.' : 'Saved edits without a verified conversation match.', 'review-caption'));
+    } else body.append(create('p', key === 'shared' ? 'Multiple conversations or mixed edits. Review these files together.' : 'These edits could not be linked to a conversation. Scripts, package updates and manual edits can appear here.', 'review-caption'));
     const actions = create('div', undefined, 'review-actions');
     const request = (): ReviewRequest => ({ project: state.project!, revision: review.revision, group: key });
     actions.append(button('View changes', () => send('previewReview', request())), button('Revert group', () => send('previewRevert', request()), disabled), button('Accept group', () => send('acceptChanges', request()), disabled));

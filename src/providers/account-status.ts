@@ -12,7 +12,7 @@ export interface BankedReset { title?: string; expiresAt?: number }
 export interface BankedResets { availableCount: number; credits?: BankedReset[] }
 export interface AccountQuota { status: 'available' | 'unavailable' | 'error'; windows: QuotaWindow[]; detail?: string; credits?: string; bankedResets?: BankedResets }
 /** Only display fields cross the host/webview boundary; never credentials or raw RPC payloads. */
-export interface ProviderAccountStatus { status: 'loading' | 'ready' | 'error'; account?: AccountIdentity; quota?: AccountQuota; usage?: ProviderTokenActivity; updatedAt?: number; error?: string }
+export interface ProviderAccountStatus { status: 'loading' | 'ready' | 'error'; account?: AccountIdentity; quota?: AccountQuota; usage?: ProviderTokenActivity; updatedAt?: number; quotaCached?: boolean; error?: string }
 const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
 const percent = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;

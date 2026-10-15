@@ -78,7 +78,8 @@ export function previewMode(file: string): ReviewMode {
   assert.equal(api.reviewWebviewState()!.context!.conversation!.key, source.key);
   assert.equal(api.reviewWebviewState()!.context!.canOpenConversation, true);
   await stage('agent-list');
-  await until(() => api.reviewWebviewState()?.group === source.key && api.reviewWebviewState()?.file?.path === first, 'Agent file picker retains its conversation scope');
+  await until(() => api.viewState().screen === 'changes', 'Change list shortcut switches to workspace changes in the extension sidebar');
+  assert.equal(api.reviewWebviewState()?.file?.path, first, 'Opening the sidebar preserves the reviewed file');
   await api.openConversation(other.key);
   await stage('conversation-link');
   await until(() => api.conversation()?.conversation.key === source.key && api.viewState().screen === 'conversations' && !!api.viewState().checkpointPreview, 'Conversation link opens the correct extension chat and Restore previews its checkpoint');
@@ -160,7 +161,7 @@ export function previewMode(file: string): ReviewMode {
   assert.deepEqual(api.viewState().review!.files.map(file => file.path), remainingBefore.filter(file => file !== first), 'Accept all leaves other files pending');
   const report = { success: true, edition, vscode: vscode.version, checks: ['Monaco Webview default in both editions', 'Full-file context with inline colored buttons', 'One compact review toolbar with More actions', 'Monaco worker diff and syntax tokens', 'Ctrl+F reaches line 802 without truncation', 'Source HTML stays inert', 'Dark/light/narrow layouts', 'Accept preserves bytes', 'Stale block actions are rejected', 'Reject restores only its block', 'Undo restores rejected bytes', 'Newer saved edits block rejection', 'Dirty buffers block rejection', 'Navigation crosses files', 'Binary file fallback', 'Native diff'] };
   report.checks.push('Old/new PNG snapshots decode', 'Added/deleted SVG previews', 'Broken image retains the other side', 'Narrow image layout', 'Image editor navigation to/from code', 'Saved step/cumulative image comparisons preserve workspace bytes');
-  report.checks.push('Agent change list retains conversation scope', 'Conversation shortcut opens the correct extension chat', 'Visible Restore code opens a checkpoint preview without writing files');
+  report.checks.push('Change list shortcut opens workspace changes in the extension sidebar', 'Conversation shortcut opens the correct extension chat', 'Visible Restore code opens a checkpoint preview without writing files');
   report.checks.push('Accept all keeps file bytes and leaves every other pending file untouched');
   await writeFile(path.resolve(runtime, '..', '..', 'artifacts', `review-webview-${edition}.json`), JSON.stringify(report, null, 2));
   await writeFile(path.join(runtime, 'stage.json'), JSON.stringify({ stage: 'complete' }));

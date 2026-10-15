@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { Conversation } from '../providers/conversations';
+import { execPatches } from './review-exec-patches';
 
 export type ReviewConversation = Pick<Conversation, 'key' | 'id' | 'provider' | 'title'>;
 export interface ReviewCapture { before?: string; after?: string; from: number; to: number; conversations?: ReviewConversation[] }
@@ -37,24 +38,30 @@ export function conversationEdits(records: unknown[], conversation: ReviewConver
           add(input.file_path, { kind: 'edit', edits: edits.map(edit => ({ old: edit.old_string, next: edit.new_string, all: edit.replace_all === true })) });
         }
       }
-    } else if (/(^|\.)apply_patch$/.test(call.name)) {
-      const text = typeof output === 'string' ? output : JSON.stringify(output);
-      if (!/Success\. Updated the following files:/m.test(text ?? '') || /(?:isError|is_error)"?\s*:\s*true/.test(text ?? '')) return;
-      let patch = call.input;
-      if (typeof patch === 'string') { try { const input = JSON.parse(patch); patch = input.patch ?? input.input ?? patch; } catch { /* Custom tool input is the patch itself. */ } }
-      if (typeof patch !== 'string' || !patch.startsWith('*** Begin Patch')) return;
-      const sections = patch.split(/(?=^\*\*\* (?:Add|Update|Delete) File: )/m).slice(1);
-      for (const section of sections) {
-        const lines = section.split(/\r?\n/), header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(lines.shift()!);
-        if (!header || lines.some(line => line.startsWith('*** Move to:'))) continue; // Renames require both sides; leave them unassigned.
-        if (header[1] === 'Delete') { add(header[2], { kind: 'delete' }); continue; }
-        const chunks: string[][] = [[]];
-        for (const line of lines) {
-          if (line.startsWith('@@')) { if (chunks.at(-1)!.length) chunks.push([]); }
-          else if (/^[ +\-]/.test(line)) chunks.at(-1)!.push(line);
-          else if (line && !line.startsWith('*** ')) { chunks.length = 0; break; }
+    } else {
+      let patches: unknown[] = [];
+      if (/(^|\.)apply_patch$/.test(call.name)) {
+        const text = typeof output === 'string' ? output : JSON.stringify(output);
+        if (!/Success\. Updated the following files:/m.test(text ?? '') || /(?:isError|is_error)"?\s*:\s*true/.test(text ?? '')) return;
+        let patch = call.input;
+        if (typeof patch === 'string') { try { const input = JSON.parse(patch); patch = input.patch ?? input.input ?? patch; } catch { /* Custom tool input is the patch itself. */ } }
+        patches = [patch];
+      } else if (/(^|\.)exec$/.test(call.name)) patches = execPatches(call.input, output);
+      for (const patch of patches) {
+        if (typeof patch !== 'string' || !patch.startsWith('*** Begin Patch')) continue;
+        const sections = patch.split(/(?=^\*\*\* (?:Add|Update|Delete) File: )/m).slice(1);
+        for (const section of sections) {
+          const lines = section.split(/\r?\n/), header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(lines.shift()!);
+          if (!header || lines.some(line => line.startsWith('*** Move to:'))) continue; // Renames require both sides; leave them unassigned.
+          if (header[1] === 'Delete') { add(header[2], { kind: 'delete' }); continue; }
+          const chunks: string[][] = [[]];
+          for (const line of lines) {
+            if (line.startsWith('@@')) { if (chunks.at(-1)!.length) chunks.push([]); }
+            else if (/^[ +\-]/.test(line)) chunks.at(-1)!.push(line);
+            else if (line && !line.startsWith('*** ')) { chunks.length = 0; break; }
+          }
+          if (chunks.length && chunks.some(chunk => chunk.length)) add(header[2], { kind: 'patch', chunks, added: header[1] === 'Add' });
         }
-        if (chunks.length && chunks.some(chunk => chunk.length)) add(header[2], { kind: 'patch', chunks, added: header[1] === 'Add' });
       }
     }
   };
@@ -94,18 +101,30 @@ function apply(text: string | undefined, operation: ConversationEdit['operation'
   }
   if (text === undefined) return false;
   const newline = text.includes('\r\n') ? '\r\n' : '\n', trailing = text.endsWith('\n');
-  const lines = text.split(/\r?\n/); if (trailing) lines.pop();
+  const endings = [...text.matchAll(/\r?\n/g)].map(match => match[0]);
+  const contents = text.split(/\r?\n/); if (trailing) contents.pop();
+  const lines = contents.map((content, index) => ({ content, ending: endings[index] ?? '' }));
   let start = 0;
   for (const chunk of operation.chunks.filter(chunk => chunk.length)) {
     const old = chunk.filter(line => !line.startsWith('+')).map(line => line.slice(1));
-    const next = chunk.filter(line => !line.startsWith('-')).map(line => line.slice(1));
     if (!old.length) return false; // An insertion with no context cannot be located safely.
     const matches: number[] = [];
-    for (let i = start; i <= lines.length - old.length; i++) if (old.every((line, j) => lines[i + j] === line)) matches.push(i);
+    for (let i = start; i <= lines.length - old.length; i++) if (old.every((line, j) => lines[i + j]?.content === line)) matches.push(i);
     if (matches.length !== 1) return false;
+    let cursor = matches[0]!;
+    const next: typeof lines = [];
+    for (const line of chunk) {
+      if (line.startsWith('+')) next.push({ content: line.slice(1), ending: newline });
+      else {
+        // Context and untouched lines retain their own line endings. A file
+        // can contain both LF and CRLF without the patch rewriting either.
+        if (line.startsWith(' ')) next.push(lines[cursor]!);
+        cursor++;
+      }
+    }
     lines.splice(matches[0]!, old.length, ...next); start = matches[0]! + next.length;
   }
-  return lines.join(newline) + (trailing ? newline : '');
+  return lines.map((line, index) => line.content + (index === lines.length - 1 && !trailing ? '' : line.ending || newline)).join('');
 }
 
 /** Verify a complete content transition; a nearby conversation or path alone is insufficient. */

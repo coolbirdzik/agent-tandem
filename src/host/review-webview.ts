@@ -99,14 +99,10 @@ export class ReviewWebview implements vscode.Disposable {
       }
       if (data.type === 'refresh') { await this.invoke('agentTandem.refreshReview'); await this.load(); return; }
       if (data.type === 'undo') { if (this.model.undo) await this.invoke('agentTandem.undoRevert', { project: scope.project, id: this.model.undo.id }); await this.load(); return; }
-      if (data.type === 'selectAgentFile') {
-        const context = this.model.context;
-        if (data.file !== this.model.file?.path || !context || typeof data.target !== 'string' || !context.files.some(file => file.path === data.target)) throw new Error('Choose a file in this agent review.');
-        this.scope = { ...scope, group: context.group, file: data.target }; await this.load('first'); return;
-      }
       const file = this.model.file;
       if (!file || data.file !== file.path) throw new Error('Choose the current file change.');
       const request: ReviewRequest = { project: scope.project, revision: this.model.revision!, group: scope.group, file: file.path };
+      if (data.type === 'workspaceChanges') { await this.invoke('agentTandem.open'); return; }
       if (data.type === 'conversation') {
         const conversation = this.model.context?.conversation;
         if (!conversation || !current.conversations?.some(item => item.key === conversation.key)) throw new Error('This review has no available conversation.');

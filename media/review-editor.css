@@ -23,17 +23,6 @@ button:disabled,select:disabled{opacity:.55;cursor:default}
 #agent-changes-count{font-size:11px;opacity:.8;font-variant-numeric:tabular-nums}
 .review-layout{display:flex;flex:1;min-height:0;position:relative;overflow:hidden}
 .review-layout main{min-width:0}
-#agent-changes-panel{flex:none;width:320px;max-width:100%;padding:12px;border-left:1px solid var(--review-border);background:var(--vscode-sideBar-background,var(--vscode-editor-background));overflow:auto}
-.agent-changes-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.agent-changes-heading h2{font-size:13px;font-weight:600;margin:0}
-#agent-changes-title{font-size:12px;color:var(--vscode-descriptionForeground);overflow-wrap:anywhere;margin:4px 0 16px}
-#agent-change-list{display:flex;flex-direction:column;gap:4px}
-.agent-change-file{justify-content:flex-start;width:100%;padding:9px 8px;gap:8px;white-space:normal;text-align:left}
-.agent-change-file[aria-current=true]{background:var(--vscode-list-inactiveSelectionBackground);border-color:var(--vscode-focusBorder)}
-.agent-change-copy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
-.agent-change-path{overflow-wrap:anywhere;font-size:12px}.agent-change-kind{font-size:11px;color:var(--vscode-descriptionForeground);text-transform:capitalize}
-.agent-change-stats{display:flex;gap:5px;flex:none;font-size:11px;font-variant-numeric:tabular-nums}
-@media(max-width:700px){#agent-changes-panel{position:absolute;right:0;top:0;bottom:0;z-index:5;width:min(320px,100%);box-shadow:-8px 0 20px var(--vscode-widget-shadow,transparent)}}
 .file-toolbar{display:grid;grid-template-columns:minmax(0,1fr) repeat(5,auto);align-items:center;gap:8px;background:var(--vscode-editor-background)}
 .file-picker{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
 select{width:100%;min-width:0;background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground);border:1px solid var(--vscode-dropdown-border,var(--review-border));border-radius:4px;padding:5px 8px}

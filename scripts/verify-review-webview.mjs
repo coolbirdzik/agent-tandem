@@ -66,14 +66,11 @@ export async function verifyReviewWebview(runtime, port, edition) {
     console.log(`REVIEW_WEBVIEW_COLORS ${edition} ${JSON.stringify({colors,syntax})}`);
     await done('dark');
     await stage('agent-list'); await click('#agent-changes');
-    await until(() => evaluate(`return !d.querySelector('#agent-changes-panel').hidden&&d.querySelectorAll('.agent-change-file').length===${process.argv.includes('--readme') ? 9 : 8};`), 'Agent change list opens');
-    await click('.agent-change-file[data-path="04-binary.dat"]');
-    await until(() => evaluate(`return d.querySelector('#files')?.value==='04-binary.dat';`), 'Agent change list opens selected file');
-    await click('.agent-change-file[data-path="01-source.ts"]');
-    await until(() => evaluate(`return d.querySelector('#diff')?.dataset.diffReady==='true'&&d.querySelector('#files')?.value==='01-source.ts';`), 'Agent change list returns to code');
+    const changesReviewTarget = target; target = await findTarget('#screen-changes');
+    await until(() => evaluate(`const p=d.querySelector('#screen-changes');return p&&!p.hidden&&p.getBoundingClientRect().height>0&&p.querySelectorAll('.review-file').length===${process.argv.includes('--readme') ? 9 : 8};`), 'Extension sidebar shows workspace changes');
     const agentList = await call('Page.captureScreenshot', { format: 'png' });
     await writeFile(path.join(process.cwd(), 'artifacts', `review-agent-changes-${edition}.png`), Buffer.from(agentList.data, 'base64'));
-    await click('#close-agent-changes'); await done('agent-list');
+    target = changesReviewTarget; await done('agent-list');
     await stage('conversation-link'); await click('#open-conversation');
     const reviewTarget = target; target = await findTarget('.message-restore[data-checkpoint-available="true"]');
     const restore = await until(() => evaluate(`const b=d.querySelector('.message-restore[data-checkpoint-available="true"]');if(!b||b.disabled)return;return {text:b.textContent,height:b.getBoundingClientRect().height,background:d.defaultView.getComputedStyle(b).backgroundColor};`), 'Visible Restore code action');

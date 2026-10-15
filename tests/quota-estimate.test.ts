@@ -67,7 +67,7 @@ describe('Observed tokens per quota percentage point', () => {
   });
   it('does not invent estimates for missing/stale quota, unmatched history or zero usage', () => {
     const windows = account.quota!.windows;
-    const cases = [undefined, { ...account, updatedAt: now - 6 * 60000 },
+    const cases = [undefined, { ...account, updatedAt: now - 6 * 60000 }, { ...account, quotaCached: true },
       { ...account, quota: { ...account.quota!, windows: [{ ...windows[0]!, resetsAt: now }] } },
       { ...account, quota: { ...account.quota!, windows: [{ ...windows[0]!, usedPercent: 0 }] } },
       { ...account, quota: { ...account.quota!, windows: [{ ...windows[0]!, usedPercent: NaN }] } },

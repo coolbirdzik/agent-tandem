@@ -32,7 +32,7 @@ function json(content: string) {
   return value as Record<string, unknown>;
 }
 const authFile = (provider: AccountProvider) => !isChatAccount(provider) ? 'sign-in.json' : provider === 'Codex' ? 'auth.json' : '.credentials.json';
-const claudeMetadata = (home: string) => path.resolve(home) === path.resolve(path.join(os.homedir(), '.claude')) && !process.env.CLAUDE_CONFIG_DIR ? path.join(os.homedir(), '.claude.json') : path.join(home, '.claude.json');
+export const claudeMetadata = (home: string) => path.resolve(home) === path.resolve(path.join(os.homedir(), '.claude')) && !process.env.CLAUDE_CONFIG_DIR ? path.join(os.homedir(), '.claude.json') : path.join(home, '.claude.json');
 /** Only native auth files live in private profile homes. The registry/webview never contains tokens. */
 export class AccountProfiles {
   constructor(readonly root: string, private defaults: (provider: AccountProvider) => string | Promise<string> = nativeHome, readonly desktop = new DesktopAccounts()) {}

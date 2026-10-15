@@ -7,8 +7,59 @@ vi.mock('vscode', () => ({ window: { createTerminal: (options: unknown) => { ui.
 import { AccountManager } from '../src/host/account-manager';
 import { AccountProfiles, type AccountProfile } from '../src/core/account-profiles';
 import type { ConversationProvider } from '../src/providers/conversations';
+import type { ProviderAccountStatus } from '../src/providers/account-status';
 
 describe('Account switching controller', () => {
+  it('publishes saved quota before querying the CLI, keeps it after a failed refresh and updates it after success', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-managed-quota-'));
+    try {
+      const store = new AccountProfiles(root), row = await store.create('Codex', 'Work');
+      const identity = { signedIn: true, method: 'ChatGPT', email: 'work@test', plan: 'plus' }; await store.identify(row.id, identity);
+      const status: ProviderAccountStatus = { status: 'ready', account: identity, updatedAt: Date.now(), quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 25 }] } };
+      const read = vi.fn(async () => status);
+      const deps = { busy: () => false, project: () => root, current: () => undefined, read, executable: vi.fn(), changed: vi.fn(), update: vi.fn() };
+      await new AccountManager(store, deps).refresh(); read.mockClear();
+      const reopened = new AccountManager(new AccountProfiles(root), deps); await reopened.publish();
+      expect(read).not.toHaveBeenCalled();
+      expect(reopened.state.managedAccounts?.[0]?.status).toMatchObject({ quotaCached: true, updatedAt: status.updatedAt, quota: status.quota });
+      let fail!: (error: Error) => void; read.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+      const refreshing = reopened.refresh(); await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+      expect(reopened.state.managedAccounts?.[0]?.status?.quota).toEqual(status.quota);
+      fail(new Error('Offline')); await refreshing;
+      expect(reopened.state.managedAccounts?.[0]?.status).toMatchObject({ status: 'error', quotaCached: true, updatedAt: status.updatedAt, quota: status.quota });
+      status.updatedAt! += 1000; status.quota!.windows[0]!.usedPercent = 40; await reopened.refresh();
+      expect(reopened.state.managedAccounts?.[0]?.status?.quota?.windows[0]?.usedPercent).toBe(40);
+      expect(reopened.state.managedAccounts?.[0]?.status?.quotaCached).toBeUndefined();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('interrupts a pending quota refresh to switch without waiting for other saved accounts', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-switch-refresh-')), home = path.join(root, 'native'); await mkdir(home);
+    try {
+      const store = new AccountProfiles(path.join(root, 'profiles'), () => home);
+      const identity = { signedIn: true, email: 'selected@test', method: 'ChatGPT' };
+      const selected = await store.import('Codex', JSON.stringify({ tokens: { access_token: 'selected' } }), identity);
+      const unrelated = await store.create('Claude', 'Other account');
+      const queued = await store.create('Claude', 'Queued account');
+      let refreshSignal: AbortSignal | undefined;
+      const read = vi.fn(async (value: AccountProfile | ConversationProvider, signal?: AbortSignal) => {
+        if (signal) {
+          refreshSignal = signal;
+          await new Promise<void>((_resolve, reject) => { signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true }); });
+        }
+        return { status: 'ready' as const, account: typeof value === 'string' && !(await readFile(path.join(home, 'auth.json'), 'utf8').catch(() => '')) ? { signedIn: false, method: 'ChatGPT' } : identity };
+      });
+      const observed = vi.fn(), manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined, read, executable: vi.fn(), changed: vi.fn(), update: vi.fn(), observed });
+      const refresh = manager.action({ action: 'refresh' });
+      await vi.waitFor(() => expect(refreshSignal).toBeDefined());
+      expect(manager.state.accountsBusy).toBeFalsy();
+      await manager.action({ action: 'switch', id: selected.id }); await refresh;
+      expect(refreshSignal!.aborted).toBe(true); expect(manager.state.accountSwitch?.status).toBe('success');
+      expect(manager.state.accountsError).toBeUndefined(); expect(observed).not.toHaveBeenCalled();
+      expect(manager.state.managedAccounts?.find(row => row.id === unrelated.id)?.status).toBeUndefined();
+      expect(read.mock.calls.some(([value]) => typeof value !== 'string' && value.id === queued.id)).toBe(false);
+      expect(JSON.parse(await readFile(path.join(home, 'auth.json'), 'utf8')).tokens.access_token).toBe('selected');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('publishes real progress while reading native auth and reports refresh failure after a verified switch accurately', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-switch-progress-')), home = path.join(root, 'native'); await mkdir(home);
     try {

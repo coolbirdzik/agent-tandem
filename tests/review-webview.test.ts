@@ -41,27 +41,24 @@ describe('Shared Webview review', () => {
     button.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', revision: 'r2', file: 'second.ts' });
     render({ files: [], busy: false }); expect(button.hidden).toBe(true); expect(button.disabled).toBe(true);
   });
-  it('opens the agent file list and binds file/conversation shortcuts to the current review', () => {
+  it('opens workspace changes in the extension sidebar and keeps the conversation shortcut', () => {
     render({ ...fixture(), context: { group: 'Codex:agent', title: 'Update artwork', conversation: { key: 'Codex:agent', id: 'agent', provider: 'Codex', title: 'Update artwork' }, canOpenConversation: true, files: [fixture().files[1]!] } });
     document.getElementById('agent-changes')!.click();
-    expect(document.getElementById('agent-changes-panel')!.hidden).toBe(false);
-    expect(document.getElementById('agent-changes')!.getAttribute('aria-expanded')).toBe('true');
-    expect(document.querySelectorAll('.agent-change-file')).toHaveLength(1);
-    document.querySelector<HTMLButtonElement>('.agent-change-file')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'selectAgentFile', revision: 'r1', file: 'first.ts', target: 'second.ts' });
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'workspaceChanges', revision: 'r1', file: 'first.ts' });
+    expect(document.getElementById('agent-changes-panel')).toBeNull();
     document.getElementById('open-conversation')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'conversation', revision: 'r1', file: 'first.ts' });
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
-    expect(document.getElementById('agent-changes-panel')!.hidden).toBe(true);
-    expect(document.activeElement).toBe(document.getElementById('agent-changes'));
   });
-  it('disables conversation navigation for shared edits and while review is busy', () => {
+  it('opens workspace changes for shared edits and disables navigation while review is busy', () => {
     const context = { group: 'shared', title: 'Shared workspace changes', files: fixture().files };
     render({ ...fixture(), context });
     expect(document.querySelector<HTMLButtonElement>('#open-conversation')!.disabled).toBe(true);
-    expect(document.getElementById('agent-changes-label')!.textContent).toBe('Workspace changes');
-    document.getElementById('agent-changes')!.click(); render({ ...fixture(), context, busy: true });
-    expect(document.querySelector<HTMLButtonElement>('.agent-change-file')!.disabled).toBe(true);
+    expect(document.getElementById('agent-changes-label')!.textContent).toBe('Open workspace changes in AgentTandem');
+    document.getElementById('agent-changes')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'workspaceChanges', revision: 'r1', file: 'first.ts' });
+    render({ ...fixture(), context, busy: true }); postMessage.mockClear();
+    expect(document.querySelector<HTMLButtonElement>('#agent-changes')!.disabled).toBe(true);
+    document.getElementById('agent-changes')!.click(); expect(postMessage).not.toHaveBeenCalled();
   });
   it('shows before/after image snapshots and binds whole-file decisions to the revision', () => {
     render({ ...fixture(), revision: 'image', file: { ...fixture().file!, binary: true, hunks: [], notice: 'Image snapshots', images: { before: { size: 2, src: 'data:image/png;base64,AAE=' }, after: { size: 2, src: 'data:image/png;base64,AAI=' } } } });

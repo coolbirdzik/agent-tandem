@@ -31,7 +31,7 @@ import { fastModeSelection } from './providers/fast-mode';
 import { defaultEfforts, effortSelection, validateEffort } from './providers/effort';
 import { defaultModels, modelSelection, validateModel, validateModelCLI } from './providers/models';
 import { codexModels, claudeModels } from './providers/model-catalog';
-import { readCodexAccount, readClaudeAccount } from './providers/account-status';
+import { readCodexAccount, readClaudeAccount, type ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
 import { AccessModeStore } from './core/access-store';
 import { accessMode, accessSelection, defaultAccessModes } from './providers/access';
@@ -95,7 +95,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let quotaHistory: QuotaObservation[] = [], quotaHistoryError: string | undefined;
   try { quotaHistory = await quotaHistoryStore.read(); }
   catch { quotaHistoryError = 'Could not load quota history. Refresh to retry.'; }
-  const reviews = new ReviewStore(path.join(context.globalStorageUri.fsPath, 'reviews'));
+  const reviews = new ReviewStore(path.join(context.globalStorageUri.fsPath, 'reviews'), () => vscode.workspace.isTrusted);
   const checkpoints = new CheckpointStore(path.join(context.globalStorageUri.fsPath, 'checkpoints'));
   let checkpointPlan: { project: string; key?: string; id: string; token: string; plan: CheckpointPlan } | undefined;
   const accessStore = new AccessModeStore(path.join(context.globalStorageUri.fsPath, 'access'));
@@ -107,7 +107,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let cliInit: Promise<CLIRegistry> | undefined;
   let cliManaging = false;
   const modelJobs = new Map<ConversationProvider, { abort: AbortController; job: Promise<void> }>();
-  const accountJobs = new Map<ConversationProvider, { abort: AbortController; job: Promise<void> }>();
+  const accountJobs = new Map<ConversationProvider, { abort: AbortController; job: Promise<void>; previous?: ProviderAccountStatus }>();
   let queueSave = Promise.resolve();
   const activeReviewProjects = new Set<string>();
   let reviewing = false;
@@ -234,7 +234,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         child.once('error', () => reject(new Error(`Could not open ${provider}.`))); child.once('spawn', () => { child.unref(); resolve(); });
       });
     },
-    read: async profile => {
+    read: async (profile, signal) => {
+      signal?.throwIfAborted();
       const provider = typeof profile === 'string' ? profile : profile.provider;
       if (!state.project || !vscode.workspace.isTrusted) throw new Error('Open a trusted local workspace to manage sign-ins.');
       if (!isChatAccount(provider)) {
@@ -242,11 +243,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         if (typeof profile !== 'string') return accountProfiles.desktopStatus(profile);
         try { return await accountProfiles.desktopStatus(provider); } catch { return { status: 'ready', account: { signedIn: false, method: `${provider} account` }, updatedAt: Date.now() }; }
       }
-      const cli = await managedCLI(provider, state.project), env = typeof profile === 'string' ? undefined : accountProfiles.environment(profile);
+      const cli = await managedCLI(provider, state.project, signal), env = typeof profile === 'string' ? undefined : accountProfiles.environment(profile);
       const read = async () => {
-        if (provider === 'Codex') return readCodexAccount(state.project!, cli.entry.executable, undefined, undefined, env);
+        signal?.throwIfAborted();
+        if (provider === 'Codex') return readCodexAccount(state.project!, cli.entry.executable, signal, undefined, env);
         const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href) as typeof import('./providers/claude-history');
-        return readClaudeAccount(state.project!, sdk.query, cli.entry.executable, undefined, env);
+        return readClaudeAccount(state.project!, sdk.query, cli.entry.executable, signal, env);
       };
       return typeof profile === 'string' ? read() : withStorageLock(accountProfiles.home(profile.id), read);
     },
@@ -266,7 +268,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     },
   });
   const quickAccounts = new QuickAccounts({ state: dashboardState, publish: () => accountManager.publish(),
-    refresh: async () => { await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]); await accountManager.refresh(); await recordQuotaHistory(); },
+    refresh: async signal => {
+      await Promise.all([loadAccount('Codex', true, signal), loadAccount('Claude', true, signal)]);
+      if (signal.aborted) return;
+      await accountManager.refresh(signal);
+      if (!signal.aborted) await recordQuotaHistory();
+    },
     switch: id => accountManager.action({ action: 'switch', id }),
     open: async page => { await vscode.commands.executeCommand(page === 'dashboard' ? 'agentTandem.openSettings' : 'agentTandem.manageAccounts'); }, report });
   context.subscriptions.push(quickAccounts);
@@ -419,8 +426,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     modelJobs.set(provider, { abort, job });
     return job;
   }
-  async function loadAccount(provider: ConversationProvider, force = false): Promise<void> {
-    if (!state.project || disposed) return;
+  async function loadAccount(provider: ConversationProvider, force = false, signal?: AbortSignal): Promise<void> {
+    if (!state.project || disposed || signal?.aborted) return;
     if (!vscode.workspace.isTrusted) {
       state.accounts = { ...state.accounts, [provider]: { status: 'error', error: 'Trust the workspace to read the CLI account.' } }; update(); return;
     }
@@ -428,7 +435,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (existing && !force) return existing.job;
     existing?.abort.abort();
     const project = state.project, abort = new AbortController();
-    const loading = { ...state.accounts?.[provider], status: 'loading' as const, error: undefined };
+    // Replacing an in-flight poll must retain its last completed snapshot.
+    const previous = existing ? existing.previous : state.accounts?.[provider];
+    const stop = () => abort.abort(); signal?.addEventListener('abort', stop, { once: true });
+    const loading = { ...previous, status: 'loading' as const, quotaCached: !!previous?.quota, error: undefined };
     state.accounts = { ...state.accounts, [provider]: loading }; update();
     const current = () => !disposed && project === state.project && state.accounts?.[provider] === loading && !abort.signal.aborted;
     const job = (async () => {
@@ -440,15 +450,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
           const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href) as typeof import('./providers/claude-history');
           account = await readClaudeAccount(project, sdk.query, selected.entry.executable, abort.signal);
         }
-        if (current()) state.accounts = { ...state.accounts, [provider]: account };
+        if (current()) {
+          account = await accountManager.rememberQuota(provider, account);
+          if (current()) state.accounts = { ...state.accounts, [provider]: account };
+        }
       } catch {
-        if (current()) state.accounts = { ...state.accounts, [provider]: { status: 'error', error: `Could not read ${provider} account. Check the selected CLI and sign-in, then refresh.` } };
+        if (current()) state.accounts = { ...state.accounts, [provider]: { ...previous, status: 'error', quotaCached: !!previous?.quota, error: `Could not read ${provider} account. Check the selected CLI and sign-in, then refresh.` } };
       } finally {
+        signal?.removeEventListener('abort', stop);
+        if (!disposed && project === state.project && state.accounts?.[provider] === loading && abort.signal.aborted) state.accounts = { ...state.accounts, [provider]: previous };
         if (accountJobs.get(provider)?.abort === abort) accountJobs.delete(provider);
         if (!disposed && project === state.project) update();
       }
     })();
-    accountJobs.set(provider, { abort, job }); return job;
+    accountJobs.set(provider, { abort, job, previous }); return job;
   }
   async function refreshAccounts() {
     await Promise.all((['Codex', 'Claude'] as const).map(provider => loadAccount(provider)));
@@ -555,9 +570,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     syncJob = (async () => {
       const index = await source.list(project);
       if (disposed || version !== generation) return index;
-      if (state.review?.files.length && !chatAbort && !reviewing && !externalJob) {
-        const review = await attributeExternalReview(project, state.review, index);
+      if ((state.review?.files.length || state.review?.undo) && !chatAbort && !reviewing && !externalJob && !externalSwitching) {
+        const review = await attributeExternalReview(project, await reviews.read(project), index);
         if (disposed || version !== generation) return index;
+        if (state.review?.revision !== review.revision) {
+          state.revertPreview = undefined; state.reviewPreview = undefined;
+          await changeNavigation.refreshReview(project, review.files.map(file => ({ file: file.path, original: reviewSnapshotUri(file.before, file.path), modified: reviewSnapshotUri(file.after, file.path), review: { project, revision: review.revision, group: reviewGroup(file) } })));
+          if (disposed || version !== generation) return index;
+        }
         state.review = review;
       }
       state.conversations = index.conversations; state.syncErrors = index.errors; state.syncedAt = Date.now();
@@ -1113,13 +1133,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.closeReviewPreview', () => { state.reviewPreview = undefined; update(); });
   register('agentTandem.refreshReview', async () => { if (state.review?.externalTracking) await captureExternalReview(); else await refreshReview(state.project, true); });
   register('agentTandem.reviewLatest', async () => {
+    followRoot();
     const project = state.project;
+    if (project && !state.review) await refreshReview(project, true);
     if (state.review?.externalTracking && !chatAbort && !reviewing && !externalSwitching) await captureExternalReview();
     if (project !== state.project) return;
     const review = state.review;
     if (!project || !review?.files.length) { state.screen = 'changes'; update(); await preview.open(); return; }
     const latest = [...review.files].sort((a, b) => Math.max(0, ...(b.captures ?? []).map(capture => capture.to)) - Math.max(0, ...(a.captures ?? []).map(capture => capture.to)))[0]!;
-    await vscode.commands.executeCommand('agentTandem.previewReview', { project, revision: review.revision, group: reviewGroup(latest), file: latest.path });
+    await vscode.commands.executeCommand('agentTandem.previewReview', { project, revision: review.revision, file: latest.path });
   });
   const previewRevert = async (value: unknown) => {
     const request = reviewRequest(value), project = state.project;

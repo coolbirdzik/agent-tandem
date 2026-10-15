@@ -84,6 +84,11 @@ function openAttribution(provider: ConversationProvider, conversationId?: string
   el<HTMLSelectElement>('attribution-provider').value = provider; renderAttribution();
   el<HTMLSelectElement>('attribution-conversation').value = conversationId ?? '';
   const range = conversationId ? {} : dateRange();
+  if (!conversationId) {
+    const days = (state?.data?.days ?? []).filter(row => row.provider === provider && (!row.account || !!row.accountSource) &&
+      (!range.from || row.day >= range.from) && (!range.to || row.day <= range.to)).map(row => row.day).sort();
+    range.from ??= days[0]; range.to ??= days.at(-1);
+  }
   el<HTMLInputElement>('attribution-from').value = range.from ?? '';
   el<HTMLInputElement>('attribution-to').value = range.to ?? '';
   renderAttributionPreview(); el<HTMLDetailsElement>('usage-attribution').open = true;
@@ -121,7 +126,7 @@ function renderAttribution() {
   renderAttributionPreview();
 }
 function attributionCaption(days: NonNullable<UsageDashboardState['data']>['days'], filters: UsageFilters) {
-  return ([['inferred', 'Inferred from session creator'], ['manual', 'User confirmed']] as const).flatMap(([source, label]) => {
+  return ([['inferred', 'Inferred from session evidence'], ['manual', 'User confirmed']] as const).flatMap(([source, label]) => {
     const total = usageBreakdown(days.filter(row => row.accountSource === source), filters).totals.total;
     return total ? [`${label}: ${compact(total)} tokens`] : [];
   }).join(' · ');
@@ -353,6 +358,7 @@ function renderAccountGroups(filters: UsageFilters) {
     const source = attributionCaption(state?.data?.days ?? [], { ...filters, provider: group.provider, accountId: id });
     if (source) item.append(node('p', source, 'muted'));
     if (!group.account || source) {
+      if (!group.account && group.provider === 'Claude') item.append(node('p', 'Claude transcripts without account identity remain unknown. Assign history to the account used for these conversations.', 'muted'));
       const assign = node('button', 'Assign history', 'quiet'); assign.onclick = () => openAttribution(group.provider); item.append(assign);
     }
     const windows = node('div', undefined, 'account-group-windows');
@@ -451,7 +457,7 @@ function renderManagedAccounts() {
       if (action === 'remove') button.classList.add('account-remove');
       actions.append(button);
     }
-    item.append(actions); const footer = node('small', profile.status?.updatedAt ? `Checked ${new Date(profile.status.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : accountProviderDetail(profile.provider), 'account-checked muted'); item.append(footer); root.append(item);
+    item.append(actions); const footer = node('small', profile.status?.updatedAt ? `${profile.status.quotaCached ? 'Cached quota' : 'Checked'} ${new Date(profile.status.updatedAt).toLocaleString()}` : accountProviderDetail(profile.provider), 'account-checked muted'); item.append(footer); root.append(item);
   }
 }
 function renderAccountSwitch() {
@@ -852,7 +858,7 @@ function render(value: UsageDashboardState) {
   const root = el('usage-coverage'), coverage = node('details', undefined, 'usage-details');
   coverage.append(node('summary', 'Data & pricing details')); root.replaceChildren(coverage);
   coverage.append(node('div', 'Local usage includes saved history across projects, archived sessions and subagents. Other devices and deleted history are excluded. Input includes cache; output includes reported reasoning.'));
-  coverage.append(node('div', 'Native turn evidence takes priority. Codex creator IDs can infer an account for other history; inferred sessions may include account switches. User-confirmed assignments can replace inference and can be removed. Unmatched history stays under Unknown account. Local quota estimates use native evidence only; Device estimates also include inferred, user-confirmed and unknown history.'));
+  coverage.append(node('div', 'Native turn evidence takes priority. Codex creator IDs, Claude bridge owners and consistent Claude response identities can infer an account for other history in the same session; inferred sessions may include account switches. User-confirmed assignments can replace inference and can be removed. Unmatched history stays under Unknown account. Local quota estimates use native evidence only; Device estimates also include inferred, user-confirmed and unknown history.'));
   const pricing = node('div', `API equivalent uses published standard global token rates checked ${PRICING_CHECKED_AT}, not historical invoices. Prompt-length premiums are estimated per response; older session-wide billing cannot be reconstructed. Fast modes, tool fees, taxes and regional premiums are excluded. Unspecified Claude cache writes use the 5-minute rate. Sources: `);
   for (const provider of ['Codex', 'Claude'] as const) { const link = node('a', provider === 'Codex' ? 'OpenAI API pricing' : 'Claude API pricing'); link.href = PRICING_SOURCES[provider]; pricing.append(link, document.createTextNode(' ')); }
   coverage.append(pricing);

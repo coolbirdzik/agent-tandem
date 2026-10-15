@@ -15,6 +15,13 @@ const state: ViewState = { sessions: [], running: false, providers: [], composeP
   Claude: { status: 'ready', quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 20 }] } },
 } };
 beforeEach(() => { host.settings = {}; host.items = []; });
+it('keeps cached quota visible and identifies its timestamp and refresh error in the tooltip', () => {
+  const bar = new QuotaStatusBar();
+  bar.update({ ...state, accounts: { ...state.accounts, Claude: { ...state.accounts!.Claude!, status: 'error', quotaCached: true, updatedAt: Date.now() - 3600000, error: 'Offline' } } });
+  const claude = host.items.find(item => item.id.endsWith('claude'));
+  expect(claude.text).toContain('5h 80%'); expect(claude.tooltip).toContain('Cached quota'); expect(claude.tooltip).toContain('Offline');
+  bar.dispose();
+});
 it('keeps separate agent items with independent quota colors, commands and full accessible tooltips', () => {
   const bar = new QuotaStatusBar(); bar.update(state);
   expect(host.items).toHaveLength(2);

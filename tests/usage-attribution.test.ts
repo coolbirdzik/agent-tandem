@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { UsageAttributionStore } from '../src/core/usage-attribution-store';
-import { usageAccount } from '../src/core/usage-account';
+import { claudeHistoryOwner, usageAccount } from '../src/core/usage-account';
 import { UsageAccountStore } from '../src/core/usage-account-store';
 import { UsageHistory } from '../src/providers/usage-history';
 import { usageBreakdown } from '../src/core/usage-dashboard';
@@ -33,6 +33,84 @@ async function fixture() {
   return { root, homes, cache, store, ledger, options, write, history: new UsageHistory(homes, ledger, cache, options) };
 }
 describe('Restoring historical account attribution', () => {
+  const claudeOne = usageAccount('Claude', { signedIn: true, email: one.email, method: 'Claude account', organization: 'org-one' })!;
+  const claudeTwo = usageAccount('Claude', { signedIn: true, email: two.email, method: 'Claude account', organization: 'org-two' })!;
+  const message = (id: string, sessionId: string) => ({ type: 'assistant', timestamp: stamp, sessionId, message: { id, model: 'sonnet', usage: { input_tokens: 100, output_tokens: 10 } } });
+  const owner = (sessionId: string, id = 'owner-one', organization = 'org-one') => ({ type: 'bridge-session', sessionId, ownerAccountUuid: id, ownerOrganizationUuid: organization });
+  async function claudeFile(f: Awaited<ReturnType<typeof fixture>>, name: string, rows: unknown[]) {
+    const file = path.join(f.homes.claude, 'projects', name + '.jsonl');
+    await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, rows.map(row => JSON.stringify(row)).join('\n'));
+  }
+  const claudeOptions = (f: Awaited<ReturnType<typeof fixture>>) => ({ store: f.store, knownAccounts: async () => [
+    { account: claudeOne, nativeAccountIds: [claudeHistoryOwner('owner-one', 'org-one')!] },
+    { account: claudeTwo, nativeAccountIds: [claudeHistoryOwner('owner-two', 'org-two')!] },
+  ] });
+  it('restores Claude bridge owner identities even when metadata follows usage and reapplies them from cache', async () => {
+    const f = await fixture();
+    await claudeFile(f, 'main', [message('main', 'bridge'), owner('bridge')]);
+    await claudeFile(f, 'child', [message('child', 'bridge')]);
+    await claudeFile(f, 'outside', [message('outside', 'external')]);
+    const options = claudeOptions(f), history = new UsageHistory(f.homes, f.ledger, f.cache, options);
+    const first = await history.read();
+    expect(usageBreakdown(first.days, { grouping: 'day', accountId: claudeOne.id }).totals.total).toBe(220);
+    expect(first.days.find(row => row.account)?.accountSource).toBe('inferred');
+    expect(usageBreakdown(first.days, { grouping: 'day', accountId: 'unknown' }).totals.total).toBe(110);
+    const reload = new UsageHistory(f.homes, f.ledger, f.cache, options);
+    expect((await reload.read()).days).toEqual(first.days); expect(reload.readStats?.diskHits).toBe(3);
+    const assignment = await f.store.assign({ provider: 'Claude', conversationId: 'bridge' }, claudeTwo);
+    expect((await reload.read()).days.find(row => row.account)?.account).toEqual(claudeTwo);
+    await f.store.remove(assignment.id); expect((await reload.read()).days).toEqual(first.days);
+  });
+  it('infers only consistent Claude session evidence and keeps switched sessions, mismatched owners and conflicts unknown', async () => {
+    const f = await fixture(), options = claudeOptions(f);
+    await f.ledger.record('Claude:native', claudeOne);
+    await claudeFile(f, 'main', [message('native', 'main'), message('unrecorded', 'main')]);
+    const history = new UsageHistory(f.homes, f.ledger, f.cache, options);
+    let data = await history.read();
+    expect(data.days.find(row => row.accountSource === 'inferred')?.account).toEqual(claudeOne);
+    await f.ledger.record('Claude:switched', claudeTwo);
+    await claudeFile(f, 'switch', [message('switched', 'main')]);
+    await claudeFile(f, 'mismatch', [message('mismatch', 'mismatch'), owner('mismatch', 'owner-one', 'wrong-org')]);
+    await claudeFile(f, 'conflict', [message('conflict', 'conflict'), owner('conflict'), owner('conflict', 'owner-two', 'org-two')]);
+    data = await history.read();
+    expect(data.days.filter(row => row.accountSource === 'inferred')).toHaveLength(0);
+    expect(usageBreakdown(data.days, { grouping: 'day', accountId: 'unknown' }).totals.total).toBe(330);
+    expect(data.days.filter(row => row.account).reduce((sum, row) => sum + row.total, 0)).toBe(220);
+  });
+  it('reads Claude account aliases from matching native metadata without exporting unrelated metadata', async () => {
+    const f = await fixture(), profiles = new AccountProfiles(path.join(f.root, 'profiles'));
+    const profile = await profiles.create('Claude');
+    await profiles.identify(profile.id, { signedIn: true, email: claudeOne.email, organization: 'org-one', method: 'Claude account' });
+    const file = path.join(profiles.home(profile.id), '.claude.json');
+    const metadata = (emailAddress: string, organizationUuid = 'org-one') => JSON.stringify({ oauthAccount: { emailAddress, accountUuid: 'owner-one', organizationUuid }, privateData: 'PRIVATE-METADATA' });
+    await writeFile(file, metadata(claudeOne.email));
+    const known = (await knownUsageAccounts(profiles)).find(row => row.account.id === claudeOne.id)!;
+    expect(known.nativeAccountIds).toContain(claudeHistoryOwner('owner-one', 'org-one'));
+    expect(JSON.stringify(known)).not.toContain('PRIVATE-METADATA');
+    await writeFile(file, metadata(claudeTwo.email));
+    expect((await knownUsageAccounts(profiles)).find(row => row.account.id === claudeOne.id)?.nativeAccountIds).toEqual([]);
+    await writeFile(file, metadata(claudeOne.email, 'wrong-org'));
+    expect((await knownUsageAccounts(profiles)).find(row => row.account.id === claudeOne.id)?.nativeAccountIds).toEqual([]);
+  });
+  it('recovers the Claude display identity from metadata when no SDK or saved identity is available', async () => {
+    const f = await fixture(), profiles = new AccountProfiles(path.join(f.root, 'profiles')), profile = await profiles.create('Claude');
+    await writeFile(path.join(profiles.home(profile.id), '.claude.json'), JSON.stringify({ oauthAccount: {
+      emailAddress: claudeOne.email, accountUuid: 'owner-one', organizationUuid: 'org-one',
+    } }));
+    expect((await knownUsageAccounts(profiles)).find(row => row.account.id === claudeOne.id)).toEqual({ account: claudeOne, nativeAccountIds: [claudeHistoryOwner('owner-one', 'org-one')] });
+  });
+  it('isolates Claude sessions and rejects contradictory ownership copied into forks', async () => {
+    const f = await fixture(), options = claudeOptions(f);
+    await claudeFile(f, 'main', [owner('one'), message('one', 'one'), owner('two', 'owner-two', 'org-two'), message('two', 'two')]);
+    let data = await new UsageHistory(f.homes, f.ledger, f.cache, options).read();
+    expect(data.conversations?.find(row => row.id === 'one')?.days[0]?.account).toEqual(claudeOne);
+    expect(data.conversations?.find(row => row.id === 'two')?.days[0]?.account).toEqual(claudeTwo);
+    await claudeFile(f, 'fork', [message('one', 'one'), owner('one', 'owner-two', 'org-two')]);
+    data = await new UsageHistory(f.homes, f.ledger, f.cache, options).read();
+    expect(data.conversations?.find(row => row.id === 'one')?.days[0]?.account).toBeUndefined();
+    expect(data.duplicates).toBe(1);
+    expect(usageBreakdown(data.days, { grouping: 'day' }).totals.total).toBe(220);
+  });
   it('reapplies inferred and reversible manual choices on disk/memory cache while native turns take priority', async () => {
     const f = await fixture(); await f.write('first', 'creator-one'); await f.write('second', 'creator-one');
     await f.ledger.record('Codex:turn:turn-second', two);

@@ -7,7 +7,7 @@ import { bankedResetDetails } from '../core/banked-resets';
 
 interface Item extends vscode.QuickPickItem { action?: 'switch' | 'dashboard' | 'manage' | 'refresh' | 'log'; id?: string }
 interface Dependencies {
-  state(): UsageDashboardState; publish(): Promise<void>; refresh(): Promise<void>;
+  state(): UsageDashboardState; publish(): Promise<void>; refresh(signal: AbortSignal): Promise<void>;
   switch(id: string): Promise<void>; open(page: 'dashboard' | 'accounts'): Promise<void>; report(error: unknown): void;
 }
 export function quickQuota(status?: ProviderAccountStatus) {
@@ -17,7 +17,7 @@ export function quickQuota(status?: ProviderAccountStatus) {
 }
 function quotaDetail(status?: ProviderAccountStatus) {
   const reset = status?.quota?.windows.filter(window => window.resetsAt).map(window => `${window.label} resets ${new Date(window.resetsAt!).toLocaleString()}`).join(' · ');
-  return [status?.account?.plan, reset, ...bankedResetDetails(status?.quota?.bankedResets).slice(1)].filter(Boolean).join(' · ');
+  return [status?.account?.plan, status?.quotaCached && status.updatedAt ? `Cached quota · ${new Date(status.updatedAt).toLocaleString()}` : undefined, status?.error, reset, ...bankedResetDetails(status?.quota?.bankedResets).slice(1)].filter(Boolean).join(' · ');
 }
 /** Native popup; remains open for quota refresh, switches and live host progress. */
 export class QuickAccounts implements vscode.Disposable {
@@ -25,6 +25,7 @@ export class QuickAccounts implements vscode.Disposable {
   private subscriptions: vscode.Disposable[] = [];
   private provider?: AccountProvider;
   private working = false;
+  private refreshAbort?: AbortController;
   private logOpen = false;
   private generation = 0;
   constructor(private deps: Dependencies) {}
@@ -36,14 +37,14 @@ export class QuickAccounts implements vscode.Disposable {
     const refresh: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('refresh'), tooltip: 'Refresh account quota' };
     picker.buttons = [refresh];
     this.subscriptions = [picker.onDidHide(() => this.dispose()),
-      picker.onDidTriggerButton(() => { if (!this.working) void this.run(() => this.deps.refresh()); }),
+      picker.onDidTriggerButton(() => { void this.refresh(); }),
       picker.onDidAccept(() => {
         const item = picker.selectedItems[0];
         if (!item?.action) return;
         if (item.action === 'dashboard' || item.action === 'manage') { const page = item.action === 'dashboard' ? 'dashboard' : 'accounts'; this.dispose(); void this.deps.open(page).catch(this.deps.report); }
         else if (item.action === 'log') { this.logOpen = !this.logOpen; this.update(); }
         else if (this.working || this.deps.state().accountsBusy) return;
-        else if (item.action === 'refresh') void this.run(() => this.deps.refresh());
+        else if (item.action === 'refresh') void this.refresh();
         else if (item.id) {
           const state = this.deps.state(), profile = state.managedAccounts?.find(row => row.id === item.id);
           if (!profile || profile.active || state.accountSwitchBlocked) return;
@@ -52,10 +53,21 @@ export class QuickAccounts implements vscode.Disposable {
       })];
     this.update(); picker.show();
     // Publish saved profiles immediately, then read quota without opening Settings/history.
-    await this.run(async () => { await this.deps.publish(); this.update(); await this.deps.refresh(); });
+    const generation = this.generation;
+    try { await this.deps.publish(); } catch (error) { this.deps.report(error); }
+    if (generation !== this.generation) return;
+    this.update(); await this.refresh();
+  }
+  private async refresh() {
+    if (this.working || this.deps.state().accountsBusy || this.refreshAbort) return;
+    const abort = new AbortController(); this.refreshAbort = abort; this.update();
+    try { await this.deps.refresh(abort.signal); }
+    catch (error) { if (!abort.signal.aborted) this.deps.report(error); }
+    finally { if (this.refreshAbort === abort) { this.refreshAbort = undefined; this.update(); } }
   }
   private async run(job: () => Promise<void>) {
     if (this.working) return;
+    this.refreshAbort?.abort(); this.refreshAbort = undefined;
     this.working = true; const generation = this.generation; this.update();
     try { await job(); } catch (error) { this.deps.report(error); }
     finally { if (generation === this.generation) { this.working = false; this.update(); } }
@@ -63,7 +75,7 @@ export class QuickAccounts implements vscode.Disposable {
   update() {
     const picker = this.picker; if (!picker) return;
     const state = this.deps.state(), operation = state.accountSwitch, switching = operation?.status === 'running';
-    picker.busy = this.working || !!state.accountsBusy;
+    picker.busy = this.working || !!state.accountsBusy || !!this.refreshAbort;
     picker.title = switching ? `Switching · ${operation.label || accountProviderName(operation.provider || 'Codex')}` : 'AgentTandem · Quota & accounts';
     picker.placeholder = switching ? operation.logs.at(-1)?.message || 'Switching account…' : state.accountSwitchBlocked || 'Select an account to switch · search by app or email';
     const items: Item[] = [];
@@ -79,7 +91,7 @@ export class QuickAccounts implements vscode.Disposable {
       }
       for (const profile of profiles) {
         const active = profile.active || !!currentId && currentId === profileIdentityKey(provider, profile.identity);
-        const status = active && native?.status === 'ready' ? native : profile.status;
+        const status = active && native?.quota ? native : profile.status;
         const identity = status?.account || profile.identity;
         const blocked = state.accountSwitchBlocked || (state.accountsBusy ? 'Account operation in progress' : undefined);
         items.push({ id: profile.id, label: `$(${active ? 'check' : switching && operation.profileId === profile.id ? 'loading~spin' : 'account'}) ${profile.label}`,
@@ -103,6 +115,7 @@ export class QuickAccounts implements vscode.Disposable {
     if (selected) { const same = items.find(row => selected.id ? row.id === selected.id : row.label === selected.label); if (same) picker.activeItems = [same]; }
   }
   dispose() {
+    this.refreshAbort?.abort(); this.refreshAbort = undefined;
     ++this.generation; const picker = this.picker; this.picker = undefined; this.working = false;
     for (const subscription of this.subscriptions.splice(0)) subscription.dispose(); picker?.dispose();
   }

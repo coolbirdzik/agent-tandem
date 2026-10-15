@@ -10,7 +10,7 @@ import type { ConversationProvider } from './conversations';
 import { addTotals, emptyTotals, localDay, type TokenTotals, type UsageDay, type UsageHistoryData, type RecentUsage, type UsageConversation } from '../core/usage-dashboard';
 import { addApiCost, apiCost, emptyApiCost } from '../core/api-pricing';
 import type { UsageAccountStore } from '../core/usage-account-store';
-import type { UsageAccount } from '../core/usage-account';
+import { claudeHistoryOwner, type UsageAccount } from '../core/usage-account';
 import { matchingAssignment, type KnownUsageAccount, type UsageAttributionStore } from '../core/usage-attribution-store';
 import type { UsageAccountSource } from '../core/usage-dashboard';
 
@@ -33,6 +33,7 @@ export class UsageParser {
   private session = ''; private model = 'Unknown model'; private turn = ''; private rootTurn = '';
   private project?: string;
   private creatorAccountId?: string;
+  private claudeOwners = new Map<string, Set<string>>();
   private previous?: TokenTotals;
   private modern: UsageRecord[] = [];
   private legacy: Array<{ record: UsageRecord; cumulative?: string }> = [];
@@ -43,6 +44,13 @@ export class UsageParser {
     const r = obj(value), p = obj(r.payload), m = obj(r.message);
     if (this.provider === 'Claude') {
       this.session = text(r.sessionId) ?? this.session; this.project = text(r.cwd) ?? this.project;
+      if (r.type === 'bridge-session' && text(r.sessionId)) {
+        const owner = claudeHistoryOwner(r.ownerAccountUuid, r.ownerOrganizationUuid);
+        if (owner) {
+          const owners = this.claudeOwners.get(r.sessionId) ?? new Set<string>();
+          owners.add(owner); this.claudeOwners.set(r.sessionId, owners);
+        }
+      }
       if (r.type !== 'assistant' || !Object.keys(obj(m.usage)).length || m.model === '<synthetic>') return;
       const id = text(m.id) ?? text(r.requestId) ?? text(r.uuid);
       if (!id) return;
@@ -104,11 +112,16 @@ export class UsageParser {
       ...(this.session ? { conversationId: this.session } : {}), ...(this.project ? { project: this.project } : {}),
       ...(this.provider === 'Codex' && (this.rootTurn || this.turn) ? { accountKey: `Codex:turn:${this.rootTurn || this.turn}` } : {}) });
   }
-  records(): UsageRecord[] { return [...this.modern, ...this.legacy.filter(row => !row.cumulative || !this.modernTotals.has(row.cumulative)).map(row => row.record)]; }
+  records(): UsageRecord[] {
+    return [...this.modern, ...this.legacy.filter(row => !row.cumulative || !this.modernTotals.has(row.cumulative)).map(row => row.record)].map(row => {
+      const owners = row.conversationId && this.claudeOwners.get(row.conversationId);
+      return owners ? { ...row, creatorAccountId: owners.size === 1 ? [...owners][0] : 'conflicting-owners' } : row;
+    });
+  }
 }
 interface ParsedFile { signature: string; records: UsageRecord[]; malformed: number; oversized: number; undated: number }
 export interface UsageReadStats { discoveryMs: number; parseMs: number; aggregateMs: number; parsedFiles: number; memoryHits: number; diskHits: number }
-const cacheVersion = 3;
+const cacheVersion = 4;
 /** Compact allowlist: cache contains usage counters and native IDs, never message text or account credentials. */
 function cachedRecords(value: unknown, provider: ConversationProvider): UsageRecord[] | undefined {
   if (!Array.isArray(value)) return;
@@ -138,7 +151,7 @@ function mayContainUsage(prefix: string, provider: ConversationProvider): boolea
     } });
   } catch (error) { if (error !== done) throw error; }
   if (!type) return true;
-  if (provider === 'Claude') return type === 'assistant';
+  if (provider === 'Claude') return type === 'assistant' || type === 'bridge-session';
   if (type === 'event_msg') return !eventType || eventType === 'token_count' || eventType === 'model_rerouted';
   return ['session_meta', 'turn_context', 'token_usage_record'].includes(type);
 }
@@ -220,9 +233,8 @@ export class UsageHistory {
     const assignments = await this.attribution?.store.read(), known = await this.attribution?.knownAccounts();
     const creators = new Map<string, UsageAccount | null>();
     for (const entry of known ?? []) for (const id of entry.nativeAccountIds) {
-      if (entry.account.provider !== 'Codex') continue;
-      const previous = creators.get(id);
-      creators.set(id, previous === null || (previous && previous.id !== entry.account.id) ? null : entry.account);
+      const key = `${entry.account.provider}:${id}`, previous = creators.get(key);
+      creators.set(key, previous === null || (previous && previous.id !== entry.account.id) ? null : entry.account);
     }
     const roots: Array<[ConversationProvider, string]> = [['Codex', path.join(this.homes.codex, 'sessions')], ['Codex', path.join(this.homes.codex, 'archived_sessions')], ['Claude', path.join(this.homes.claude, 'projects')]];
     const lists = await Promise.all(roots.map(async ([provider, root]) => ({ provider, ...await historyFiles(root, signal) })));
@@ -272,6 +284,16 @@ export class UsageHistory {
       await setImmediate();
     }
     stats.parseMs = performance.now() - parseStart;
+    const claudeSessions = new Map<string, UsageAccount | null>();
+    for (const row of records.values()) {
+      if (row.provider !== 'Claude' || !row.conversationId) continue;
+      const owner = row.creatorAccountId ? creators.get(`Claude:${row.creatorAccountId}`) : undefined;
+      const evidence = row.account ?? owner;
+      const previous = claudeSessions.get(row.conversationId);
+      if (row.accountConflict || row.creatorConflict || (row.creatorAccountId && !owner) ||
+        (row.account && owner && row.account.id !== owner.id) || (previous && evidence && previous.id !== evidence.id)) claudeSessions.set(row.conversationId, null);
+      else if (previous !== null && evidence) claudeSessions.set(row.conversationId, evidence);
+    }
     const aggregateStart = performance.now();
     const days = new Map<string, UsageDay>(), recent: RecentUsage[] = [], conversations = new Map<string, UsageConversation & { buckets: Map<string, UsageDay> }>(), now = Date.now();
     let aggregated = 0;
@@ -282,8 +304,9 @@ export class UsageHistory {
       if (!row.account) {
         const assignment = matchingAssignment(assignments ?? [], row.provider, row.conversationId, day);
         if (assignment) { row.account = assignment.account ?? undefined; row.accountSource = 'manual'; }
-        else if (!row.accountConflict && !row.creatorConflict && row.creatorAccountId) {
-          row.account = creators.get(row.creatorAccountId) ?? undefined;
+        else if (!row.accountConflict && !row.creatorConflict) {
+          const session = row.provider === 'Claude' && row.conversationId ? claudeSessions.get(row.conversationId) : undefined;
+          if (session !== null) row.account = (row.creatorAccountId ? creators.get(`${row.provider}:${row.creatorAccountId}`) : session) ?? undefined;
           if (row.account) row.accountSource = 'inferred';
         }
       }

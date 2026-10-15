@@ -25,13 +25,31 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
+  it('opens a reviewable date scope for unknown external Claude history in the all-time view', () => {
+    const account = usageAccount('Claude', { signedIn: true, email: 'claude@test.invalid', method: 'Claude account' })!;
+    render({ ...value, accounts: { Claude: { status: 'ready', account: { signedIn: true, email: account.email, method: account.method } } }, data: { ...value.data!, days: [
+      row('2026-10-01', 'Claude', 'sonnet', 100), row('2026-10-14', 'Claude', 'sonnet', 200), row('2026-09-01', 'Codex', 'codex', 999),
+    ] } });
+    choose('filter-range', 'all');
+    const unknown = [...document.querySelectorAll<HTMLElement>('#account-groups .account-group')].find(item => item.dataset.provider === 'Claude' && item.textContent?.includes('Unknown account'))!;
+    expect(unknown.textContent).toContain('Claude transcripts without account identity');
+    [...unknown.querySelectorAll('button')].find(button => button.textContent === 'Assign history')!.click();
+    expect((document.querySelector('#attribution-from') as HTMLInputElement).value).toBe('2026-10-01');
+    expect((document.querySelector('#attribution-to') as HTMLInputElement).value).toBe('2026-10-14');
+    choose('attribution-account', account.id);
+    expect(document.querySelector('#attribution-preview')!.textContent).toContain('300 tokens');
+    expect((document.querySelector('#attribution-save') as HTMLButtonElement).disabled).toBe(false);
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'usageAttribution' }));
+    document.querySelector<HTMLFormElement>('#attribution-form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'usageAttribution', value: { action: 'assign', scope: { provider: 'Claude', conversationId: undefined, from: '2026-10-01', to: '2026-10-14' }, accountId: account.id } });
+  });
   it('previews explicit history scopes, labels inferred usage and sends reversible assignments', () => {
     const account = usageAccount('Codex', { signedIn: true, email: 'history@test.invalid', method: 'ChatGPT' })!;
     const days = [{ ...row('2026-10-14', 'Codex', 'model', 200), account, accountSource: 'inferred' as const }, row('2026-10-14', 'Codex', 'model', 300)];
     const fixture: UsageDashboardState = { ...value, accounts: { Codex: { status: 'ready', account: { signedIn: true, email: account.email, method: 'ChatGPT' } } }, data: { ...value.data!, days,
       conversations: [{ key: 'Codex:session', id: 'session', provider: 'Codex', firstAt: 1, lastAt: 2, days }], assignments: [{ id: 'saved', provider: 'Codex', conversationId: 'session', account }] } };
     render(fixture); choose('filter-range', 'all');
-    expect(document.querySelector('#account-groups')!.textContent).toContain('Inferred from session creator: 200 tokens');
+    expect(document.querySelector('#account-groups')!.textContent).toContain('Inferred from session evidence: 200 tokens');
     choose('attribution-conversation', 'session'); choose('attribution-account', account.id);
     expect(document.querySelector('#attribution-preview')!.textContent).toContain('500 tokens');
     expect((document.querySelector('#attribution-save') as HTMLButtonElement).disabled).toBe(false);
@@ -186,6 +204,9 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#accounts-notice')!.textContent).toContain('Finish the active turn.');
     render({ ...state, accountsBusy: true }); expect(document.querySelector<HTMLButtonElement>('#account-add')!.disabled).toBe(true);
     render({ ...state, accountsError: 'Native CLI rejected sign-in.' }); expect(document.querySelector<HTMLElement>('#accounts-error')!.hidden).toBe(false);
+    render({ ...state, managedAccounts: [{ ...profile, status: { ...status, quotaCached: true } }] });
+    expect(document.querySelector('#managed-account-list')!.textContent).toContain('5h · 50% left');
+    expect(document.querySelector('#managed-account-list .account-checked')!.textContent).toContain('Cached quota');
   });
   it('shows Device fallback and compares reset cycles without assigning unknown token history to an account', () => {
     const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);

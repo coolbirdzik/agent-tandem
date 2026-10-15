@@ -3,6 +3,10 @@ import type { ConversationProvider } from '../providers/conversations';
 
 export interface UsageAccount { id: string; provider: ConversationProvider; email: string; organization?: string; nativeAccountId?: string; method: string }
 export const UNKNOWN_ACCOUNT = 'unknown';
+/** Claude bridge ownership is scoped to both the account and organization. */
+export function claudeHistoryOwner(account: unknown, organization: unknown): string | undefined {
+  return typeof account === 'string' && account.trim() && typeof organization === 'string' && organization.trim() ? JSON.stringify([account.trim(), organization.trim()]) : undefined;
+}
 /** Native display identity only. Anonymous API keys/backends cannot identify an account. */
 export function usageAccount(provider: ConversationProvider, identity?: AccountIdentity): UsageAccount | undefined {
   const email = identity?.email?.trim().toLowerCase();
