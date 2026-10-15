@@ -16,23 +16,33 @@ export interface StoredFile { relative: string; bytes: number; modified: number;
 export interface CleanupPlan { token: string; createdAt: number; files: StoredFile[]; bytes: number }
 export interface CleanupResult { removed: number; bytes: number; skipped: number; failures: string[] }
 export interface StoredHistory {
-  id: string; projectId: string; project: string; label: string; kind: 'checkpoints' | 'undo';
-  count: number; bytes: number; createdAt: number; updatedAt: number;
+  id: string; projectId: string; project: string; label: string; kind: 'checkpoints' | 'undo' | 'tracking';
+  /** `bytes` counts every referenced snapshot file; `reclaimable` only those no other history or Review keeps. Tracking baselines count no restore points. */
+  count: number; bytes: number; reclaimable: number; createdAt: number; updatedAt: number;
 }
 export interface HistoryDeletionPlan extends CleanupPlan {
   histories: StoredHistory[];
+  /** Checkpoint files lose `ids`; a Review file (no ids) stops change tracking. */
   records: { relative: string; digest: string; ids: string[] }[];
   /** Categories chosen in "Clean up…"; absent for restore history picked row by row. */
   kinds?: CleanupKind[];
 }
-export const CLEANUP_KINDS = ['checkpoints', 'undo', 'unused'] as const;
+export const CLEANUP_KINDS = ['checkpoints', 'undo', 'tracking', 'unused'] as const;
 export type CleanupKind = typeof CLEANUP_KINDS[number];
-export interface HistoryDeletionResult extends CleanupResult { checkpointsRemoved: number }
+export interface HistoryDeletionResult extends CleanupResult { checkpointsRemoved: number; trackingStopped: number }
 /** Deletion progress: reference checks and history edits are indeterminate; removal counts approved files. */
 export interface StorageProgress { phase: 'checking' | 'history' | 'removing' | 'refreshing'; done: number; total: number; bytes: number; totalBytes: number }
 export type StorageProgressListener = (progress: StorageProgress) => void;
 interface CheckpointRecord { id: string; key: string; snapshot: string; createdAt: number; undo?: boolean; title?: string }
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+const reviewFile = /^reviews\/[a-f0-9]{64}\.json$/, checkpointFile = /^checkpoints\/[a-f0-9]{64}\.json$/;
+/** Review state with change tracking stopped. Pending changes and revert Undo stay; the preference keeps auto-tracking from recapturing the baseline. */
+const untracked = (value: Record<string, unknown>) => ({ ...value, external: undefined, externalCapturedAt: undefined, externalDecidedAt: undefined, externalPreference: false, notice: 'Change tracking stopped by Storage cleanup to free space. Turn it on again to capture a new baseline.' });
+const add = (set: Set<string>, id: unknown, pattern: RegExp) => {
+  if (id === undefined) return;
+  if (typeof id !== 'string' || !pattern.test(id)) throw new Error('Invalid storage reference. Cleanup was blocked.');
+  set.add(id);
+};
 export interface StorageState {
   status: 'idle' | 'loading' | 'ready' | 'cleaning' | 'error'; root: string; total?: number;
   categories?: { label: string; bytes: number; files: number }[];
@@ -74,34 +84,33 @@ export class StorageManager {
     try { return JSON.parse(await readFile(path.join(this.root, file.relative), 'utf8')); }
     catch { throw new Error(`Cleanup blocked by unreadable metadata: ${file.relative}`); }
   }
-  private async candidates(files: StoredFile[], now: number, overrides = new Map<string, CheckpointRecord[]>(), released = new Set<string>(), selectedOnly = false): Promise<StoredFile[]> {
+  /** Snapshots and blobs a project's Review state keeps: tracking baseline (unless `tracking` is false), active capture, pending changes and revert Undo. */
+  private async reviewReferences(file: StoredFile, snapshots: Set<string>, blobs: Set<string>, override?: unknown, tracking = true) {
+    const value = override ?? await this.json(file);
+    if (value.version !== 1 || typeof value.project !== 'string' || !Array.isArray(value.files) || (value.active !== undefined && (!value.active || typeof value.active.requestId !== 'string' || !uuid.test(value.active.before)))) throw new Error(`Invalid review metadata: ${file.relative}`);
+    add(tracking ? snapshots : new Set(), value.external, uuid); add(snapshots, value.active?.before, uuid);
+    const protectedFiles = [...value.files];
+    if (value.revertUndo !== undefined) {
+      const undo = value.revertUndo;
+      if (!undo || typeof undo.id !== 'string' || !Number.isFinite(undo.createdAt) || !Array.isArray(undo.files) || (undo.phase !== undefined && !['reverting', 'undoing'].includes(undo.phase))) throw new Error(`Invalid revert Undo: ${file.relative}`);
+      for (const entry of undo.files) {
+        if (!entry?.original || (entry.remaining && (entry.remaining.path !== entry.original.path || entry.remaining.after !== entry.after))) throw new Error(`Invalid revert Undo file: ${file.relative}`);
+        add(blobs, entry.after, hash); protectedFiles.push(entry.original);
+        if (entry.remaining) protectedFiles.push(entry.remaining);
+      }
+    }
+    for (const change of protectedFiles) {
+      assertPath(change.path); add(blobs, change.before, hash); add(blobs, change.after, hash);
+      if (change.captures !== undefined && !Array.isArray(change.captures)) throw new Error(`Invalid capture references: ${file.relative}`);
+      for (const capture of change.captures ?? []) { add(blobs, capture.before, hash); add(blobs, capture.after, hash); }
+    }
+    return value as { project: string; external?: string; externalCapturedAt?: number };
+  }
+  private async candidates(files: StoredFile[], now: number, overrides = new Map<string, unknown>(), released = new Set<string>(), selectedOnly = false): Promise<StoredFile[]> {
     const snapshots = { review: new Set<string>(), demo: new Set<string>() }, blobs = { review: new Set<string>(), demo: new Set<string>() };
-    const add = (set: Set<string>, id: unknown, pattern: RegExp) => {
-      if (id === undefined) return;
-      if (typeof id !== 'string' || !pattern.test(id)) throw new Error('Invalid storage reference. Cleanup was blocked.');
-      set.add(id);
-    };
     for (const file of files) {
-      if (/^reviews\/[a-f0-9]{64}\.json$/.test(file.relative)) {
-        const value = await this.json(file);
-        if (value.version !== 1 || typeof value.project !== 'string' || !Array.isArray(value.files) || (value.active !== undefined && (!value.active || typeof value.active.requestId !== 'string' || !uuid.test(value.active.before)))) throw new Error(`Invalid review metadata: ${file.relative}`);
-        add(snapshots.review, value.external, uuid); add(snapshots.review, value.active?.before, uuid);
-        const protectedFiles = [...value.files];
-        if (value.revertUndo !== undefined) {
-          const undo = value.revertUndo;
-          if (!undo || typeof undo.id !== 'string' || !Number.isFinite(undo.createdAt) || !Array.isArray(undo.files) || (undo.phase !== undefined && !['reverting', 'undoing'].includes(undo.phase))) throw new Error(`Invalid revert Undo: ${file.relative}`);
-          for (const entry of undo.files) {
-            if (!entry?.original || (entry.remaining && (entry.remaining.path !== entry.original.path || entry.remaining.after !== entry.after))) throw new Error(`Invalid revert Undo file: ${file.relative}`);
-            add(blobs.review, entry.after, hash); protectedFiles.push(entry.original);
-            if (entry.remaining) protectedFiles.push(entry.remaining);
-          }
-        }
-        for (const change of protectedFiles) {
-          assertPath(change.path); add(blobs.review, change.before, hash); add(blobs.review, change.after, hash);
-          if (change.captures !== undefined && !Array.isArray(change.captures)) throw new Error(`Invalid capture references: ${file.relative}`);
-          for (const capture of change.captures ?? []) { add(blobs.review, capture.before, hash); add(blobs.review, capture.after, hash); }
-        }
-      } else if (/^checkpoints\/[a-f0-9]{64}\.json$/.test(file.relative)) {
+      if (reviewFile.test(file.relative)) await this.reviewReferences(file, snapshots.review, blobs.review, overrides.get(file.relative));
+      else if (checkpointFile.test(file.relative)) {
         const value = overrides.get(file.relative) ?? await this.json(file);
         if (!Array.isArray(value)) throw new Error(`Invalid checkpoint metadata: ${file.relative}`);
         for (const record of value) { if (!record || !uuid.test(record.id) || !uuid.test(record.snapshot)) throw new Error(`Invalid checkpoint reference: ${file.relative}`); add(snapshots.review, record.snapshot, uuid); }
@@ -140,13 +149,37 @@ export class StorageManager {
   }
   private async historyInventory(files: StoredFile[]) {
     const byPath = new Map(files.map(file => [file.relative, file])), projects = new Map<string, string>();
-    for (const file of files.filter(file => /^reviews\/[a-f0-9]{64}\.json$/.test(file.relative))) {
-      const value = await this.json(file);
-      if (typeof value.project === 'string') projects.set(path.basename(file.relative, '.json'), value.project);
+    const reviewSnapshots = new Set<string>(), reviewBlobs = new Set<string>(), tracked: { file: StoredFile; project: string; baseline: string; at?: number }[] = [];
+    // Tracking baselines become their own history so users can release them; other Review state stays kept.
+    for (const file of files.filter(file => reviewFile.test(file.relative))) {
+      const value = await this.reviewReferences(file, reviewSnapshots, reviewBlobs, undefined, false);
+      projects.set(path.basename(file.relative, '.json'), value.project);
+      if (value.external) tracked.push({ file, project: value.project, baseline: value.external, at: value.externalCapturedAt });
     }
-    const groups = new Map<string, { history: StoredHistory; relative: string; records: CheckpointRecord[]; paths: Set<string> }>();
     const manifests = new Map<string, string[]>();
-    for (const file of files.filter(file => /^checkpoints\/[a-f0-9]{64}\.json$/.test(file.relative))) {
+    const manifestBlobs = async (id: string) => {
+      const manifestPath = `reviews/history/snapshots/${id}.json`;
+      let blobs = manifests.get(manifestPath);
+      if (!blobs) {
+        const file = byPath.get(manifestPath);
+        if (!file) throw new Error('A referenced snapshot is missing. Repair storage before cleanup.');
+        const snapshot = await this.json(file);
+        if (snapshot.id !== id || !snapshot.files || typeof snapshot.files !== 'object' || Array.isArray(snapshot.files)) throw new Error(`Invalid snapshot: ${manifestPath}`);
+        blobs = Object.entries(snapshot.files).map(([name, blob]) => {
+          assertPath(name); if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${manifestPath}`);
+          return `reviews/history/blobs/${blob}`;
+        });
+        manifests.set(manifestPath, blobs);
+      }
+      return [manifestPath, ...blobs];
+    };
+    const groups = new Map<string, { history: StoredHistory; relative: string; records: CheckpointRecord[]; paths: Set<string> }>();
+    for (const { file, project, baseline, at } of tracked) {
+      const projectId = path.basename(file.relative, '.json'), id = digest(JSON.stringify([projectId, 'tracking'])), time = Number.isFinite(at) ? at! : file.modified;
+      const history: StoredHistory = { id, projectId, project, label: 'Change tracking baseline', kind: 'tracking', count: 0, bytes: 0, reclaimable: 0, createdAt: time, updatedAt: time };
+      groups.set(id, { history, relative: file.relative, records: [], paths: new Set(await manifestBlobs(baseline)) });
+    }
+    for (const file of files.filter(file => checkpointFile.test(file.relative))) {
       const records: CheckpointRecord[] = await this.json(file), projectId = path.basename(file.relative, '.json');
       if (!Array.isArray(records)) throw new Error(`Invalid checkpoint metadata: ${file.relative}`);
       const ids = new Set<string>();
@@ -156,31 +189,23 @@ export class StorageManager {
         const id = digest(JSON.stringify([projectId, !!record.undo, record.key]));
         let group = groups.get(id);
         if (!group) {
-          group = { history: { id, projectId, project: projects.get(projectId) ?? `Project ${projectId.slice(0, 12)}`, label: record.undo ? 'Last restore backup' : typeof record.title === 'string' && record.title ? record.title : record.key, kind: record.undo ? 'undo' : 'checkpoints', count: 0, bytes: 0, createdAt: record.createdAt, updatedAt: record.createdAt }, relative: file.relative, records: [], paths: new Set() };
+          group = { history: { id, projectId, project: projects.get(projectId) ?? `Project ${projectId.slice(0, 12)}`, label: record.undo ? 'Last restore backup' : typeof record.title === 'string' && record.title ? record.title : record.key, kind: record.undo ? 'undo' : 'checkpoints', count: 0, bytes: 0, reclaimable: 0, createdAt: record.createdAt, updatedAt: record.createdAt }, relative: file.relative, records: [], paths: new Set() };
           groups.set(id, group);
         }
         group.records.push(record); group.history.count++;
         if (!record.undo && typeof record.title === 'string' && record.title) group.history.label = record.title;
         group.history.createdAt = Math.min(group.history.createdAt, record.createdAt); group.history.updatedAt = Math.max(group.history.updatedAt, record.createdAt);
-        const manifestPath = `reviews/history/snapshots/${record.snapshot}.json`;
-        let blobs = manifests.get(manifestPath);
-        if (!blobs) {
-          const file = byPath.get(manifestPath);
-          if (!file) throw new Error('A referenced snapshot is missing. Repair storage before cleanup.');
-          const snapshot = await this.json(file);
-          if (snapshot.id !== record.snapshot || !snapshot.files || typeof snapshot.files !== 'object' || Array.isArray(snapshot.files)) throw new Error(`Invalid snapshot: ${manifestPath}`);
-          blobs = Object.entries(snapshot.files).map(([name, blob]) => {
-            assertPath(name); if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${manifestPath}`);
-            return `reviews/history/blobs/${blob}`;
-          });
-          manifests.set(manifestPath, blobs);
-        }
-        group.paths.add(manifestPath); for (const blob of blobs) group.paths.add(blob);
+        for (const relative of await manifestBlobs(record.snapshot)) group.paths.add(relative);
       }
     }
+    // A file frees space only when no other history and no Review state keeps it.
+    const kept = new Set([...reviewBlobs].map(blob => `reviews/history/blobs/${blob}`)), owners = new Map<string, number>();
+    for (const id of reviewSnapshots) for (const relative of await manifestBlobs(id)) kept.add(relative);
+    for (const group of groups.values()) for (const relative of group.paths) owners.set(relative, (owners.get(relative) ?? 0) + 1);
     for (const group of groups.values()) for (const relative of group.paths) {
       const file = byPath.get(relative); if (!file) throw new Error('A protected snapshot blob is missing. Repair storage before cleanup.');
       group.history.bytes += file.bytes;
+      if (owners.get(relative) === 1 && !kept.has(relative)) group.history.reclaimable += file.bytes;
     }
     return groups;
   }
@@ -203,22 +228,29 @@ export class StorageManager {
     });
   }
   private async planDeletion(inventory: StoredFile[], groups: Awaited<ReturnType<StorageManager['historyInventory']>>, selected: string[], unused: boolean): Promise<HistoryDeletionPlan> {
-    const histories: StoredHistory[] = [], removals = new Map<string, Set<string>>(), released = new Set<string>();
+    const histories: StoredHistory[] = [], removals = new Map<string, Set<string>>(), untrack = new Set<string>(), released = new Set<string>();
     for (const id of new Set(selected)) {
       const group = groups.get(id); if (!group) throw new Error('Saved history changed. Refresh and select it again.');
-      const reviewFile = inventory.find(file => file.relative === `reviews/${group.history.projectId}.json`);
-      if (reviewFile && (await this.json(reviewFile)).active) throw new Error('Wait for the agent and change capture to finish before deleting history.');
+      const review = inventory.find(file => file.relative === `reviews/${group.history.projectId}.json`);
+      if (review && (await this.json(review)).active) throw new Error('Wait for the agent and change capture to finish before deleting history.');
       histories.push(group.history);
-      const ids = removals.get(group.relative) ?? new Set<string>(); for (const record of group.records) ids.add(record.id); removals.set(group.relative, ids);
+      if (group.history.kind === 'tracking') untrack.add(group.relative);
+      else { const ids = removals.get(group.relative) ?? new Set<string>(); for (const record of group.records) ids.add(record.id); removals.set(group.relative, ids); }
       for (const relative of group.paths) released.add(relative);
     }
-    const overrides = new Map<string, CheckpointRecord[]>(), records: HistoryDeletionPlan['records'] = [];
+    const overrides = new Map<string, unknown>(), records: HistoryDeletionPlan['records'] = [];
     for (const [relative, ids] of removals) {
       const text = await readFile(path.join(this.root, relative), 'utf8');
       overrides.set(relative, (JSON.parse(text) as CheckpointRecord[]).filter(record => !ids.has(record.id)));
       records.push({ relative, digest: digest(text), ids: [...ids] });
     }
-    const files = await this.candidates(inventory, Date.now(), overrides, released, !unused);
+    for (const relative of untrack) {
+      const text = await readFile(path.join(this.root, relative), 'utf8');
+      overrides.set(relative, untracked(JSON.parse(text))); records.push({ relative, digest: digest(text), ids: [] });
+    }
+    // Every external scan leaves the previous baseline unreferenced, sharing nearly all its blobs; releasing a
+    // baseline also sweeps those old unused snapshots, or they would keep the space it was meant to free.
+    const files = await this.candidates(inventory, Date.now(), overrides, released, !unused && !untrack.size);
     return { token: randomUUID(), createdAt: Date.now(), histories, records, files, bytes: files.reduce((sum, file) => sum + file.bytes, 0) };
   }
   async deleteHistory(plan: HistoryDeletionPlan, onProgress?: StorageProgressListener): Promise<HistoryDeletionResult> {
@@ -227,30 +259,32 @@ export class StorageManager {
       const progress = (phase: StorageProgress['phase']) => onProgress?.({ phase, done: 0, total: plan.files.length, bytes: 0, totalBytes: plan.bytes });
       progress('checking');
       const inventory = await this.inventory(), byPath = new Map(inventory.map(file => [file.relative, file]));
-      const updates: { relative: string; records: CheckpointRecord[]; removed: number }[] = [];
+      const updates: { relative: string; value: unknown; removed: number; untracked: boolean }[] = [];
       for (const edit of plan.records) {
-        if (!/^checkpoints\/[a-f0-9]{64}\.json$/.test(edit.relative) || !byPath.has(edit.relative)) throw new Error('Saved history changed. Preview deletion again.');
+        const review = reviewFile.test(edit.relative);
+        if ((!review && !checkpointFile.test(edit.relative)) || !byPath.has(edit.relative)) throw new Error('Saved history changed. Preview deletion again.');
         const text = await readFile(path.join(this.root, edit.relative), 'utf8');
         if (digest(text) !== edit.digest) throw new Error('Saved history changed. Preview deletion again.');
-        const reviewFile = byPath.get(edit.relative.replace('checkpoints/', 'reviews/'));
-        if (reviewFile && (await this.json(reviewFile)).active) throw new Error('Wait for the agent and change capture to finish before deleting history.');
-        const current: CheckpointRecord[] = JSON.parse(text), ids = new Set(edit.ids), records = current.filter(record => !ids.has(record.id));
-        updates.push({ relative: edit.relative, records, removed: current.length - records.length });
+        const state = byPath.get(edit.relative.replace('checkpoints/', 'reviews/')), current = review ? JSON.parse(text) : state && await this.json(state);
+        if (current?.active) throw new Error('Wait for the agent and change capture to finish before deleting history.');
+        if (review) { updates.push({ relative: edit.relative, value: untracked(current), removed: 0, untracked: true }); continue; }
+        const saved: CheckpointRecord[] = JSON.parse(text), ids = new Set(edit.ids), records = saved.filter(record => !ids.has(record.id));
+        updates.push({ relative: edit.relative, value: records, removed: saved.length - records.length, untracked: false });
       }
-      const overrides = new Map(updates.map(edit => [edit.relative, edit.records]));
+      const overrides = new Map(updates.map(edit => [edit.relative, edit.value]));
       const released = new Set(plan.files.filter(file => {
         const current = byPath.get(file.relative);
         return current && ['bytes', 'modified', 'changed', 'inode'].every(key => current[key as keyof StoredFile] === file[key as keyof StoredFile]);
       }).map(file => file.relative));
       // Validate every reference before removing any checkpoint. Shared blobs stay protected.
       await this.candidates(inventory, Date.now(), overrides, released, true);
-      const result: HistoryDeletionResult = { removed: 0, bytes: 0, skipped: 0, failures: [], checkpointsRemoved: 0 };
+      const result: HistoryDeletionResult = { removed: 0, bytes: 0, skipped: 0, failures: [], checkpointsRemoved: 0, trackingStopped: 0 };
       progress('history');
       for (const edit of updates) {
         const full = path.join(this.root, edit.relative), temporary = `${full}.${randomUUID()}.tmp`;
         try {
-          await writeFile(temporary, JSON.stringify(edit.records), { flag: 'wx' }); await rename(temporary, full);
-          result.checkpointsRemoved += edit.removed;
+          await writeFile(temporary, JSON.stringify(edit.value), { flag: 'wx' }); await rename(temporary, full);
+          result.checkpointsRemoved += edit.removed; if (edit.untracked) result.trackingStopped++;
         } catch (error) { result.failures.push(`${edit.relative}: ${error instanceof Error ? error.message : String(error)}`); }
         finally { await unlink(temporary).catch(() => undefined); }
       }
@@ -261,7 +295,7 @@ export class StorageManager {
         return { ...result, skipped: plan.files.length, failures: [...result.failures, `Snapshot cleanup: ${error instanceof Error ? error.message : String(error)}`] };
       }
       const cleaned = await this.removeFiles(plan.files, fresh, onProgress);
-      return { ...cleaned, failures: [...result.failures, ...cleaned.failures], checkpointsRemoved: result.checkpointsRemoved };
+      return { ...cleaned, failures: [...result.failures, ...cleaned.failures], checkpointsRemoved: result.checkpointsRemoved, trackingStopped: result.trackingStopped };
     });
   }
   async inspect(): Promise<StorageState> {
@@ -270,7 +304,7 @@ export class StorageManager {
       for (const file of files) { const label = category(file.relative), row = groups.get(label) ?? { label, bytes: 0, files: 0 }; row.bytes += file.bytes; row.files++; groups.set(label, row); }
       const state: StorageState = { status: 'ready', root: this.root, total: files.reduce((n, file) => n + file.bytes, 0), categories: [...groups.values()] };
       try {
-        state.histories = [...(await this.historyInventory(files)).values()].map(group => group.history).sort((a, b) => b.bytes - a.bytes || a.id.localeCompare(b.id));
+        state.histories = [...(await this.historyInventory(files)).values()].map(group => group.history).sort((a, b) => b.reclaimable - a.reclaimable || b.bytes - a.bytes || a.id.localeCompare(b.id));
         const unused = await this.candidates(files, Date.now()); state.cleanable = { files: unused.length, bytes: unused.reduce((n, file) => n + file.bytes, 0) };
       }
       catch (error) { state.cleanupBlocked = error instanceof Error ? error.message : String(error); }

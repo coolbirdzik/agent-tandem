@@ -61,6 +61,7 @@ button.quiet:hover { background: var(--vscode-list-hoverBackground); }
 .storage-history-copy strong { display: block; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .storage-history-copy small { display: block; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; margin-top: 3px; }
 .storage-history-size { font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 500; white-space: nowrap; }
+.storage-history-size small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; text-align: right; margin-top: 3px; }
 .storage-empty { color: var(--muted); padding: 24px 12px; margin: 0; }
 .storage-deletion-preview { padding: 20px; margin-top: 20px; background: var(--surface); border-left: 2px solid var(--vscode-editorWarning-foreground, #cca700); }
 .storage-deletion-preview h3 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }

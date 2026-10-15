@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Storage: sort restore history by the space each conversation actually frees (snapshot data shared with other history or Review no longer inflates its size), show the referenced total beside it, and add Quick select presets for the biggest space savers and history not saved in 7+ or 30+ days.
+
+- Storage: let users free change tracking baselines, which can hold most of the stored data for large projects. They appear per project in Restore history and as an opt-in "Change tracking baselines" choice in Clean up…; deleting one stops tracking for that project (pending review stays) and also sweeps the old unused baselines left by earlier scans.
+
 - Keep Storage inspection and snapshot cleanup working when Codex profile temporary folders contain linked tool launchers; skip those links without following or deleting them, while retaining link guards for credentials and snapshot data.
 
 - Replace generic status-bar symbols with dedicated Codex blossom and Claude starburst icons in every display mode; match the Preferences preview and retain quota colors and accessible labels.

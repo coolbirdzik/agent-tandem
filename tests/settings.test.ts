@@ -301,13 +301,14 @@ describe('Settings usage dashboard', () => {
     const before = root.textContent; choose('filter-provider', 'Claude'); expect(root.textContent).toBe(before);
   });
   it('filters restore history, selects visible conversations, previews impact and sends only the delete token', () => {
-    const group = (id: string, projectId: string, kind: 'checkpoints' | 'undo' = 'checkpoints') => ({ id, projectId, project: `L:/Code/${projectId}`, label: kind === 'undo' ? 'Last restore backup' : `Codex:${id}`, kind, count: 2, bytes: 1024, createdAt: 1000, updatedAt: 2000 });
+    const group = (id: string, projectId: string, kind: 'checkpoints' | 'undo' = 'checkpoints') => ({ id, projectId, project: `L:/Code/${projectId}`, label: kind === 'undo' ? 'Last restore backup' : `Codex:${id}`, kind, count: 2, bytes: 1024, reclaimable: 512, createdAt: 1000, updatedAt: 2000 });
     const histories = [group('first', 'one'), group('second', 'two'), group('backup', 'one', 'undo')];
     const storage = { status: 'ready' as const, root: 'root', histories, total: 3000 };
     render({ ...value, storage }); choose('storage-project', 'one'); choose('storage-kind', 'checkpoints');
     expect(document.querySelectorAll('.storage-history-row')).toHaveLength(1);
     document.querySelector<HTMLButtonElement>('#storage-select-visible')!.click();
-    expect(document.querySelector('#storage-selection')!.textContent).toContain('1 selected');
+    expect(document.querySelector('#storage-selection')!.textContent).toContain('1 selected · 2 restore points · frees at least 512 B');
+    expect(document.querySelector('.storage-history-size')!.textContent).toBe('512 Bof 1.0 KB referenced');
     document.querySelector<HTMLButtonElement>('#storage-history-preview')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewHistoryDeletion', value: { ids: ['first'] } });
     const checkbox = document.querySelector<HTMLInputElement>('.storage-history-row input')!;
@@ -321,13 +322,52 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector<HTMLInputElement>('.storage-history-row input')!.disabled).toBe(true);
     document.querySelector<HTMLButtonElement>('#storage-history-delete')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'deleteHistory', value: { token: 'approved-history' } });
-    render({ ...value, storage: { ...storage, histories: histories.slice(1), historyResult: { checkpointsRemoved: 2, removed: 1, bytes: 100, skipped: 1, failures: ['locked: EBUSY'] } } });
+    render({ ...value, storage: { ...storage, histories: histories.slice(1), historyResult: { checkpointsRemoved: 2, trackingStopped: 0, removed: 1, bytes: 100, skipped: 1, failures: ['locked: EBUSY'] } } });
     expect(document.querySelector('#storage-selection')!.textContent).toContain('No history selected');
     expect(document.querySelector('#storage-history-result')!.textContent).toContain('Deleted 2 restore points');
+    expect(document.querySelector('#storage-history-result')!.textContent).not.toContain('tracking');
     expect(document.querySelector('#storage-history-result')!.textContent).toContain('locked: EBUSY');
   });
+  it('offers change tracking baselines as opt-in cleanup and explains that tracking stops', () => {
+    const tracking = { id: 'track', projectId: 'one', project: 'L:/Code/big', label: 'Change tracking baseline', kind: 'tracking' as const, count: 0, bytes: 2048, reclaimable: 1024, createdAt: 1, updatedAt: 2 };
+    const checkpoint = { id: 'one', projectId: 'one', project: 'L:/Code/big', label: 'Codex:one', kind: 'checkpoints' as const, count: 3, bytes: 1, reclaimable: 1, createdAt: 1, updatedAt: 2 };
+    const storage = { status: 'ready' as const, root: 'root', histories: [tracking, checkpoint], cleanable: { files: 0, bytes: 0 } };
+    render({ ...value, storage }); choose('storage-kind', 'tracking');
+    expect(document.querySelectorAll('.storage-history-row')).toHaveLength(1);
+    expect(document.querySelector('.storage-history-row')!.textContent).toContain('Deleting stops change tracking for this project');
+    document.querySelector<HTMLButtonElement>('#storage-select-visible')!.click();
+    expect(document.querySelector('#storage-selection')!.textContent).toBe('1 selected · 0 restore points · 1 tracking baseline · frees at least 1.0 KB');
+    choose('storage-kind', '');
+    document.querySelector<HTMLButtonElement>('#storage-clean-all')!.click();
+    const kind = (name: string) => document.querySelector<HTMLInputElement>(`input[data-clean-kind="${name}"]`)!;
+    expect(kind('tracking').checked).toBe(false); expect(kind('tracking').disabled).toBe(false);
+    expect(document.querySelector('#storage-clean-choices')!.textContent).toContain('1 project · stops change tracking');
+    kind('tracking').click(); document.querySelector<HTMLButtonElement>('#storage-clean-review')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewCleanAll', value: { kinds: ['checkpoints', 'tracking'] } });
+    const historyPlan = { token: 'track', createdAt: Date.now(), histories: [tracking], records: [], files: [], bytes: 1024, kinds: ['tracking' as const] };
+    render({ ...value, storage: { ...storage, historyPlan } });
+    expect(document.querySelector('#storage-history-plan-heading')!.textContent).toBe('Clean up change tracking baselines');
+    const impact = document.querySelector('#storage-history-impact')!.textContent;
+    expect(impact).toContain('Change tracking stops in 1 project'); expect(impact).not.toContain('permanently unavailable'); expect(impact).not.toContain('tracking baselines stay');
+    expect(document.querySelector('#storage-history-plan-groups')!.textContent).toContain('stops tracking');
+    render({ ...value, storage: { ...storage, historyResult: { checkpointsRemoved: 0, trackingStopped: 1, removed: 3, bytes: 1024, skipped: 0, failures: [] } } });
+    expect(document.querySelector('#storage-history-result')!.textContent).toContain('Deleted 0 restore points · stopped change tracking in 1 project · 1.0 KB freed');
+  });
+  it('quick-selects the biggest space savers or stale history within the current filters', () => {
+    const day = 86_400_000, now = Date.now();
+    const group = (id: string, reclaimable: number, age: number, projectId = 'one') => ({ id, projectId, project: projectId, label: `Codex:${id}`, kind: 'checkpoints' as const, count: 1, bytes: reclaimable + 100, reclaimable, createdAt: now - age, updatedAt: now - age });
+    const histories = [group('huge', 900, 0), group('big', 300, 10 * day), group('small', 50, 40 * day), group('shared', 0, 40 * day), group('other', 5000, 40 * day, 'two')];
+    render({ ...value, storage: { status: 'ready', root: 'root', histories } }); choose('storage-project', 'one');
+    const selected = () => [...document.querySelectorAll<HTMLInputElement>('.storage-history-row input')].filter(input => input.checked).map(input => input.dataset.historyId);
+    const quick = document.querySelector<HTMLSelectElement>('#storage-quick-select')!;
+    choose('storage-quick-select', 'space'); expect(selected()).toEqual(['huge', 'big']); expect(quick.value).toBe('');
+    choose('storage-quick-select', 'week'); expect(selected()).toEqual(['big', 'small', 'shared']);
+    choose('storage-quick-select', 'month'); expect(selected()).toEqual(['small', 'shared']);
+    document.querySelector<HTMLButtonElement>('#storage-history-preview')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewHistoryDeletion', value: { ids: ['small', 'shared'] } });
+  });
   it('lets the storage heading choose what to clean up and confirms it from the same preview', () => {
-    const histories = [{ id: 'one', projectId: 'one', project: 'project', label: 'Codex:one', kind: 'checkpoints' as const, count: 3, bytes: 1, createdAt: 1, updatedAt: 2 }];
+    const histories = [{ id: 'one', projectId: 'one', project: 'project', label: 'Codex:one', kind: 'checkpoints' as const, count: 3, bytes: 1, reclaimable: 1, createdAt: 1, updatedAt: 2 }];
     const button = document.querySelector<HTMLButtonElement>('#storage-clean-all')!, chooser = document.querySelector<HTMLElement>('#storage-clean-choices')!;
     const review = document.querySelector<HTMLButtonElement>('#storage-clean-review')!;
     const kind = (name: string) => document.querySelector<HTMLInputElement>(`input[data-clean-kind="${name}"]`)!;
@@ -355,7 +395,7 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#storage-history-delete')!.textContent).toBe('Delete history');
   });
   it('shows deletion progress inside the preview that started it without rebuilding history rows', () => {
-    const histories = [{ id: 'one', projectId: 'one', project: 'project', label: 'Codex:one', kind: 'checkpoints' as const, count: 1, bytes: 1, createdAt: 1, updatedAt: 2 }];
+    const histories = [{ id: 'one', projectId: 'one', project: 'project', label: 'Codex:one', kind: 'checkpoints' as const, count: 1, bytes: 1, reclaimable: 1, createdAt: 1, updatedAt: 2 }];
     const plan = { token: 'cleanup', createdAt: Date.now(), files: [{ relative: 'reviews/history/blobs/a', bytes: 2048, modified: 1, changed: 1, inode: 1 }], bytes: 4096 };
     const storage = { status: 'cleaning' as const, root: 'root', histories, plan };
     render({ ...value, storage });
@@ -373,7 +413,7 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector<HTMLElement>('#storage-history-progress')!.hidden).toBe(true);
   });
   it('renders untrusted history labels as text and disables history deletion on unreadable metadata', () => {
-    const histories = [{ id: 'one', projectId: 'one', project: 'project', label: '<img src=x onerror=alert(1)>', kind: 'checkpoints' as const, count: 1, bytes: 1, createdAt: 1, updatedAt: 2 }];
+    const histories = [{ id: 'one', projectId: 'one', project: 'project', label: '<img src=x onerror=alert(1)>', kind: 'checkpoints' as const, count: 1, bytes: 1, reclaimable: 1, createdAt: 1, updatedAt: 2 }];
     render({ ...value, storage: { status: 'ready', root: 'root', histories } });
     expect(document.querySelector('#storage-histories img')).toBeNull(); expect(document.querySelector('#storage-histories')!.textContent).toContain('<img');
     render({ ...value, storage: { status: 'ready', root: 'root', histories, cleanupBlocked: 'Unreadable metadata' } });

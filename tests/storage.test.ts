@@ -79,7 +79,9 @@ describe('Snapshot storage management', () => {
     const histories = (await f.manager.inspect()).histories!;
     expect(histories).toHaveLength(3); expect(histories.every(group => group.project === f.project)).toBe(true);
     const selected = histories.find(group => group.label === 'Codex:first')!; expect(selected.count).toBe(2);
+    expect(histories[0]).toBe(selected); expect(histories.filter(group => group !== selected).map(group => group.reclaimable)).toEqual([0, 0]);
     const plan = await f.manager.previewHistoryDeletion([selected.id]);
+    expect(selected.reclaimable).toBe(plan.bytes); expect(selected.bytes).toBeGreaterThan(plan.bytes);
     expect(plan.files.map(file => file.relative).sort()).toEqual([`reviews/history/snapshots/${exclusive.id}.json`, `reviews/history/blobs/${exclusive.blob}`].sort());
     expect(plan.bytes).toBeGreaterThan(0);
     const result = await f.manager.deleteHistory(plan);
@@ -113,11 +115,38 @@ describe('Snapshot storage management', () => {
     await expect(f.manager.previewKindCleanup(['everything'])).rejects.toThrow('Choose what to clean up');
     await expect(f.manager.previewHistoryDeletion([])).rejects.toThrow('Select saved history');
   });
+  it('lets users release change tracking baselines, stopping tracking but keeping pending review', async () => {
+    const f = await fixture(); await f.reviews.initializeExternalTracking(f.project);
+    await writeFile(path.join(f.project, 'source.ts'), 'external edits\n'); await writeFile(path.join(f.project, 'large.bin'), 'tracked only'); const pending = await f.reviews.scanExternal(f.project);
+    await f.age();
+    const summary = await f.manager.inspect(), tracking = summary.histories!.find(group => group.kind === 'tracking')!;
+    expect(tracking).toMatchObject({ project: f.project, label: 'Change tracking baseline', count: 0 }); expect(tracking.reclaimable).toBeGreaterThan(0);
+    // The first baseline is now unreferenced; normal cleanup still keeps the current one.
+    expect((await f.manager.preview()).files.length).toBeGreaterThan(0);
+    const kept = await f.manager.previewKindCleanup(['unused']);
+    expect(kept.histories).toEqual([]);
+    const plan = await f.manager.previewHistoryDeletion([tracking.id]);
+    expect(plan.histories.map(group => group.kind)).toEqual(['tracking']); expect(plan.records).toEqual([expect.objectContaining({ ids: [] })]);
+    expect(plan.bytes).toBeGreaterThanOrEqual(tracking.reclaimable);
+    const result = await f.manager.deleteHistory(plan);
+    expect(result).toMatchObject({ checkpointsRemoved: 0, trackingStopped: 1, skipped: 0, failures: [] }); expect(result.removed).toBe(plan.files.length);
+    const review = await f.reviews.read(f.project);
+    expect(review.externalTracking).toBeUndefined(); expect(review.notice).toContain('Storage cleanup');
+    expect(review.files.map(file => file.path).sort()).toEqual(['large.bin', 'source.ts']);
+    expect((await f.reviews.initializeExternalTracking(f.project)).externalTracking).toBeUndefined();
+    const after = await f.manager.inspect(); expect(after.cleanupBlocked).toBeUndefined(); expect(after.histories).toEqual([]);
+    await f.reviews.revert({ project: f.project, revision: pending.revision });
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('user baseline\n');
+    expect((await f.reviews.setExternalTracking(f.project, true)).externalTracking).toBe(true);
+    expect((await f.manager.previewKindCleanup(['tracking'])).kinds).toEqual(['tracking']);
+  });
   it('allows deleting restore backups explicitly and keeps pending Review revert working', async () => {
     const f = await fixture(); await f.reviews.begin(f.project, 'turn'); const before = await f.reviews.checkpointBefore(f.project, 'turn');
     await writeFile(path.join(f.project, 'source.ts'), 'agent changes\n'); const review = await f.reviews.finish(f.project, 'turn');
     await f.checkpoints.record(f.project, 'Codex:turn', ['message'], before); await f.checkpoints.saveUndo(f.project, before);
     const histories = (await f.manager.inspect()).histories!;
+    // The pending Review keeps the "before" blob, so neither history frees it on its own.
+    expect(histories.every(group => group.bytes > 0 && group.reclaimable === 0)).toBe(true);
     const result = await f.manager.deleteHistory(await f.manager.previewHistoryDeletion(histories.map(group => group.id)));
     expect(result.checkpointsRemoved).toBe(2); expect(await f.checkpoints.undo(f.project)).toBeUndefined();
     await f.reviews.revert({ project: f.project, revision: review.revision });

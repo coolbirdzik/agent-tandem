@@ -699,6 +699,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (project) {
       const [saved, undo] = await Promise.all([conversation ? checkpoints.list(project, conversation) : Promise.resolve([]), checkpoints.undo(project)]);
       if (state.project === project && state.conversation === conversation) { state.checkpoints = saved; state.checkpointUndo = undo; }
+      // Stopped tracking must also stop the external watcher and show Review's notice.
+      if (result.trackingStopped) await refreshReview(project).catch(report);
     }
     update();
     return { ...(await storage.inspect()), historyResult: result };

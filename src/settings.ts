@@ -175,6 +175,12 @@ let historyPreviewToken: string | undefined;
 el('storage-project').onchange = el('storage-kind').onchange = () => renderStorageHistories(state?.storage);
 el('storage-select-visible').onclick = () => { for (const group of visibleHistory(state?.storage)) selectedHistory.add(group.id); renderStorageHistories(state?.storage); };
 el('storage-clear-selection').onclick = () => { selectedHistory.clear(); renderStorageHistories(state?.storage); };
+el('storage-quick-select').onchange = () => {
+  const quick = el<HTMLSelectElement>('storage-quick-select'), preset = quick.value as QuickSelect | '';
+  quick.value = ''; if (!preset) return;
+  selectedHistory.clear(); for (const group of quickSelection(visibleHistory(state?.storage), preset)) selectedHistory.add(group.id);
+  renderStorageHistories(state?.storage);
+};
 el('storage-history-preview').onclick = () => send('previewHistoryDeletion', { ids: [...selectedHistory] });
 el('storage-history-cancel').onclick = () => send('storage');
 // "Clean up…" opens a category chooser; the extension previews only the chosen kinds.
@@ -874,6 +880,14 @@ function visibleHistory(storage: UsageDashboardState['storage']) {
   const project = el<HTMLSelectElement>('storage-project').value, kind = el<HTMLSelectElement>('storage-kind').value;
   return (storage?.histories ?? []).filter(group => (!project || group.projectId === project) && (!kind || group.kind === kind));
 }
+type QuickSelect = 'space' | 'week' | 'month';
+type StoredHistoryRow = NonNullable<NonNullable<UsageDashboardState['storage']>['histories']>[number];
+/** Presets replace the selection within the current filters. "Space" takes the largest histories that together free 80% of what the visible ones can. */
+function quickSelection(groups: StoredHistoryRow[], preset: QuickSelect) {
+  if (preset !== 'space') { const cutoff = Date.now() - (preset === 'week' ? 7 : 30) * 86_400_000; return groups.filter(group => group.updatedAt < cutoff); }
+  const ranked = groups.filter(group => group.reclaimable > 0).sort((a, b) => b.reclaimable - a.reclaimable), goal = ranked.reduce((sum, group) => sum + group.reclaimable, 0) * 0.8;
+  let freed = 0; return ranked.filter(group => { const take = freed < goal; freed += group.reclaimable; return take; });
+}
 function renderStorageHistories(storage: UsageDashboardState['storage']) {
   const projectFilter = el<HTMLSelectElement>('storage-project'), kindFilter = el<HTMLSelectElement>('storage-kind');
   // Deletion progress has its own renderer; don't rebuild the history list on every tick.
@@ -888,11 +902,11 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
   for (const [id, name] of new Map(groups.map(group => [group.projectId, group.project]))) projectFilter.add(new Option(name, id));
   if ([...projectFilter.options].some(option => option.value === project)) projectFilter.value = project;
   const visible = visibleHistory(storage), selected = groups.filter(group => selectedHistory.has(group.id));
-  projectFilter.disabled = kindFilter.disabled = locked;
+  projectFilter.disabled = kindFilter.disabled = locked; el<HTMLSelectElement>('storage-quick-select').disabled = locked || !visible.length;
   el<HTMLButtonElement>('storage-select-visible').disabled = locked || !visible.length;
   el<HTMLButtonElement>('storage-clear-selection').disabled = locked || !selected.length;
   el<HTMLButtonElement>('storage-history-preview').disabled = locked || !selected.length;
-  el('storage-selection').textContent = selected.length ? `${selected.length} selected · ${selected.reduce((sum, group) => sum + group.count, 0)} restore points` : 'No history selected';
+  el('storage-selection').textContent = selected.length ? `${selected.length} selected · ${historyCounts(selected)} · frees at least ${fileSize(selected.reduce((sum, group) => sum + group.reclaimable, 0))}` : 'No history selected';
   const list = el('storage-histories'); list.replaceChildren();
   if (busy && !storage?.histories) loadingRows(list, 3);
   else if (!visible.length) list.append(node('p', groups.length ? 'No restore history matches these filters.' : blocked ? 'Restore history could not be read. Refresh to try again.' : 'No saved restore history yet. New messages in AgentTandem create checkpoints.', 'storage-empty'));
@@ -906,24 +920,27 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
       document.querySelector<HTMLInputElement>(`input[data-history-id="${group.id}"]`)?.focus();
     };
     const copy = node('span', undefined, 'storage-history-copy');
-    copy.append(node('strong', group.label), node('small', group.project), node('small', `${group.kind === 'undo' ? 'Restore backup' : `${group.count} message checkpoint${group.count === 1 ? '' : 's'}`} · Last saved ${new Date(group.updatedAt).toLocaleString()}`));
-    const bytes = node('span', fileSize(group.bytes), 'storage-history-size'); bytes.title = 'Referenced snapshot size; shared data may stay after deletion.';
+    const detail = group.kind === 'tracking' ? 'Deleting stops change tracking for this project · Last scanned' : `${group.kind === 'undo' ? 'Restore backup' : `${group.count} message checkpoint${group.count === 1 ? '' : 's'}`} · Last saved`;
+    copy.append(node('strong', group.label), node('small', group.project), node('small', `${detail} ${new Date(group.updatedAt).toLocaleString()}`));
+    const bytes = node('span', fileSize(group.reclaimable), 'storage-history-size'); bytes.append(node('small', `of ${fileSize(group.bytes)} referenced`));
+    bytes.title = 'Space freed by deleting only this history. Data shared with other history or Review stays; deleting those together can free more.';
     row.append(checkbox, copy, bytes); list.append(row);
   }
   const preview = storage?.historyPlan; el('storage-history-plan').hidden = !preview;
   el<HTMLButtonElement>('storage-history-delete').disabled = blocked || !preview;
   el<HTMLButtonElement>('storage-history-cancel').disabled = busy;
   if (preview) {
-    const count = preview.histories.reduce((sum, group) => sum + group.count, 0);
     const kinds = preview.kinds, lost = kinds ? [kinds.includes('checkpoints') && 'every message checkpoint', kinds.includes('undo') && 'every restore backup'].filter((item): item is string => !!item) : [];
+    const tracking = preview.histories.filter(group => group.kind === 'tracking').length;
+    const stops = tracking ? `Change tracking stops in ${plural(tracking, 'project')}; turn it on again in Review to capture a new baseline. ` : '';
     el('storage-history-plan-heading').textContent = kinds ? `Clean up ${joinWords(kinds.map(kind => cleanKindLabels[kind].toLowerCase()))}` : 'Delete selected restore history';
     el('storage-history-delete-label').textContent = kinds ? 'Clean up' : 'Delete history';
-    el('storage-history-plan-summary').textContent = `${count} restore points · ${fileSize(preview.bytes)} reclaimable · ${preview.files.length} snapshot files`;
+    el('storage-history-plan-summary').textContent = `${historyCounts(preview.histories)} · ${fileSize(preview.bytes)} reclaimable · ${preview.files.length} snapshot files`;
     el('storage-history-impact').textContent = kinds
-      ? `${lost.length ? `${capitalize(joinWords(lost))} will be permanently unavailable. ` : ''}${kinds.includes('unused') ? 'Unused snapshots are removed. ' : ''}Your code, chat messages, pending review and tracking baselines stay as they are.`
-      : 'The selected checkpoints and restore backups will be permanently unavailable. Your code and chat messages stay as they are. Shared data still needed by Review or other checkpoints is kept.';
+      ? `${lost.length ? `${capitalize(joinWords(lost))} will be permanently unavailable. ` : ''}${stops}${kinds.includes('unused') ? 'Unused snapshots are removed. ' : ''}Your code, chat messages${tracking ? ' and pending review stay' : ', pending review and tracking baselines stay'} as they are.`
+      : `${preview.histories.some(group => group.kind !== 'tracking') ? 'The selected checkpoints and restore backups will be permanently unavailable. ' : ''}${stops}Your code, chat messages and pending review stay as they are. Shared data still needed by Review or other checkpoints is kept.`;
     const owners = el('storage-history-plan-groups'); owners.replaceChildren();
-    for (const group of preview.histories) owners.append(node('li', `${group.project} · ${group.label} · ${group.count} restore points`));
+    for (const group of preview.histories) owners.append(node('li', `${group.project} · ${group.label} · ${group.kind === 'tracking' ? 'stops tracking' : `${group.count} restore points`}`));
     const files = el('storage-history-plan-files'); files.replaceChildren();
     for (const file of preview.files) files.append(node('li', `${file.relative} · ${fileSize(file.bytes)}`));
     if (!preview.files.length) files.append(node('li', 'These snapshots are shared with retained history or Review. Only the selected restore points will be removed.'));
@@ -936,7 +953,7 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
   const result = el('storage-history-result'); result.replaceChildren();
   if (storage?.historyResult) {
     const r = storage.historyResult;
-    result.append(node('p', `Deleted ${r.checkpointsRemoved} restore points · ${fileSize(r.bytes)} freed${r.skipped ? ` · ${r.skipped} changed or newly protected files kept` : ''}.`));
+    result.append(node('p', `Deleted ${r.checkpointsRemoved} restore points${r.trackingStopped ? ` · stopped change tracking in ${plural(r.trackingStopped, 'project')}` : ''} · ${fileSize(r.bytes)} freed${r.skipped ? ` · ${r.skipped} changed or newly protected files kept` : ''}.`));
     if (r.failures.length) { const failures = node('ul'); for (const failure of r.failures) failures.append(node('li', failure)); result.append(node('p', 'Some data could not be deleted:'), failures); }
   }
 }
@@ -950,14 +967,19 @@ function renderStorageProgress(prefix: 'storage-cleanup' | 'storage-history', st
   const phase = el(`${prefix}-progress-phase`); if (phase.textContent !== storageProgressPhases[progress.phase]) phase.textContent = storageProgressPhases[progress.phase];
   el(`${prefix}-progress-count`).textContent = counted ? `${Math.round(progress.done / progress.total * 100)}% · ${progress.done} / ${progress.total} files · ${fileSize(progress.bytes)} of ${fileSize(progress.totalBytes)}` : progress.total ? `${progress.total} files · ${fileSize(progress.totalBytes)}` : '';
 }
-const cleanKindLabels: Record<CleanupKind, string> = { checkpoints: 'Message checkpoints', undo: 'Restore backups', unused: 'Unused snapshots' };
+const cleanKindLabels: Record<CleanupKind, string> = { checkpoints: 'Message checkpoints', undo: 'Restore backups', tracking: 'Change tracking baselines', unused: 'Unused snapshots' };
+/** Restore points, plus tracking baselines when any are included (they hold no restore points). */
+function historyCounts(groups: StoredHistoryRow[]) {
+  const tracking = groups.filter(group => group.kind === 'tracking').length;
+  return `${groups.reduce((sum, group) => sum + group.count, 0)} restore points${tracking ? ` · ${plural(tracking, 'tracking baseline')}` : ''}`;
+}
 const joinWords = (words: string[]) => words.length < 2 ? words[0] ?? '' : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`;
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 function cleanKindSummary(storage: UsageDashboardState['storage'], kind: CleanupKind): { detail: string; bytes?: number; available: boolean } {
   if (kind === 'unused') { const files = storage?.cleanable?.files ?? 0; return { detail: `${plural(files, 'unused file')} · older than 10 min`, bytes: storage?.cleanable?.bytes, available: files > 0 }; }
   const groups = (storage?.histories ?? []).filter(group => group.kind === kind), points = groups.reduce((sum, group) => sum + group.count, 0);
-  return { detail: kind === 'checkpoints' ? `${plural(points, 'restore point')} in ${plural(groups.length, 'conversation')}` : plural(groups.length, 'backup'), bytes: storage?.histories ? groups.reduce((sum, group) => sum + group.bytes, 0) : undefined, available: groups.length > 0 };
+  return { detail: kind === 'checkpoints' ? `${plural(points, 'restore point')} in ${plural(groups.length, 'conversation')}` : kind === 'tracking' ? `${plural(groups.length, 'project')} · stops change tracking` : plural(groups.length, 'backup'), bytes: storage?.histories ? groups.reduce((sum, group) => sum + group.bytes, 0) : undefined, available: groups.length > 0 };
 }
 function chosenCleanKinds(storage: UsageDashboardState['storage']) {
   return (Object.keys(cleanKindLabels) as CleanupKind[]).filter(kind => cleanKinds.has(kind) && cleanKindSummary(storage, kind).available);
