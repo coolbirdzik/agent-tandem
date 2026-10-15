@@ -44,8 +44,12 @@ try {
   await capture('review', `${panel}/?groups=1`, 1100, 900);
   await capture('chat', `${panel}/`, 900, 1100);
   await capture('history', `${panel}/?history=1`, 900, 760);
-  await capture('dashboard', `${settings}/?accounts=1`, 1440, 1680);
-  await capture('storage', `${settings}/?storage=1`, 1440, 1280);
+  await capture('dashboard', `${settings}/?accounts=1`, 1440, 1400);
+  await capture('token-dashboard', `${settings}/?accounts=1&view=all&range=month`, 1440, 1696);
+  await capture('accounts', `${settings}/?accounts=1&page=accounts`, 1440, 1080);
+  await capture('account-switch', `${settings}/?accounts=1&switch=1`, 1440, 1080);
+  await capture('preferences', `${settings}/?page=preferences`, 1200, 900);
+  await capture('storage', `${settings}/?storage=1`, 1440, 1480);
   await copyFile(path.join(root, 'artifacts/review-webview-marketplace.png'), path.join(output, 'editor-diff.png'));
   await copyFile(path.join(root, 'artifacts/readme-image-diff-marketplace.png'), path.join(output, 'image-diff.png'));
   await copyFile(path.join(root, 'artifacts/review-agent-changes-marketplace.png'), path.join(output, 'agent-changes.png'));

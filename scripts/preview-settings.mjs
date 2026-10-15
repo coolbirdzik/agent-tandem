@@ -4,8 +4,9 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 await mkdir('artifacts', { recursive: true });
-await build({ entryPoints: ['src/host/settings-html.ts'], outfile: 'artifacts/settings-html.cjs', bundle: true, platform: 'node', format: 'cjs' });
+await build({ entryPoints: { 'settings-html': 'src/host/settings-html.ts', 'api-pricing': 'src/core/api-pricing.ts' }, outdir: 'artifacts', outExtension: { '.js': '.cjs' }, bundle: true, platform: 'node', format: 'cjs' });
 const { settingsHtml } = createRequire(import.meta.url)('../artifacts/settings-html.cjs');
+const { apiCost } = createRequire(import.meta.url)('../artifacts/api-pricing.cjs');
 const demo = process.argv.includes('--demo');
 const demoDate = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Saigon' }).format(Date.now());
 const data = demo ? {
@@ -36,17 +37,24 @@ if (demo) state.quotaHistory = ['Codex', 'Claude'].flatMap(provider => {
 });
 // Optional fully synthetic fixtures for account-filter UI verification. Never
 // relabel the user's real historical tokens with demonstration identities.
-const demoDay = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+const demoDay = demoDate;
 function demoRow(provider, email, total) {
   const method = provider === 'Codex' ? 'ChatGPT' : 'Claude account', account = { id: JSON.stringify([provider, method, email, '']), provider, email, method };
-  return { day: demoDay, provider, model: 'Demo model', account, input: total - 1000, output: 1000, cacheRead: 10000, cacheWrite: 0, reasoning: 0, total, requests: 1 };
+  return { day: demoDay, provider, model: provider === 'Codex' ? 'gpt-5.2-codex' : 'claude-sonnet-4-6', account, input: total - 1000, output: 1000, cacheRead: 10000, cacheWrite: 0, reasoning: 0, total, requests: 1 };
 }
-const accountDays = [demoRow('Codex', 'codex@example.test', 80000), demoRow('Codex', 'second@example.test', 40000), demoRow('Claude', 'claude@example.test', 60000), { ...demoRow('Codex', 'unknown@example.test', 20000), account: undefined }];
+const accountRows = [demoRow('Codex', 'codex@example.test', 80000), demoRow('Codex', 'work@example.test', 40000), demoRow('Claude', 'claude@example.test', 60000), { ...demoRow('Codex', 'unknown@example.test', 20000), account: undefined }];
+const demoDays = Array.from({ length: 7 }, (_, index) => new Date(Date.parse(`${demoDay}T12:00:00Z`) - (6 - index) * 86400000).toISOString().slice(0, 10));
+const accountDays = demoDays.flatMap((day, index) => accountRows.map(row => {
+  const total = row.total + index * 6000;
+  const value = { ...row, day, input: total - 1000, total };
+  return { ...value, cost: apiCost(value.provider, value.model, value) };
+}));
 const accountState = { ...state, accounts: { ...state.accounts, Codex: { ...state.accounts.Codex, usage: { source: 'API', status: 'available', accountId: accountDays[0].account.id, updatedAt: now,
-  summary: { lifetimeTokens: 9000000, peakDailyTokens: 1200000, longestRunningTurnSec: 540, currentStreakDays: 3, longestStreakDays: 12 }, daily: [{ day: demoDay, tokens: 700000 }] } } },
+  summary: { lifetimeTokens: 9000000, peakDailyTokens: 1200000, longestRunningTurnSec: 540, currentStreakDays: 7, longestStreakDays: 12 }, daily: demoDays.map((day, index) => ({ day, tokens: 400000 + index * 50000 })) } } },
   data: { ...data, days: accountDays, recent: accountDays.map(row => ({ timestamp: now - 60000, provider: row.provider, total: row.total, ...(row.account ? { accountId: row.account.id } : {}) })) } };
-accountState.data.conversations = accountDays.map((row, index) => ({ key: `${row.provider}:demo-${index}`, id: `demo-${index}`, provider: row.provider,
-  project: index % 2 ? 'L:/Code/demo-desktop' : 'L:/Code/demo-dashboard', firstAt: now - (index + 1) * 20 * 60000, lastAt: now, days: [row] }));
+accountState.data.conversations = accountRows.map((row, index) => ({ key: `${row.provider}:demo-${index}`, id: `demo-${index}`, provider: row.provider,
+  project: index % 2 ? 'L:/Code/demo-desktop' : 'L:/Code/demo-dashboard', firstAt: now - 6 * 86400000, lastAt: now,
+  days: accountDays.filter(day => day.provider === row.provider && day.account?.id === row.account?.id) }));
 accountState.conversationTitles = Object.fromEntries(['Add account switching', 'Improve review navigation', 'Fix dashboard filters', 'Update project docs'].map((title, index) => [accountState.data.conversations[index].key, title]));
 accountState.managedAccounts = [
   { provider: 'Codex', label: 'Personal', email: 'codex@example.test', plan: 'plus', used: 25, active: true },
@@ -94,6 +102,8 @@ const server = createServer(async (request, response) => {
       html = html.replace('<body ', `<body class="vscode-${light ? 'light' : 'dark'}" `).replace('</head>', `<link rel="stylesheet" href="/theme.css${light ? '?theme=light' : ''}"><script nonce="preview">${bootstrap}</script></head>`);
       if (url.searchParams.get('storage') === '1') html = html.replace('</body>', '<script nonce="preview">setTimeout(()=>document.querySelector("[data-page=storage]").click(),1000)</script></body>');
       if (url.searchParams.get('page') === 'accounts' || url.searchParams.get('switch') === '1') html = html.replace('</body>', '<script nonce="preview">document.querySelector("[data-page=accounts]").click()</script></body>');
+      if (url.searchParams.get('page') === 'preferences') html = html.replace('</body>', '<script nonce="preview">document.querySelector("[data-page=preferences]").click()</script></body>');
+      if (url.searchParams.get('view') === 'all') html = html.replace('</body>', `<script nonce="preview">setTimeout(()=>{const view=document.getElementById('dashboard-view');view.value='all';view.dispatchEvent(new Event('change'));const range=document.getElementById('filter-range');range.value=${JSON.stringify(url.searchParams.get('range') === 'month' ? 'month' : 'today')};range.dispatchEvent(new Event('change'))},1000)</script></body>`);
       response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(html); return;
     }
     if (pathname === '/theme.css') { response.setHeader('Content-Type', 'text/css'); response.end(light ? lightTheme : theme); return; }

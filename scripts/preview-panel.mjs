@@ -14,7 +14,7 @@ const state = {
   selectedModels: { Codex: 'gpt-5.2-codex', Claude: 'sonnet' }, accessModes: { Codex: 'full-access', Claude: 'default' },
   modelCatalogs: { Codex: { status: 'ready', choices: [{ id: 'gpt-5.2-codex', label: 'gpt-5.2-codex', reasoningEfforts: [{id:'low',label:'Low'},{id:'medium',label:'Medium'},{id:'high',label:'High'},{id:'xhigh',label:'Extra high'}] }, { id: 'gpt-5.2', label: 'gpt-5.2' }] }, Claude: { status: 'ready', choices: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: [{id:'low',label:'Low'},{id:'medium',label:'Medium'},{id:'high',label:'High'}] }, { id: 'opus', label: 'Opus' }] } },
   accounts: { Codex: {status:'ready',account:{signedIn:true,email:'demo@example.test',method:'ChatGPT',plan:'plus'},quota:{status:'available',windows:[{id:'5h',label:'5h',usedPercent:25},{id:'7d',label:'7d',usedPercent:82}]} } },
-  conversations: [conversation], conversation: { conversation, usage: {usedTokens:46000,windowTokens:200000,cachedTokens:42000,cacheTtlMs:300000,cacheExpiresAt:Date.now()+300000}, messages: [
+  conversations: [conversation], conversation: { conversation, usage: {usedTokens:46000,windowTokens:200000,cachedTokens:42000}, messages: [
     { id: 'u1', role: 'user', text: 'Update the landing page cover with the new mountain artwork and improve the mobile layout.' },
     { id: 'tool1', role: 'tool', toolName: 'Read', text: 'src/pages/home.tsx\nmedia/home.css\nassets/cover.png' },
     { id: 'a1', role: 'assistant', text: 'Updated the cover artwork and adjusted the spacing for smaller screens.\n\nThe saved changes are ready to review: compare the old and new image, then accept or reject the whole file.' },
