@@ -12,6 +12,8 @@ import { statusBarPreferences, type StatusBarField, type StatusBarPreferences } 
 import { ACCOUNT_PROVIDERS, accountProviderName, accountProviderDetail, isChatAccount, type AccountProvider } from './core/account-providers';
 import { validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution';
 import type { CleanupKind } from './core/storage';
+import { CheckboxRangeSelection } from './ui/checkbox-range';
+import { conversationTime, matchesConversation, type ConversationFilter } from './core/conversation-filter';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 const api = acquireVsCodeApi(), send = (type: string, value?: unknown) => api.postMessage({ type, value });
@@ -27,6 +29,7 @@ const compact = (value: number) => compactFormat.format(value);
 const money = (value: number) => moneyFormat.format(value);
 const costLabel = (cost: ApiCost) => !cost.pricedTokens && cost.unpricedTokens ? 'Unpriced' : `${money(cost.usd)}${cost.unpricedTokens ? ' + unpriced' : ''}`;
 let state: UsageDashboardState | undefined, initialized = false, currentPage = 'dashboard';
+let currentStoragePage = 'conversations', nativeScanRequested = false;
 let periodLimit = 60, modelSignature = '', accountSignature = '';
 const collapsedPeriods = new Set<string>(); let periodsCollapsed = false, modelSlots = new Map<string, number>();
 let conversationLimit = 20, selectedUsageConversation: string | undefined;
@@ -135,10 +138,22 @@ function attributionCaption(days: NonNullable<UsageDashboardState['data']>['days
 }
 function page(value: string) {
   currentPage = value;
+  if (value === 'storage') storagePage(currentStoragePage);
   el('dashboard').hidden = value !== 'dashboard'; el('preferences').hidden = value !== 'preferences'; el('storage').hidden = value !== 'storage';
   el('managed-accounts').hidden = value !== 'accounts';
   document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.page === value)));
 }
+function storagePage(value: string) {
+  currentStoragePage = value;
+  el('storage-conversations-page').hidden = value !== 'conversations';
+  el('storage-extension-summary').hidden = value === 'conversations';
+  el('storage-restore-page').hidden = value !== 'restore'; el('storage-unused-page').hidden = value !== 'unused';
+  document.querySelectorAll<HTMLButtonElement>('[data-storage-page]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storagePage === value)));
+  if (value === 'conversations' && (!state?.conversationCleanup || state.conversationCleanup.status === 'idle') && !nativeScanRequested) {
+    nativeScanRequested = true; send('scanConversations');
+  }
+}
+document.querySelectorAll<HTMLButtonElement>('[data-storage-page]').forEach(button => { button.onclick = () => storagePage(button.dataset.storagePage!); });
 document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(button => { button.onclick = () => { page(button.dataset.page!); if (button.dataset.page === 'storage') send('storage'); if (button.dataset.page === 'accounts') send('accountAction', { action: 'refresh' }); }; });
 el('accounts-refresh').onclick = () => send('accountAction', { action: 'refresh' });
 el('account-switch-view').onclick = showSwitchDialog;
@@ -173,16 +188,66 @@ el('dashboard-view').onchange = () => {
 el('storage-refresh').onclick = () => send('storage'); el('storage-reveal').onclick = () => send('revealStorage');
 el('storage-preview').onclick = () => send('previewCleanup'); el('storage-cancel').onclick = () => send('storage');
 el('storage-clean').onclick = () => { if (state?.storage?.plan) send('cleanup', { token: state.storage.plan.token }); };
+const selectedNativeHistory = new Set<string>();
+const nativeHistoryRange = new CheckboxRangeSelection();
+let nativeHistoryLimit = 100;
+let nativeHistoryPreviewToken: string | undefined;
+let nativeHistoryOldestFirst = true;
+let nativeDeletePending = false;
+let nativeListSignature = '';
+// The result dialog follows one deletion from the click until the user closes it.
+let nativeDialog: { scope: string; startedAt: number; finishedAt?: number } | undefined;
+function resetNativeSelection() { selectedNativeHistory.clear(); nativeHistoryRange.reset(); nativeHistoryLimit = 100; renderNativeHistory(state?.conversationCleanup); }
+document.querySelectorAll<HTMLButtonElement>('[data-native-preset]').forEach(button => { button.onclick = () => {
+  const preset = button.dataset.nativePreset;
+  el<HTMLSelectElement>('native-history-age').value = preset === 'old' ? '30' : '0';
+  el<HTMLInputElement>('native-history-before').value = ''; el<HTMLSelectElement>('native-history-year').value = '';
+  el<HTMLSelectElement>('native-history-archive').value = preset === 'archived' ? 'archived' : '';
+  if (preset === 'archived') el<HTMLSelectElement>('native-history-provider').value = 'Codex';
+  resetNativeSelection();
+}; });
+el('native-history-scan').onclick = el('native-history-cancel').onclick = () => send('scanConversations');
+for (const id of ['native-history-provider', 'native-history-age', 'native-history-before', 'native-history-year', 'native-history-archive', 'native-history-search']) {
+  el(id).addEventListener(id.endsWith('search') ? 'input' : 'change', () => {
+    if (id === 'native-history-before' && el<HTMLInputElement>(id).value) el<HTMLSelectElement>('native-history-age').value = '0';
+    if (id === 'native-history-age') el<HTMLInputElement>('native-history-before').value = '';
+    resetNativeSelection();
+  });
+}
+el('native-history-select').onclick = () => { nativeHistoryRange.reset(); for (const row of visibleNativeHistory(state?.conversationCleanup).slice(0, nativeHistoryLimit)) if (!row.blocked) selectedNativeHistory.add(row.key); renderNativeHistory(state?.conversationCleanup); };
+el('native-history-clear').onclick = () => { selectedNativeHistory.clear(); nativeHistoryRange.reset(); renderNativeHistory(state?.conversationCleanup); };
+el('native-history-more').onclick = () => { nativeHistoryLimit += 100; renderNativeHistory(state?.conversationCleanup); };
+function deleteNativeHistory(request: { keys: string[]; before: number } | { filter: ConversationFilter } | { token: string }, scope: string) {
+  if (nativeDeletePending || ('keys' in request && !request.keys.length) || !['ready'].includes(state?.conversationCleanup?.status ?? '')) return;
+  nativeDeletePending = true; nativeDialog = { scope, startedAt: Date.now() };
+  send('deleteConversations', request);
+  renderNativeHistory(state?.conversationCleanup);
+  const dialog = el<HTMLDialogElement>('native-cleanup-dialog');
+  if (!dialog.open) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
+}
+function hideNativeDialog() {
+  const dialog = el<HTMLDialogElement>('native-cleanup-dialog');
+  if (typeof dialog.close === 'function') dialog.close(); else dialog.removeAttribute('open');
+  // A finished run is dismissed for good; a running one can be hidden and keeps going.
+  if (nativeDialog?.finishedAt) nativeDialog = undefined;
+}
+el('native-cleanup-close').onclick = hideNativeDialog;
+el('native-cleanup-dialog').addEventListener('cancel', event => { event.preventDefault(); hideNativeDialog(); });
+el('native-history-preview').onclick = () => deleteNativeHistory({ keys: [...selectedNativeHistory], before: nativeHistoryFilter().before }, `${plural(selectedNativeHistory.size, 'selected conversation')}`);
+el('native-history-delete-matching').onclick = () => deleteNativeHistory({ filter: nativeHistoryFilter() }, nativeFilterDescription());
+el('native-history-sort').onclick = () => { nativeHistoryOldestFirst = !nativeHistoryOldestFirst; nativeHistoryRange.reset(); renderNativeHistory(state?.conversationCleanup); };
+el('native-history-delete').onclick = () => { const plan = state?.conversationCleanup?.plan; if (plan) deleteNativeHistory({ token: plan.token }, plural(plan.conversations.length, 'reviewed conversation')); };
 const selectedHistory = new Set<string>();
+const historyRange = new CheckboxRangeSelection();
 let historySignature = '';
 let historyPreviewToken: string | undefined;
-el('storage-project').onchange = el('storage-kind').onchange = () => renderStorageHistories(state?.storage);
-el('storage-select-visible').onclick = () => { for (const group of visibleHistory(state?.storage)) selectedHistory.add(group.id); renderStorageHistories(state?.storage); };
-el('storage-clear-selection').onclick = () => { selectedHistory.clear(); renderStorageHistories(state?.storage); };
+el('storage-project').onchange = el('storage-kind').onchange = () => { historyRange.reset(); renderStorageHistories(state?.storage); };
+el('storage-select-visible').onclick = () => { historyRange.reset(); for (const group of visibleHistory(state?.storage)) selectedHistory.add(group.id); renderStorageHistories(state?.storage); };
+el('storage-clear-selection').onclick = () => { selectedHistory.clear(); historyRange.reset(); renderStorageHistories(state?.storage); };
 el('storage-quick-select').onchange = () => {
   const quick = el<HTMLSelectElement>('storage-quick-select'), preset = quick.value as QuickSelect | '';
   quick.value = ''; if (!preset) return;
-  selectedHistory.clear(); for (const group of quickSelection(visibleHistory(state?.storage), preset)) selectedHistory.add(group.id);
+  selectedHistory.clear(); historyRange.reset(); for (const group of quickSelection(visibleHistory(state?.storage), preset)) selectedHistory.add(group.id);
   renderStorageHistories(state?.storage);
 };
 el('storage-history-preview').onclick = () => send('previewHistoryDeletion', { ids: [...selectedHistory] });
@@ -913,6 +978,7 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
   for (const [id, name] of new Map(groups.map(group => [group.projectId, group.project]))) projectFilter.add(new Option(name, id));
   if ([...projectFilter.options].some(option => option.value === project)) projectFilter.value = project;
   const visible = visibleHistory(storage), selected = groups.filter(group => selectedHistory.has(group.id));
+  const rangeRows = visible.map(group => ({ key: group.id, disabled: locked }));
   projectFilter.disabled = kindFilter.disabled = locked; el<HTMLSelectElement>('storage-quick-select').disabled = locked || !visible.length;
   el<HTMLButtonElement>('storage-select-visible').disabled = locked || !visible.length;
   el<HTMLButtonElement>('storage-clear-selection').disabled = locked || !selected.length;
@@ -925,11 +991,12 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
     const row = node('label', undefined, 'storage-history-row'), checkbox = node('input');
     checkbox.type = 'checkbox'; checkbox.checked = selectedHistory.has(group.id); checkbox.disabled = locked;
     checkbox.setAttribute('aria-label', `Select ${group.label} in ${group.project}`); checkbox.dataset.historyId = group.id;
-    checkbox.onchange = () => {
-      if (checkbox.checked) selectedHistory.add(group.id); else selectedHistory.delete(group.id);
+    historyRange.bind(checkbox, row, group.id, rangeRows, selectedHistory, () => {
+      const scroll = list.scrollTop;
       renderStorageHistories(state?.storage);
-      document.querySelector<HTMLInputElement>(`input[data-history-id="${group.id}"]`)?.focus();
-    };
+      list.scrollTop = scroll;
+      [...list.querySelectorAll<HTMLInputElement>('input')].find(input => input.dataset.historyId === group.id)?.focus({ preventScroll: true });
+    });
     const copy = node('span', undefined, 'storage-history-copy');
     const detail = group.kind === 'tracking' ? 'Deleting stops change tracking for this project · Last scanned' : `${group.kind === 'undo' ? 'Restore backup' : `${group.count} message checkpoint${group.count === 1 ? '' : 's'}`} · Last saved`;
     copy.append(node('strong', group.label), node('small', group.project), node('small', `${detail} ${new Date(group.updatedAt).toLocaleString()}`));
@@ -1020,7 +1087,161 @@ function renderCleanChoices(storage: UsageDashboardState['storage']) {
     row.append(checkbox, copy, bytes); list.append(row);
   });
 }
+function nativeHistoryCutoff() {
+  const age = Number(el<HTMLSelectElement>('native-history-age').value), date = el<HTMLInputElement>('native-history-before').value;
+  return Math.min(Date.now() - age * 86400000, date ? new Date(`${date}T00:00:00`).getTime() : Infinity);
+}
+// A year is a local calendar year: January 1 inclusive to the next January 1 exclusive.
+const yearStart = (year: number) => new Date(year, 0, 1).getTime();
+function nativeHistoryFilter(): ConversationFilter {
+  const provider = el<HTMLSelectElement>('native-history-provider').value, archive = el<HTMLSelectElement>('native-history-archive').value, query = el<HTMLInputElement>('native-history-search').value;
+  const year = Number(el<HTMLSelectElement>('native-history-year').value) || undefined, cutoff = nativeHistoryCutoff();
+  return { before: year ? Math.min(cutoff, yearStart(year + 1)) : cutoff, ...(year ? { after: yearStart(year) } : {}), ...(provider ? { provider: provider as ConversationProvider } : {}), ...(archive ? { archived: archive === 'archived' } : {}), ...(query.trim() ? { query } : {}) };
+}
+function nativeFilterDescription() {
+  const filter = nativeHistoryFilter(), age = el<HTMLSelectElement>('native-history-age').value, date = el<HTMLInputElement>('native-history-before').value;
+  return ['All matching', filter.provider === 'Claude' ? 'Claude Code' : filter.provider ?? 'both agents',
+    date ? `last message before ${new Date(`${date}T00:00:00`).toLocaleDateString()}` : age === '0' ? '' : `last message ${age}+ days ago`,
+    el<HTMLSelectElement>('native-history-year').value ? `year ${el<HTMLSelectElement>('native-history-year').value}` : date || age !== '0' ? '' : 'any time',
+    filter.archived === undefined ? '' : filter.archived ? 'archived' : 'unarchived', filter.query ? `“${filter.query.trim()}”` : ''].filter(Boolean).join(' · ');
+}
+let nativeYearSignature = '';
+/** Years with local history, newest first; the chosen year stays listed even after its chats are deleted. */
+function renderNativeYears(rows: NonNullable<UsageDashboardState['conversationCleanup']>['conversations'] & {}) {
+  const select = el<HTMLSelectElement>('native-history-year'), chosen = select.value, counts = new Map<number, number>();
+  for (const row of rows) { const year = new Date(conversationTime(row)).getFullYear(); counts.set(year, (counts.get(year) ?? 0) + 1); }
+  if (chosen && !counts.has(Number(chosen))) counts.set(Number(chosen), 0);
+  const years = [...counts].sort((a, b) => b[0] - a[0]), signature = JSON.stringify(years);
+  if (signature === nativeYearSignature) return;
+  nativeYearSignature = signature;
+  select.replaceChildren(new Option('All years', ''), ...years.map(([year, count]) => new Option(`${year} (${count})`, String(year))));
+  select.value = chosen;
+}
+function visibleNativeHistory(value: UsageDashboardState['conversationCleanup']) {
+  const filter = nativeHistoryFilter();
+  return (value?.conversations ?? []).filter(row => matchesConversation(row, filter))
+    .sort((a, b) => (nativeHistoryOldestFirst ? 1 : -1) * (conversationTime(a) - conversationTime(b)) || a.key.localeCompare(b.key));
+}
+function renderNativeDialog(value: UsageDashboardState['conversationCleanup']) {
+  if (!nativeDialog) return;
+  const dialog = el('native-cleanup-dialog'), details = el('native-cleanup-details'), progress = el<HTMLProgressElement>('native-cleanup-progress');
+  const finished = !nativeDeletePending && (value?.status === 'ready' || value?.status === 'error');
+  if (finished) nativeDialog.finishedAt ??= Date.now();
+  el('native-cleanup-scope').textContent = nativeDialog.scope;
+  details.replaceChildren();
+  const section = (kind: string, title: string, items: { title: string; detail?: string }[], open = false) => {
+    if (!items.length) return;
+    const box = node('details'), list = node('ul'); box.dataset.kind = kind; box.open = open; box.append(node('summary', `${title} (${items.length})`));
+    for (const item of items) { const row = node('li'); row.append(node('span', item.title)); if (item.detail) row.append(node('small', item.detail)); list.append(row); }
+    box.append(list); details.append(box);
+  };
+  let status = 'running', icon = 'loading account-switch-spinner', title = 'Deleting conversations', summary: string;
+  if (!finished) {
+    const dates = value?.dates, deleting = value?.status === 'cleaning' && !dates && value.total;
+    if (!deleting) title = 'Preparing cleanup';
+    summary = dates ? `Reading message dates · ${dates.done} / ${dates.total}. Matching uses the exact last message, so this finishes before anything is deleted.`
+      : deleting ? `Deleting conversations · ${value.done ?? 0} / ${value.total}…` : 'Finding every conversation to delete…';
+    if (dates?.total) progress.value = 100 * dates.done / dates.total; else if (deleting) progress.value = 100 * (value.done ?? 0) / value.total!; else progress.removeAttribute('value');
+  } else if (value?.status === 'error') {
+    status = 'error'; icon = 'error'; title = 'Cleanup failed'; summary = `${value.error ?? 'Conversation cleanup failed.'} Nothing more was deleted.`;
+  } else {
+    const result = value?.result, removed = result?.removed.length ?? 0, kept = result?.kept ?? [], titles = result?.titles ?? {};
+    const failures = result?.failures ?? [], skipped = result?.skipped ?? [];
+    status = failures.length ? 'error' : removed ? (kept.length || skipped.length ? 'warning' : 'success') : 'empty';
+    icon = failures.length ? 'error' : removed ? (status === 'warning' ? 'warning' : 'check') : 'info';
+    title = failures.length ? 'Cleanup finished with problems' : removed ? 'Cleanup complete' : 'Nothing was deleted';
+    summary = [removed ? `Deleted ${plural(removed, 'conversation')} and freed ${fileSize(result!.bytes)}.` : 'No conversation could be deleted.',
+      kept.length + skipped.length ? `${plural(kept.length + skipped.length, 'conversation')} kept.` : '', failures.length ? `${plural(failures.length, 'problem')} reported.` : ''].filter(Boolean).join(' ');
+    section('failures', 'Problems', failures.map(failure => ({ title: failure })), true);
+    section('kept', 'Kept', [...kept.map(row => ({ title: row.title, detail: row.reason })), ...skipped.map(key => ({ title: titles[key] ?? key, detail: 'Changed or became protected during cleanup.' }))], !removed || kept.length + skipped.length <= 5);
+    section('removed', 'Deleted', (result?.removed ?? []).map(key => ({ title: titles[key] ?? key })));
+  }
+  dialog.dataset.status = status; el('native-cleanup-icon').className = `codicon codicon-${icon}`;
+  el('native-cleanup-title').textContent = title; el('native-cleanup-summary').textContent = summary;
+  progress.hidden = finished;
+  el('native-cleanup-note').textContent = finished ? `Finished in ${Math.max(0.1, (nativeDialog.finishedAt! - nativeDialog.startedAt) / 1000).toFixed(1)}s` : 'You can hide this window while cleanup continues.';
+  el('native-cleanup-close').textContent = finished ? 'Done' : 'Hide';
+}
+function renderNativeHistory(value: UsageDashboardState['conversationCleanup']) {
+  const busy = value?.status === 'loading' || value?.status === 'cleaning' || nativeDeletePending, locked = busy || !!value?.plan;
+  const scanned = !!value?.conversations, all = value?.conversations ?? [], rows = visibleNativeHistory(value), visible = rows.slice(0, nativeHistoryLimit);
+  const selected = () => all.filter(row => selectedNativeHistory.has(row.key));
+  const keys = new Set(all.filter(row => !row.blocked).map(row => row.key));
+  if (scanned) for (const key of selectedNativeHistory) if (!keys.has(key)) selectedNativeHistory.delete(key);
+  for (const id of ['native-history-provider', 'native-history-age', 'native-history-before', 'native-history-year', 'native-history-archive', 'native-history-search', 'native-history-more', 'native-history-sort']) el<HTMLInputElement>(id).disabled = locked;
+  renderNativeYears(all);
+  el<HTMLButtonElement>('native-history-select').disabled = locked || !visible.some(row => !row.blocked && !selectedNativeHistory.has(row.key));
+  el<HTMLButtonElement>('native-history-clear').disabled = locked || !selectedNativeHistory.size;
+  el<HTMLButtonElement>('native-history-scan').disabled = busy;
+  const cannotDelete = locked || value?.status !== 'ready' || !!value?.errors?.length || !!value?.error;
+  el<HTMLButtonElement>('native-history-preview').disabled = cannotDelete || !selectedNativeHistory.size;
+  const matching = rows.filter(row => !row.blocked).length, deleteMatching = el<HTMLButtonElement>('native-history-delete-matching');
+  deleteMatching.disabled = cannotDelete || !matching;
+  // Pending dates use the newer file time, so reading them can only add matches.
+  deleteMatching.textContent = `Delete all matching (${matching}${value?.dates ? '+' : ''})`;
+  const sort = el('native-history-sort'); sort.textContent = `Last message ${nativeHistoryOldestFirst ? '↑' : '↓'}`;
+  sort.setAttribute('aria-label', `Last message, ${nativeHistoryOldestFirst ? 'oldest' : 'newest'} first. Click for ${nativeHistoryOldestFirst ? 'newest' : 'oldest'} first.`);
+  el<HTMLButtonElement>('native-history-delete').disabled = busy || !value?.plan;
+  el<HTMLButtonElement>('native-history-cancel').disabled = busy;
+  const age = el<HTMLSelectElement>('native-history-age').value, archive = el<HTMLSelectElement>('native-history-archive').value;
+  const preset = el<HTMLInputElement>('native-history-before').value || el<HTMLSelectElement>('native-history-year').value ? '' : archive === 'archived' && age === '0' ? 'archived' : archive === '' && age === '30' ? 'old' : archive === '' && age === '0' ? 'all' : '';
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-native-preset]')) { button.disabled = locked; button.setAttribute('aria-pressed', String(button.dataset.nativePreset === preset)); }
+  el('native-history-workspace').hidden = !scanned || !!value?.plan || value?.status === 'cleaning';
+  el('native-history-selection-bar').hidden = !scanned || !!value?.plan || value?.status === 'cleaning';
+  el('native-history-list').hidden = !!value?.plan || value?.status === 'cleaning';
+  el('native-history-overview').textContent = scanned ? `${plural(all.length, 'conversation')} · ${fileSize(all.reduce((sum, row) => sum + row.bytes, 0))} stored locally` : 'Your local Codex and Claude Code chats, across all projects.';
+  el('native-history-count').textContent = `${rows.length} ${rows.length === 1 ? 'match' : 'matches'}${visible.length < rows.length ? ` · first ${visible.length} shown` : ''}${rows.some(row => row.blocked) ? ` · ${rows.filter(row => row.blocked).length} protected` : ''}${value?.dates ? ` · reading message dates ${value.dates.done} / ${value.dates.total}…` : ''}`;
+  el('native-history-selection').textContent = selectedNativeHistory.size ? `${plural(selectedNativeHistory.size, 'conversation')} selected` : 'Choose conversations to remove';
+  el('native-history-selection-size').textContent = selectedNativeHistory.size ? `${fileSize(selected().reduce((sum, row) => sum + row.bytes, 0))} to remove` : 'Shift-click to select several in a row.';
+  el('native-history-roots').textContent = value ? `Codex: ${value.roots.Codex} · Claude Code: ${value.roots.Claude}` : '';
+  el('native-history-status').textContent = value?.status === 'cleaning' ? value.dates ? `Reading message dates · ${value.dates.done} / ${value.dates.total}…` : value.total ? `Deleting conversations · ${value.done ?? 0} / ${value.total}…` : 'Preparing cleanup…' : busy ? 'Reading local conversations…' : `${selectedNativeHistory.size} selected`;
+  el('native-history-status').classList.toggle('native-sr-only', !busy);
+  el('native-history-running').hidden = value?.status !== 'cleaning';
+  const progress = el<HTMLProgressElement>('native-history-progress');
+  if (value?.dates?.total) progress.value = 100 * value.dates.done / value.dates.total; else if (value?.total) progress.value = 100 * (value.done ?? 0) / value.total; else progress.removeAttribute('value');
+  const errors = el('native-history-errors'); errors.replaceChildren();
+  const issues = [...(value?.errors ?? []), ...(value?.error ? [value.error] : [])]; errors.hidden = !issues.length;
+  for (const error of issues) errors.append(node('p', error));
+  const signature = JSON.stringify([visible, scanned, busy, locked, !!value?.dates, [...selectedNativeHistory]]), list = el('native-history-list');
+  if (signature !== nativeListSignature) {
+    nativeListSignature = signature; const scroll = list.scrollTop; list.replaceChildren();
+    const rangeRows = visible.map(row => ({ key: row.key, disabled: locked || !!row.blocked }));
+    if (busy && !scanned) loadingRows(list, 4);
+    else if (!scanned || !rows.length) {
+      const empty = node('div', undefined, 'native-empty'), icon = node('span', undefined, `codicon codicon-${!scanned ? 'history' : 'search'}`); icon.setAttribute('aria-hidden', 'true');
+      empty.append(icon, node('strong', !scanned ? 'Your conversation history' : all.length ? 'No matching conversations' : 'No conversations to clean up'), node('p', !scanned ? 'Refresh to find old chats you can remove.' : all.length ? 'Try All chats, another agent or a different search.' : 'Local history will appear here after you use Codex or Claude Code.')); list.append(empty);
+    } else for (const row of visible) {
+      const label = node('label', undefined, 'storage-history-row native-conversation-row'), checkbox = node('input'); checkbox.type = 'checkbox'; checkbox.checked = selectedNativeHistory.has(row.key); checkbox.disabled = locked || !!row.blocked; checkbox.dataset.nativeKey = row.key;
+      checkbox.setAttribute('aria-label', `Select ${row.provider} conversation: ${row.title}`);
+      nativeHistoryRange.bind(checkbox, label, row.key, rangeRows, selectedNativeHistory, () => { renderNativeHistory(state?.conversationCleanup); [...list.querySelectorAll<HTMLInputElement>('input')].find(input => input.dataset.nativeKey === row.key)?.focus({ preventScroll: true }); });
+      const icon = node('img', undefined, 'native-provider-icon'); icon.src = (row.provider === 'Codex' ? document.body.dataset.codexIcon : document.body.dataset.claudeIcon) ?? ''; icon.alt = '';
+      const copy = node('span', undefined, 'storage-history-copy'), title = node('strong', row.title), meta = node('small');
+      title.title = row.title; const project = row.project.replace(/\\/g, '/').split('/').filter(Boolean).slice(-2).join('/');
+      meta.textContent = `${row.provider === 'Claude' ? 'Claude Code' : row.provider} · ${project}`; meta.title = row.project; copy.append(title, meta);
+      if (row.archived || row.blocked) { const badge = node('span', row.blocked ? 'Protected' : 'Archived', 'native-row-badge'); badge.title = row.blocked ?? 'Archived in Codex'; copy.append(badge); }
+      label.classList.toggle('native-protected', !!row.blocked);
+      const last = new Date(row.lastMessageAt ?? row.updatedAt);
+      const date = node('span', `${row.lastMessageAt === undefined ? '~ ' : ''}${last.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`, 'native-row-date');
+      date.title = `${row.lastMessageAt === undefined ? `File update time (${value?.dates ? 'still reading message dates' : 'message timestamp unavailable'})` : 'Last message'}: ${last.toLocaleString()}`;
+      label.append(checkbox, icon, copy, date, node('span', fileSize(row.bytes), 'storage-history-size')); list.append(label);
+    }
+    list.scrollTop = scroll;
+  }
+  el('native-history-more').hidden = locked || visible.length >= rows.length;
+  const plan = value?.plan; el('native-history-plan').hidden = !plan;
+  const conversations = el('native-history-plan-conversations'), files = el('native-history-plan-files'); conversations.replaceChildren(); files.replaceChildren();
+  if (plan) {
+    el('native-history-plan-summary').textContent = `${plural(plan.conversations.length, 'conversation')} · ${fileSize(plan.bytes)} to remove. Includes the subagent history listed below.`;
+    for (const row of plan.conversations) { const item = node('li'); item.append(node('strong', row.title), node('small', `${row.provider === 'Claude' ? 'Claude Code' : row.provider} · ${row.project}`)); conversations.append(item); for (const file of row.files) files.append(node('li', `${file.path} · ${fileSize(file.bytes)}`)); }
+  }
+  if (plan?.token !== nativeHistoryPreviewToken) {
+    nativeHistoryPreviewToken = plan?.token;
+    if (plan) { const heading = el('native-history-plan-heading'); heading.tabIndex = -1; el('native-history-plan').scrollIntoView?.({ block: 'nearest' }); heading.focus({ preventScroll: true }); }
+  }
+  renderNativeDialog(value);
+}
 function renderStorage(storage: UsageDashboardState['storage']) {
+  if (storage?.historyPlan && storage.historyPlan.token !== historyPreviewToken) storagePage('restore');
   renderCleanChoices(storage);
   renderStorageHistories(storage);
   renderStorageProgress('storage-cleanup', storage, !!storage?.plan); renderStorageProgress('storage-history', storage, !!storage?.historyPlan);
@@ -1054,9 +1275,40 @@ function renderStorage(storage: UsageDashboardState['storage']) {
     if (r.failures.length) { const list = node('ul'); for (const failure of r.failures) list.append(node('li', failure)); result.append(node('p', `${r.failures.length} files could not be removed:`), list); }
   }
 }
+const sinceLabel = (at: number) => {
+  const minutes = Math.round((Date.now() - at) / 60000);
+  return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} min ago` : minutes < 24 * 60 ? `${Math.round(minutes / 60)} h ago` : new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+/** Headline totals shown on every Storage tab: what agent history occupies now and what cleanup has reclaimed. */
+function renderStorageOverview(value: UsageDashboardState) {
+  const rows = value.conversationCleanup?.conversations, storage = value.storage?.total;
+  const parts = [
+    { label: 'Codex chats', color: 'var(--codex)', bytes: rows?.filter(row => row.provider === 'Codex').reduce((sum, row) => sum + row.bytes, 0) },
+    { label: 'Claude Code chats', color: 'var(--claude)', bytes: rows?.filter(row => row.provider === 'Claude').reduce((sum, row) => sum + row.bytes, 0) },
+    { label: 'AgentTandem data', color: 'var(--model-3)', bytes: storage },
+  ], known = parts.filter(part => part.bytes !== undefined), total = known.reduce((sum, part) => sum + part.bytes!, 0);
+  el('storage-in-use-total').textContent = known.length ? fileSize(total) : '—';
+  const bar = el('storage-in-use-bar'), legend = el('storage-in-use-legend'); bar.replaceChildren(); legend.replaceChildren();
+  for (const part of parts) {
+    if (part.bytes && total) { const segment = node('span'); segment.style.flexGrow = String(part.bytes); segment.style.background = part.color; segment.title = `${part.label} · ${fileSize(part.bytes)}`; bar.append(segment); }
+    const item = node('li'), swatch = node('i'); swatch.style.background = part.color;
+    item.append(swatch, node('span', part.label), node('strong', part.bytes === undefined ? 'Reading…' : fileSize(part.bytes))); legend.append(item);
+  }
+  bar.setAttribute('aria-label', known.map(part => `${part.label} ${fileSize(part.bytes!)}`).join(', ') || 'Storage in use is still loading');
+  const freed = value.storageFreed;
+  el('storage-freed-total').textContent = fileSize(freed?.bytes ?? 0);
+  el('storage-freed-detail').textContent = freed?.runs
+    ? [freed.conversations && plural(freed.conversations, 'conversation'), freed.files && plural(freed.files, 'file'), plural(freed.runs, 'cleanup')].filter(Boolean).join(' · ')
+    : 'Nothing cleaned up yet. Deleted conversations and restore history add to this total.';
+  const last = el('storage-freed-last'); last.hidden = !freed?.lastAt;
+  if (freed?.lastAt) last.textContent = `+${fileSize(freed.lastBytes ?? 0)} last cleanup · ${sinceLabel(freed.lastAt)}`;
+}
 let usageRenderSignature = '';
 function render(value: UsageDashboardState) {
+  if (value.conversationCleanup?.status === 'cleaning' || value.conversationCleanup?.status === 'error') nativeDeletePending = false;
+  renderNativeHistory(value.conversationCleanup);
   renderStorage(value.storage);
+  renderStorageOverview(value);
   state = value;
   if (!initialized) { initialized = true; el<HTMLSelectElement>('filter-group').value = value.preferences.grouping; }
   el<HTMLInputElement>('show-status-quota').checked = value.preferences.showQuotaInStatusBar;

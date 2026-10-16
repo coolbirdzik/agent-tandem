@@ -12,7 +12,7 @@ Keep working in your native agent or use the built-in chat. AgentTandem brings s
 | Account management | Save and switch Codex, Claude Code, Cursor and Antigravity sign-ins. |
 | Token dashboard | Explore account, model and conversation totals, cache usage and estimated API costs. |
 | Live quota | See remaining allowance, reset times, observed burn rate and quota estimates. |
-| Checkpoints and storage | Preview code restores and choose which saved restore history to keep. |
+| Checkpoints and storage | Preview code restores, see what agent history takes up, delete old Codex/Claude conversations and track how much space you have freed. |
 
 ## Get started
 
@@ -27,14 +27,15 @@ Tracking captures saved, non-ignored files, including manual edits. It cannot re
 
 Review opens with changed files grouped by conversation. Shared and unassigned changes stay visible when their source cannot be established. Select a file to compare immutable before/after snapshots in the bundled Monaco editor, with syntax highlighting, search and inline actions.
 
-- **Accept / Reject** acts on an individual change block; **Accept all** keeps all changes in the current file.
+- **Accept / Reject** acts on an individual change block. **Accept all** keeps all changes in the current file; **Reject all** restores the whole file to its saved baseline after a confirmation that names the file. Newer saved edits and unsaved buffers still block rejection, and **Undo** recovers it.
 - **Previous / Next change** and **Previous / Next file** move through the review. Use the file picker to jump directly to another file.
 - File and conversation **Revert** actions preview their scope. **Undo** recovers the latest file, group or block revert.
 - **…** contains Refresh, Native diff and conversation details. Images show saved **Before / After** versions with whole-file actions.
+- Image changes opened from **Source Control** (and Git image diff tabs restored after a reload) open in AgentTandem's **Before / After** view instead of VS Code's built-in Git image diff, which in VS Code 1.142 fails on its original side (`Cannot read properties of undefined (reading 'selection')`) and closes. Staged changes compare HEAD → index, unstaged index → working tree, with **Previous / Next file** across the changed images. **AgentTandem: Open Image Changes** (Source Control context menu, image editor title, Command Palette) opens it directly; set `agentTandem.openGitImageDiffs` to `false` to keep the built-in diff.
 
 ![Review panel grouping saved changes by Codex and Claude conversations, with shared and unassigned files](media/screenshots/review.png)
 
-![Monaco code review with syntax highlighting, inline Accept and Reject actions and file navigation](media/screenshots/editor-diff.png)
+![Monaco code review with syntax highlighting, Reject all and Accept all for the file, inline Accept and Reject actions and file navigation](media/screenshots/editor-diff.png)
 
 ![Saved Before and After image comparison with whole-file review actions](media/screenshots/image-diff.png)
 
@@ -145,14 +146,25 @@ Open **Settings → Preferences** to show both agents, the selected chat agent, 
 
 ## Storage and restore history
 
-Open **Settings → Storage** to inspect the extension data folder and storage categories. Filter saved restore history by project/type, select entries and **Review deletion** before removing them.
+Open **Settings → Storage** to see what agent history takes up and how much cleanup has reclaimed. Two headline cards stay visible on every Storage tab:
+
+- **In use now** totals Codex chats, Claude Code chats and AgentTandem data, with a bar showing the share of each.
+- **Freed so far** keeps a running total of space reclaimed by deleting conversations, restore history and unused files. It also counts the conversations, files and cleanup runs, shows the size and time of the last cleanup, and survives VS Code restarts. Only data a run actually removed is counted.
+
+![Storage overview with In use now and Freed so far cards above the conversation cleanup list](media/screenshots/storage.png)
+
+The **Restore history** and **Unused files** tabs inspect the extension data folder and storage categories. Filter saved restore history by project/type, select entries and **Review deletion** before removing them.
 
 **Preview cleanup** lists unused snapshots and blobs older than 10 minutes. **Clean up…** lets you choose what to clean — message checkpoints, restore backups and/or unused snapshots — previews exactly those, then deletes them from the same preview. Cleanup rechecks references before deleting; tracking baselines, pending review, active captures, retained checkpoints and Undo remain protected. Workspace files and native Codex/Claude conversation history stay intact. Deleting selected restore history removes the ability to restore those checkpoints.
 
-<details>
-<summary>Storage manager</summary>
+**Storage → Conversations** scans native chat transcripts across all projects in the displayed history folders (`CODEX_HOME` / `CLAUDE_CONFIG_DIR` when configured). **Last message** shows the latest user/assistant message time, including subagent files for Claude; click its heading to toggle oldest/newest first. Oldest first is the default. A `~` marks file update time used when a message timestamp is unavailable. Choose 7/30/90+ days or **Before date** (exclusive, at local midnight), and/or a **Year** (local calendar year of the last message, listed with counts), then optionally filter by provider, archive status or search. **Delete all matching (N)** applies the filters on the host and permanently deletes every match in one run, including rows beyond **Show more**; it first reads any message dates still loading (`N+` while they load). **Delete selected** immediately deletes only your selection. There is no extra confirmation step; a dialog follows the run and lists what was deleted and what was kept, with reasons. Deletion rechecks files and includes subagent payloads; a conversation with protected or newer-than-cutoff subagent history is kept instead of failing the whole run. Open conversations, queued messages and sessions updated within 10 minutes stay protected. Close other apps/terminals using these histories first. Codex archives are included; Claude Code has no native archive flag.
 
-![Storage categories and saved restore history with selection and deletion preview controls](media/screenshots/storage.png)
+Native deletion is permanent and prevents resuming those conversations; token totals derived from deleted transcripts can decrease. Restore checkpoints are managed separately. Codex uses its native `thread/delete` API and requires a CLI that supports it. Early Codex rollouts (before `session_meta`, around September 2025) cannot be read by current Codex CLIs and are not in its thread index, so `thread/delete` rejects them as empty; AgentTandem deletes those files directly, only while Codex has no index entry for them, after the same file and protection checks; Claude uses the bundled SDK's `deleteSession`. Codex `.jsonl` and Zstandard `.jsonl.zst` transcripts are supported; compressed history is streamed in memory without unpacking it to disk. Reading Zstandard requires a VS Code extension host with Node 22.15 or newer. Errors and skipped entries remain visible. Linked, corrupt or unsupported transcript stores block deletion. No cleanup runs automatically. Developer validation: `npm run test:conversations:cleanup:live` uses an isolated native home without copying real history or credentials; append `-- --compressed` to test native deletion of compressed history.
+
+<details>
+<summary>Cleanup result</summary>
+
+![Cleanup complete dialog after Delete all matching, with In use now reduced and Freed so far increased](media/screenshots/storage-cleanup.png)
 
 </details>
 

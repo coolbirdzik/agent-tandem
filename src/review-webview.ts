@@ -92,8 +92,7 @@ function controls() {
   element<HTMLButtonElement>('next').disabled = state.busy || !state.files.length;
   element<HTMLButtonElement>('previous').disabled = state.busy || !state.files.length;
   element<HTMLSelectElement>('files').disabled = state.busy || !state.files.length;
-  element<HTMLButtonElement>('accept-all-file').disabled = state.busy || !state.file;
-  element('accept-all-file').hidden = !state.file;
+  for (const id of ['accept-all-file', 'reject-all-file']) { element<HTMLButtonElement>(id).disabled = state.busy || !state.file; element(id).hidden = !state.file; }
   element<HTMLButtonElement>('next-file').disabled = state.busy || state.files.length < 2;
   element<HTMLButtonElement>('previous-file').disabled = state.busy || state.files.length < 2;
   element('undo').hidden = !state.undo;
@@ -107,8 +106,9 @@ function render(next: ReviewEditorState) {
   const scroll = codeEditor?.scrollTop ?? 0;
   state = next;
   const fileBinding = { revision: state.revision, file: state.file?.path };
-  element('accept-all-file').onclick = () => {
-    if (!state.busy && fileBinding.file && state.revision === fileBinding.revision && state.file?.path === fileBinding.file) decide('accept', undefined, active, fileBinding);
+  // The host asks before a whole-file reject, naming the file it restores.
+  for (const [id, type] of [['accept-all-file', 'accept'], ['reject-all-file', 'reject']] as const) element(id).onclick = () => {
+    if (!state.busy && fileBinding.file && state.revision === fileBinding.revision && state.file?.path === fileBinding.file) decide(type, undefined, active, fileBinding);
   };
   renderContext();
   const nextSignature = `${state.project}:${state.revision}:${state.file?.path}`;

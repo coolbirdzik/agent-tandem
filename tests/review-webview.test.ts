@@ -41,6 +41,16 @@ describe('Shared Webview review', () => {
     button.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', revision: 'r2', file: 'second.ts' });
     render({ files: [], busy: false }); expect(button.hidden).toBe(true); expect(button.disabled).toBe(true);
   });
+  it('rejects all blocks in only the displayed file through the host confirmation and ignores stale handlers', () => {
+    const button = document.querySelector<HTMLButtonElement>('#reject-all-file')!, oldHandler = button.onclick!;
+    expect(button.hidden).toBe(false);
+    button.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'reject', revision: 'r1', file: 'first.ts' });
+    expect(button.disabled).toBe(true); expect(document.querySelector<HTMLButtonElement>('#accept-all-file')!.disabled).toBe(true);
+    render({ ...fixture(), revision: 'r2', file: { ...fixture().file!, path: 'second.ts' } });
+    postMessage.mockClear(); Reflect.apply(oldHandler, button, [new MouseEvent('click')]); expect(postMessage).not.toHaveBeenCalled();
+    button.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'reject', revision: 'r2', file: 'second.ts' });
+    render({ files: [], busy: false }); expect(button.hidden).toBe(true);
+  });
   it('opens workspace changes in the extension sidebar and keeps the conversation shortcut', () => {
     render({ ...fixture(), context: { group: 'Codex:agent', title: 'Update artwork', conversation: { key: 'Codex:agent', id: 'agent', provider: 'Codex', title: 'Update artwork' }, canOpenConversation: true, files: [fixture().files[1]!] } });
     document.getElementById('agent-changes')!.click();

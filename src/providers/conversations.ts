@@ -21,6 +21,7 @@ export interface ConversationMessage {
 export interface ConversationContent { conversation: Conversation; messages: ConversationMessage[]; notice?: string; usage?: ContextUsage }
 export interface ConversationIndex { conversations: Conversation[]; errors: string[] }
 export interface ClaudeHistoryAPI {
+  deleteSession?(id: string): Promise<void>;
   listSessions(options: { dir?: string; includeWorktrees: boolean }): Promise<Array<{ sessionId: string; summary: string; cwd?: string; lastModified: number; fileSize?: number }>>;
   getSessionMessages(id: string, options: { dir: string }): Promise<Array<{ uuid: string; type: string; message: unknown }>>;
 }

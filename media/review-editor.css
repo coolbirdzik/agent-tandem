@@ -58,8 +58,15 @@ main{padding:16px 20px 24px}
 .block-navigation{padding-left:12px;border-left:1px solid var(--review-border);flex-wrap:wrap;gap:4px}
 .accept,.reject{font-weight:600;min-width:84px;border-color:color-mix(in srgb,currentColor 26%,var(--review-surface));background:color-mix(in srgb,currentColor 9%,var(--review-surface))}
 .accept{color:var(--review-accept)}.reject{color:var(--review-reject)}
-.file-accept-all{color:var(--review-accept);font-weight:600;border-color:color-mix(in srgb,currentColor 26%,var(--review-surface));background:color-mix(in srgb,currentColor 9%,var(--review-surface));white-space:nowrap}
-.file-accept-all:hover:not(:disabled){background:color-mix(in srgb,currentColor 17%,var(--review-surface))}
+.file-decisions{display:flex;align-items:center;gap:6px}
+.file-reject-all{color:var(--review-reject)}
+.file-accept-all{color:var(--review-accept)}
+.file-accept-all,.file-reject-all{font-weight:600;border-color:color-mix(in srgb,currentColor 26%,var(--review-surface));background:color-mix(in srgb,currentColor 9%,var(--review-surface));white-space:nowrap}
+.file-accept-all:hover:not(:disabled),.file-reject-all:hover:not(:disabled){background:color-mix(in srgb,currentColor 17%,var(--review-surface))}
+/* Decision buttons are pills so they read apart from square navigation controls. */
+.accept,.reject,.file-accept-all,.file-reject-all{border-radius:999px;padding-inline:14px;letter-spacing:.1px}
+.monaco-review .block-actions .accept,.monaco-review .block-actions .reject,.file-decisions button{padding:5px 14px 5px 11px}
+.accept:hover:not(:disabled),.reject:hover:not(:disabled),.file-accept-all:hover:not(:disabled),.file-reject-all:hover:not(:disabled){box-shadow:0 1px 6px color-mix(in srgb,currentColor 18%,transparent)}
 .accept:hover:not(:disabled),.reject:hover:not(:disabled){background:color-mix(in srgb,currentColor 17%,var(--review-surface));border-color:color-mix(in srgb,currentColor 48%,var(--review-surface))}
 .next-block,.next-file-block{font-weight:500;color:var(--vscode-descriptionForeground)}
 .next-block:hover:not(:disabled),.next-file-block:hover:not(:disabled){color:var(--vscode-editor-foreground)}
@@ -81,7 +88,7 @@ main{padding:16px 20px 24px}
 footer{padding:12px 20px;border-top:1px solid var(--review-border);font-size:12px;color:var(--vscode-descriptionForeground)}
 .vscode-high-contrast button,.vscode-high-contrast-light button{border-color:var(--vscode-contrastBorder)}
 .vscode-high-contrast .accept,.vscode-high-contrast .reject,.vscode-high-contrast-light .accept,.vscode-high-contrast-light .reject{background:var(--review-surface);color:var(--vscode-editor-foreground)}
-@media(max-width:700px){main{padding:12px}.file-toolbar{grid-template-columns:minmax(0,1fr) auto auto;row-gap:5px}.file-picker{grid-column:1;grid-row:1}#accept-all-file{grid-column:2;grid-row:1}.review-more{grid-column:3;grid-row:1}.file-buttons{grid-column:1;grid-row:2}.navigation{grid-column:2;grid-row:2}.review-context-actions{grid-column:3;grid-row:2}.block-toolbar{flex-wrap:wrap;padding-left:76px;gap:8px}.block-actions{flex-wrap:wrap}.diff-block{scroll-margin-top:85px}.line-number{width:38px;padding-right:8px}.newline-note{padding-left:96px}}
+@media(max-width:700px){main{padding:12px}.file-toolbar{grid-template-columns:minmax(0,1fr) auto auto;row-gap:5px}.file-picker{grid-column:1;grid-row:1}.file-decisions{grid-column:2;grid-row:1}.review-more{grid-column:3;grid-row:1}.file-buttons{grid-column:1;grid-row:2}.navigation{grid-column:2;grid-row:2}.review-context-actions{grid-column:3;grid-row:2}.block-toolbar{flex-wrap:wrap;padding-left:76px;gap:8px}.block-actions{flex-wrap:wrap}.diff-block{scroll-margin-top:85px}.line-number{width:38px;padding-right:8px}.newline-note{padding-left:96px}}
 @media(prefers-reduced-motion:reduce){button{transition:none}button:active:not(:disabled){transform:none}}
 
 /* Monaco owns scrolling and source layout; toolbars are real editor view zones. */

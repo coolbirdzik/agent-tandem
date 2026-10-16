@@ -25,6 +25,167 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
+  it('sorts by last message, filters before local midnight and deletes all matches beyond the visible page once', () => {
+    const before = new Date('2025-04-01T00:00:00').getTime();
+    const conversations = Array.from({ length: 105 }, (_, index) => ({ key: `Codex:${index}`, id: String(index), provider: 'Codex' as const,
+      title: `Chat ${index}`, project: '/repo', archived: false, updatedAt: Date.now() - 86400000,
+      lastMessageAt: before - (index + 1) * 86400000, bytes: index + 100, files: [] }));
+    conversations.push({ ...conversations[0]!, key: 'Codex:boundary', id: 'boundary', lastMessageAt: before });
+    const fixture = { ...value, conversationCleanup: { status: 'ready' as const, roots: { Codex: '/codex', Claude: '/claude' }, conversations } };
+    render(fixture); choose('native-history-before', '2025-04-01');
+    const keys = () => [...document.querySelectorAll<HTMLInputElement>('#native-history-list input')].map(input => input.dataset.nativeKey);
+    expect(keys()).toHaveLength(100); expect(keys()[0]).toBe('Codex:104'); expect(keys()).not.toContain('Codex:boundary');
+    expect((document.querySelector('#native-history-age') as HTMLSelectElement).value).toBe('0');
+    expect(document.querySelector('#native-history-delete-matching')!.textContent).toBe('Delete all matching (105)');
+    render({ ...fixture, conversationCleanup: { ...fixture.conversationCleanup, dates: { done: 1, total: 4 } } });
+    expect(document.querySelector('#native-history-delete-matching')!.textContent).toBe('Delete all matching (105+)');
+    render(fixture);
+    expect(document.querySelector('.native-row-date')!.getAttribute('title')).toContain('Last message:');
+    document.querySelector<HTMLButtonElement>('#native-history-sort')!.click(); expect(keys()[0]).toBe('Codex:0');
+    document.querySelector<HTMLButtonElement>('#native-history-delete-matching')!.click();
+    const request = postMessage.mock.lastCall![0];
+    expect(request).toEqual({ type: 'deleteConversations', value: { filter: { before } } });
+    const count = postMessage.mock.calls.length;
+    document.querySelector<HTMLButtonElement>('#native-history-delete-matching')!.click(); expect(postMessage).toHaveBeenCalledTimes(count);
+    render({ ...fixture, conversationCleanup: { ...fixture.conversationCleanup, status: 'error', error: 'Locked' } });
+    expect(document.querySelector('#native-history-errors')!.textContent).toContain('Locked');
+  });
+  it('follows a deletion in a result dialog from date reading to the kept and deleted lists', () => {
+    const old = Date.now() - 60 * 86400000;
+    const conversations = [{ key: 'Codex:a', id: 'a', provider: 'Codex' as const, title: 'Old chat', project: '/repo', archived: false, updatedAt: old, bytes: 2048, files: [] }];
+    const base = { status: 'ready' as const, roots: { Codex: '/codex', Claude: '/claude' }, conversations };
+    render({ ...value, conversationCleanup: base });
+    choose('native-history-provider', 'Codex'); document.querySelector<HTMLButtonElement>('#native-history-delete-matching')!.click();
+    expect(postMessage.mock.lastCall![0].value.filter).toMatchObject({ provider: 'Codex', before: expect.any(Number) });
+    const dialog = document.querySelector<HTMLDialogElement>('#native-cleanup-dialog')!;
+    expect(dialog.open).toBe(true); expect(document.querySelector('#native-cleanup-scope')!.textContent).toBe('All matching · Codex · last message 30+ days ago');
+    render({ ...value, conversationCleanup: { ...base, status: 'cleaning', dates: { done: 3, total: 10 } } });
+    expect(document.querySelector('#native-cleanup-summary')!.textContent).toContain('Reading message dates · 3 / 10');
+    render({ ...value, conversationCleanup: { ...base, status: 'cleaning', done: 1, total: 2 } });
+    expect(document.querySelector('#native-cleanup-summary')!.textContent).toContain('Deleting conversations · 1 / 2');
+    expect(document.querySelector('#native-cleanup-close')!.textContent).toBe('Hide');
+    render({ ...value, conversationCleanup: { ...base, conversations: [], result: { removed: ['Codex:a'], bytes: 2048, skipped: [], failures: [], titles: { 'Codex:a': 'Old chat' },
+      kept: [{ key: 'Codex:b', title: 'Parent chat', reason: 'Has subagent history newer than the cutoff.' }] } } });
+    expect(document.querySelector('#native-cleanup-title')!.textContent).toBe('Cleanup complete');
+    expect(document.querySelector('#native-cleanup-summary')!.textContent).toBe('Deleted 1 conversation and freed 2.0 KB. 1 conversation kept.');
+    expect(document.querySelector('[data-kind="kept"]')!.textContent).toContain('Parent chatHas subagent history newer');
+    expect(document.querySelector('[data-kind="removed"]')!.textContent).toContain('Old chat');
+    expect(dialog.dataset.status).toBe('warning'); expect(document.querySelector('#native-cleanup-close')!.textContent).toBe('Done');
+    document.querySelector<HTMLButtonElement>('#native-cleanup-close')!.click(); expect(dialog.open).toBe(false);
+  });
+  it('filters and deletes by local calendar year, listing years with counts', () => {
+    const at = (date: string) => new Date(`${date}T12:00:00`).getTime();
+    const conversations = [['a', '2024-06-01'], ['b', '2025-01-01'], ['c', '2025-12-31'], ['d', '2023-03-03']].map(([id, date]) => ({ key: `Codex:${id}`, id: id!, provider: 'Codex' as const,
+      title: `Chat ${id}`, project: '/repo', archived: false, updatedAt: at(date!), lastMessageAt: at(date!), bytes: 100, files: [] }));
+    render({ ...value, conversationCleanup: { status: 'ready', roots: { Codex: '/codex', Claude: '/claude' }, conversations } });
+    const year = document.querySelector<HTMLSelectElement>('#native-history-year')!;
+    expect([...year.options].map(option => option.textContent)).toEqual(['All years', '2025 (2)', '2024 (1)', '2023 (1)']);
+    choose('native-history-year', '2025');
+    expect([...document.querySelectorAll<HTMLInputElement>('#native-history-list input')].map(input => input.dataset.nativeKey)).toEqual(['Codex:b', 'Codex:c']);
+    expect(document.querySelector('[data-native-preset="old"]')!.getAttribute('aria-pressed')).toBe('false');
+    document.querySelector<HTMLButtonElement>('#native-history-delete-matching')!.click();
+    expect(postMessage.mock.lastCall![0].value.filter).toEqual({ after: new Date(2025, 0, 1).getTime(), before: new Date(2026, 0, 1).getTime() });
+    expect(document.querySelector('#native-cleanup-scope')!.textContent).toBe('All matching · both agents · last message 30+ days ago · year 2025');
+    render({ ...value, conversationCleanup: { status: 'cleaning', roots: { Codex: '/codex', Claude: '/claude' }, conversations } });
+    render({ ...value, conversationCleanup: { status: 'ready', roots: { Codex: '/codex', Claude: '/claude' }, conversations: conversations.filter(row => !row.key.match(/[bc]$/)) } });
+    expect([...year.options].map(option => option.textContent)).toEqual(['All years', '2025 (0)', '2024 (1)', '2023 (1)']); expect(year.value).toBe('2025');
+    document.querySelector<HTMLButtonElement>('[data-native-preset="all"]')!.click(); expect(year.value).toBe('');
+  });
+  it('shift-selects and clears native conversation ranges in either direction, skipping protected rows', () => {
+    const conversations = Array.from({ length: 6 }, (_, index) => ({ key: `Codex:${index}`, id: String(index), provider: 'Codex' as const, title: `Chat ${index}`, project: '/repo', archived: false,
+      updatedAt: Date.now() - 60 * 86400000, bytes: 100, files: [], ...(index === 1 ? { blocked: 'Open conversation' } : {}) }));
+    const fixture = { ...value, conversationCleanup: { status: 'ready' as const, roots: { Codex: '/codex', Claude: '/claude' }, conversations } };
+    const click = (index: number, shift = false) => document.querySelectorAll<HTMLInputElement>('#native-history-list input')[index]!.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: shift }));
+    const selected = () => [...document.querySelectorAll<HTMLInputElement>('#native-history-list input')].filter(input => input.checked).map(input => input.dataset.nativeKey);
+    render(fixture); click(5); click(0);
+    render({ ...fixture, conversationCleanup: { ...fixture.conversationCleanup, conversations: conversations.map(row => ({ ...row, title: `${row.title} renamed` })) } });
+    click(3, true); expect(selected()).toEqual(['Codex:0', 'Codex:2', 'Codex:3', 'Codex:5']);
+    click(2, true); expect(selected()).toEqual(['Codex:3', 'Codex:5']);
+    document.querySelector<HTMLButtonElement>('#native-history-clear')!.click(); click(4); click(0, true);
+    expect(selected()).toEqual(['Codex:0', 'Codex:2', 'Codex:3', 'Codex:4']);
+    expect(document.querySelector<HTMLInputElement>('#native-history-list input:disabled')!.checked).toBe(false);
+    document.querySelector<HTMLButtonElement>('#native-history-preview')!.click();
+    expect(postMessage.mock.lastCall![0].value.keys.sort()).toEqual(['Codex:0', 'Codex:2', 'Codex:3', 'Codex:4']);
+  });
+  it('resets range anchors on filter and clear actions and never includes filtered-out conversations', () => {
+    const conversations = Array.from({ length: 5 }, (_, index) => ({ key: `${index === 2 ? 'Claude' : 'Codex'}:${index}`, id: String(index), provider: index === 2 ? 'Claude' as const : 'Codex' as const,
+      title: `Chat ${index}`, project: '/repo', archived: false, updatedAt: Date.now() - 60 * 86400000, bytes: 100, files: [] }));
+    render({ ...value, conversationCleanup: { status: 'ready', roots: { Codex: '/codex', Claude: '/claude' }, conversations } });
+    const click = (index: number, shift = false) => document.querySelectorAll<HTMLInputElement>('#native-history-list input')[index]!.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: shift }));
+    const selected = () => [...document.querySelectorAll<HTMLInputElement>('#native-history-list input')].filter(input => input.checked).map(input => input.dataset.nativeKey);
+    click(0); choose('native-history-provider', 'Codex'); click(3, true);
+    expect(selected()).toEqual(['Codex:4']);
+    click(0, true); expect(selected()).toEqual(['Codex:0', 'Codex:1', 'Codex:3', 'Codex:4']);
+    document.querySelector<HTMLButtonElement>('#native-history-clear')!.click(); click(2, true);
+    expect(selected()).toEqual(['Codex:3']);
+  });
+  it('supports shift-clicking restore history labels with the same range behavior', () => {
+    const histories = Array.from({ length: 4 }, (_, index) => ({ id: `history-${index}`, projectId: 'repo', project: '/repo', label: `Restore ${index}`, kind: 'checkpoints' as const,
+      count: 1, bytes: 100, reclaimable: 100, createdAt: 1, updatedAt: 2 }));
+    render({ ...value, storage: { status: 'ready', root: '/extension', histories } });
+    const click = (index: number, shift = false) => document.querySelectorAll<HTMLLabelElement>('#storage-histories label')[index]!.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: shift }));
+    const selected = () => [...document.querySelectorAll<HTMLInputElement>('#storage-histories input')].filter(input => input.checked).map(input => input.dataset.historyId);
+    click(0); click(3, true); expect(selected()).toEqual(['history-0', 'history-1', 'history-2', 'history-3']);
+    click(1, true); expect(selected()).toEqual(['history-2', 'history-3']);
+    document.querySelector<HTMLButtonElement>('#storage-history-preview')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewHistoryDeletion', value: { ids: ['history-2', 'history-3'] } });
+  });
+  it('opens conversation cleanup first, scans once and keeps restore history and unused files in separate views', () => {
+    render(value); postMessage.mockClear();
+    document.querySelector<HTMLButtonElement>('[data-page="storage"]')!.click();
+    expect((document.querySelector('#storage-conversations-page') as HTMLElement).hidden).toBe(false);
+    expect((document.querySelector('#storage-restore-page') as HTMLElement).hidden).toBe(true);
+    expect((document.querySelector('#storage-extension-summary') as HTMLElement).hidden).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === 'scanConversations')).toHaveLength(1);
+    render({ ...value, accountsBusy: true });
+    expect(postMessage.mock.calls.filter(([message]) => message.type === 'scanConversations')).toHaveLength(1);
+    document.querySelector<HTMLButtonElement>('[data-storage-page="restore"]')!.click();
+    expect((document.querySelector('#storage-conversations-page') as HTMLElement).hidden).toBe(true);
+    expect((document.querySelector('#storage-restore-page') as HTMLElement).hidden).toBe(false);
+    expect((document.querySelector('#storage-extension-summary') as HTMLElement).hidden).toBe(false);
+    document.querySelector<HTMLButtonElement>('[data-storage-page="unused"]')!.click();
+    expect((document.querySelector('#storage-unused-page') as HTMLElement).hidden).toBe(false);
+    expect((document.querySelector('#storage-restore-page') as HTMLElement).hidden).toBe(true);
+  });
+  it('offers archive and age presets and preserves conversation checkboxes across unrelated updates', () => {
+    const row = { key: 'Codex:old', id: 'old', provider: 'Codex' as const, title: 'Old archived chat', project: '/repo', archived: true, updatedAt: Date.now() - 45 * 86400000, bytes: 100, files: [] };
+    const conversationCleanup: NonNullable<UsageDashboardState['conversationCleanup']> = { status: 'ready', roots: { Codex: '/codex', Claude: '/claude' }, conversations: [row, { ...row, key: 'Codex:recent', id: 'recent', title: 'Recent chat', archived: false, updatedAt: Date.now() - 86400000 }] };
+    render({ ...value, conversationCleanup });
+    const checkbox = document.querySelector<HTMLInputElement>('#native-history-list input')!; checkbox.click();
+    const selected = document.querySelector<HTMLInputElement>('#native-history-list input')!;
+    render({ ...value, conversationCleanup, accountsBusy: true });
+    expect(document.querySelector('#native-history-list input')).toBe(selected);
+    expect(selected.checked).toBe(true); expect(document.querySelector('#native-history-selection')!.textContent).toBe('1 conversation selected');
+    document.querySelector<HTMLButtonElement>('[data-native-preset="all"]')!.click();
+    expect(document.querySelectorAll('#native-history-list input')).toHaveLength(2);
+    document.querySelector<HTMLButtonElement>('[data-native-preset="archived"]')!.click();
+    expect(document.querySelectorAll('#native-history-list input')).toHaveLength(1);
+    expect(document.querySelector('[data-native-preset="archived"]')!.getAttribute('aria-pressed')).toBe('true');
+  });
+  it('deletes selected native history immediately, keeps protected sessions disabled and supports legacy preview tokens', () => {
+    const old = Date.now() - 60 * 86400000;
+    const conversationCleanup: NonNullable<UsageDashboardState['conversationCleanup']> = { status: 'ready', roots: { Codex: '/codex', Claude: '/claude' }, conversations: [
+      { key: 'Codex:old', id: 'old', provider: 'Codex', title: 'Archived cleanup', project: '/repo', archived: true, updatedAt: old, bytes: 100, files: [] },
+      { key: 'Claude:old', id: 'old', provider: 'Claude', title: 'Claude history', project: '/other', archived: false, updatedAt: old, bytes: 200, files: [] },
+      { key: 'Codex:protected', id: 'protected', provider: 'Codex', title: 'Open history', project: '/repo', archived: false, updatedAt: old, bytes: 300, files: [], blocked: 'Open conversation' },
+    ] };
+    render({ ...value, conversationCleanup });
+    document.querySelector<HTMLButtonElement>('#native-history-select')!.click();
+    expect(document.querySelector('#native-history-status')!.textContent).toContain('2 selected');
+    choose('native-history-archive', 'archived');
+    expect(document.querySelectorAll('#native-history-list input')).toHaveLength(1);
+    document.querySelector<HTMLButtonElement>('#native-history-select')!.click(); document.querySelector<HTMLButtonElement>('#native-history-preview')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'deleteConversations', value: { keys: ['Codex:old'], before: expect.any(Number) } });
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'previewConversationCleanup' }));
+    render({ ...value, conversationCleanup: { ...conversationCleanup, status: 'cleaning' } });
+    render({ ...value, conversationCleanup: { ...conversationCleanup, plan: { token: 'approved', createdAt: Date.now(), conversations: [conversationCleanup.conversations![0]!], bytes: 100 } } });
+    expect((document.querySelector('#native-history-plan') as HTMLElement).hidden).toBe(false);
+    expect((document.querySelector('#native-history-archive') as HTMLSelectElement).disabled).toBe(true);
+    document.querySelector<HTMLButtonElement>('#native-history-delete')!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'deleteConversations', value: { token: 'approved' } });
+    render({ ...value, conversationCleanup: { ...conversationCleanup, status: 'cleaning', done: 1, total: 2 } });
+    expect(document.querySelector('#native-history-status')!.textContent).toContain('1 / 2');
+    expect((document.querySelector('#native-history-delete') as HTMLButtonElement).disabled).toBe(true);
+  });
   it('opens a reviewable date scope for unknown external Claude history in the all-time view', () => {
     const account = usageAccount('Claude', { signedIn: true, email: 'claude@test.invalid', method: 'Claude account' })!;
     render({ ...value, accounts: { Claude: { status: 'ready', account: { signedIn: true, email: account.email, method: account.method } } }, data: { ...value.data!, days: [

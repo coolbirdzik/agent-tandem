@@ -20,6 +20,7 @@ const configs = [
   { entryPoints: ['tests/extension/external-review.ts'], outfile: 'dist/external-review-host-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['tests/extension/settings.ts'], outfile: 'dist/settings-host-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['tests/extension/change-navigation.ts'], outfile: 'dist/change-navigation-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
+  { entryPoints: ['tests/extension/git-image-changes.ts'], outfile: 'dist/git-image-changes-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['tests/extension/checkpoints.ts'], outfile: 'dist/checkpoint-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['tests/extension/cli-manager-live.ts'], outfile: 'dist/cli-manager-live-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['src/providers/claude-history.ts'], outfile: 'dist/claude-history.mjs', bundle: true, platform: 'node', format: 'esm', target: 'node20' },

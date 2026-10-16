@@ -11,6 +11,15 @@ vi.mock('vscode', () => ({
 import { SettingsView } from '../src/host/settings-view';
 
 describe('Settings host updates', () => {
+  it('routes native conversation cleanup and publishes preview and progress changes', async () => {
+    const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } }, invoke = vi.fn();
+    const view = new SettingsView({} as any, () => state, invoke, vi.fn()); view.open();
+    for (const [type, command, value] of [['scanConversations', 'scanConversationCleanup', undefined], ['previewConversationCleanup', 'previewConversationCleanup', { keys: ['Codex:id'] }], ['deleteConversations', 'deleteConversations', { token: 'approved' }]] as const) {
+      await host.receive({ type, value }); expect(invoke).toHaveBeenLastCalledWith(`agentTandem.${command}`, value);
+    }
+    host.post.mockClear(); state.conversationCleanup = { status: 'cleaning', roots: { Codex: '/codex', Claude: '/claude' }, done: 1, total: 2 };
+    view.update(); expect(host.post).toHaveBeenCalledTimes(1); state.conversationCleanup.done = 2; view.update(); expect(host.post).toHaveBeenCalledTimes(2); view.dispose();
+  });
   it('routes history assignments and publishes busy/errors even when usage has not changed', async () => {
     const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } }, invoke = vi.fn();
     const view = new SettingsView({} as any, () => state, invoke, vi.fn()); view.open();

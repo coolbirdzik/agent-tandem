@@ -11,6 +11,12 @@ export const imageMime = (file: string): string | undefined => imageTypes[file.s
 // Bound the bridge payload independently of the text-diff limit. Unsupported
 // decoders and oversized sides retain their size and whole-file review actions.
 export const maxImagePreviewBytes = 16 * 1024 * 1024;
+/** A side read directly as bytes, such as a Git object; no bytes means the file is absent on that side. */
+export function imageSnapshot(file: string, bytes?: Uint8Array): ImageSnapshot {
+  if (!bytes?.length) return { size: 0, missing: true };
+  if (bytes.length > maxImagePreviewBytes) return { size: bytes.length, notice: 'Image is too large to preview (16 MB limit).' };
+  return { size: bytes.length, src: `data:${imageMime(file)};base64,${Buffer.from(bytes).toString('base64')}` };
+}
 export async function imageSnapshots(history: HistoryStore, file: string, before?: string, after?: string): Promise<ImageComparison | undefined> {
   const mime = imageMime(file);
   if (!mime) return;

@@ -46,6 +46,8 @@ export interface UsageDashboardState {
   quotaHistory?: import('./quota-estimate').QuotaObservation[]; quotaHistoryError?: string;
   quotaBaselines?: import('./quota-estimate').QuotaBaseline[];
   storage?: import('./storage').StorageState;
+  conversationCleanup?: import('./conversation-cleanup').ConversationCleanupState;
+  storageFreed?: import('./storage-freed').StorageFreed;
   status: 'idle' | 'loading' | 'ready' | 'error'; data?: UsageHistoryData; error?: string;
   accounts?: Partial<Record<ConversationProvider, ProviderAccountStatus>>;
   activeProvider?: ConversationProvider;

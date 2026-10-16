@@ -378,6 +378,11 @@
       {
         "command": "agentTandem.revealStorage",
         "title": "AgentTandem: Reveal Data Folder"
+      },
+      {
+        "command": "agentTandem.openImageChanges",
+        "title": "AgentTandem: Open Image Changes",
+        "icon": "$(file-media)"
       }
     ],
     "viewsContainers": {
@@ -415,6 +420,11 @@
           "command": "agentTandem.nextFile",
           "when": "agentTandem.multipleChangedFiles",
           "group": "navigation@3"
+        },
+        {
+          "command": "agentTandem.openImageChanges",
+          "when": "resourceExtname =~ /^.(png|apng|jpe?g|jfif|gif|webp|bmp|ico|avif|svg|tiff?)$/i && gitOpenRepositoryCount != 0 && !agentTandem.changeNavigation",
+          "group": "navigation@9"
         }
       ],
       "editor/content": [
@@ -477,6 +487,17 @@
         {
           "command": "agentTandem.nextChange",
           "when": "agentTandem.changeNavigation"
+        },
+        {
+          "command": "agentTandem.openImageChanges",
+          "when": "resourceExtname =~ /^.(png|apng|jpe?g|jfif|gif|webp|bmp|ico|avif|svg|tiff?)$/i"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "agentTandem.openImageChanges",
+          "when": "scmProvider == git && scmResourceGroup =~ /^(index|workingTree|untracked)$/",
+          "group": "navigation@9"
         }
       ]
     },
@@ -647,6 +668,11 @@
           "default": "lens",
           "description": "Block actions in the native diff editor. Native mode uses CodeLens. The default Monaco Webview review uses colored inline buttons. Opening a native review enables diffEditor.codeLens."
         },
+        "agentTandem.openGitImageDiffs": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Open image changes from Source Control in AgentTandem's Before / After view. VS Code's built-in Git image diff fails with `Cannot read properties of undefined (reading 'selection')` and closes."
+        },
         "agentTandem.showFileCounterInEditor": {
           "type": "boolean",
           "default": true,
@@ -766,6 +792,7 @@
     "test": "vitest run",
     "test:extension": "npm run build && node scripts/test-extension.mjs",
     "test:changes:navigation": "npm run build && node scripts/test-change-navigation.mjs",
+    "test:git:images": "npm run build && node scripts/test-git-image-changes.mjs",
     "test:review:webview": "npm run build && node scripts/test-review-webview.mjs",
     "test:checkpoints": "npm run build && node scripts/test-checkpoints.mjs",
     "test:review:live": "npm run build && node scripts/test-review-live.mjs",
@@ -781,6 +808,7 @@
     "test:attachments:live": "node scripts/test-attachments-live.mjs",
     "test:usage:local": "node scripts/test-usage-local.mjs",
     "test:settings:host": "npm run build && node scripts/test-settings-host.mjs",
+    "test:conversations:cleanup:live": "node scripts/test-conversation-cleanup-live.mjs",
     "test:queue:host": "npm run build && node scripts/test-queue-host.mjs",
     "test:cli:live": "npm run build && node scripts/test-cli-manager-live.mjs",
     "test:context:history": "npm run build && node scripts/test-context-history.mjs",

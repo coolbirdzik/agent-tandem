@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Open Git image changes in AgentTandem's Before / After view. Clicking an image in Source Control, or a Git image diff tab restored after reload, no longer reaches VS Code's built-in binary image diff, which fails with "Cannot read properties of undefined (reading 'selection')" and closes. Staged changes compare HEAD → index, unstaged index → working tree (untracked as added), with file navigation across changed images. Also available as **AgentTandem: Open Image Changes**; turn off with `agentTandem.openGitImageDiffs`.
+
+- Review: add **Reject all** beside **Accept all** in the file toolbar. It restores the displayed file to its saved baseline after a confirmation naming the file, binds to the shown file and revision like Accept all, and can be undone. Accept/Reject buttons in the review editor are now rounded pills, set apart from the square navigation controls.
+
+- Storage: highlight space at the top of every Storage tab. **In use now** totals Codex chats, Claude Code chats and AgentTandem data with a share bar; **Freed so far** keeps a lifetime total of space reclaimed by conversation, restore history and unused-file cleanup, with counts and the last cleanup, saved across restarts.
+
+- Fix Codex conversation cleanup failing with "rollout … is empty" for early (pre-`session_meta`) rollouts. Current Codex CLIs cannot read or index them, so AgentTandem now deletes those files directly when Codex has no index entry for them; indexed threads still use `thread/delete`.
+
+- Fix conversation deletion failing with "Wait for the active agent or conversation sync to finish" while no agent was running. The 5-second history sync now pauses during deletion and an in-flight sync is awaited instead of rejecting the run.
+
+- Storage: filter conversations by the local calendar year of their last message. The Year list shows each year with its chat count and combines with the age, date, provider, status and search filters, so Delete all matching can clear a whole year at once.
+
+- Storage: Delete all matching now deletes everything the filters match in one run instead of only the rows whose dates had loaded. The host reads pending message dates first, then deletes; conversations that are protected or have newer subagent history are kept and reported instead of failing the run. A dialog shows progress and the result, with deleted and kept conversations and their reasons.
+
+- Storage: show the conversation list without waiting to decode compressed Codex history. Message dates for `.jsonl.zst` rollouts are read in the background (rows use the newer file time, marked ~, until then), saved across VS Code restarts, and stopped before any deletion. Decoding parses only candidate message lines.
+
+- Storage: add a sortable Last message column, default to oldest first, and filter by a chosen cutoff date. Delete matching removes every eligible filtered conversation, including unloaded rows; Delete selected removes the selection immediately. Keep file checks and active-session protection, and reject cascading subagent history newer than the cutoff.
+
+- Support Shift-click range selection and deselection in conversation cleanup and restore history. Follow the displayed filtered order, skip protected conversations and retain the selection anchor across list updates.
+
+- Fix native conversation cleanup failing on Codex `.jsonl.zst` history. Read a bounded Zstandard prefix without unpacking files into the history folder, include compressed payload paths and on-disk sizes in previews, recognize early flat session metadata, and leave empty rollout placeholders untouched. Retain stale-preview and subagent protections during native deletion.
+
+- Simplify Storage into Conversations, Restore history and Unused files views. Open native chat cleanup with an automatic scan, quick age/archive presets, a searchable list and a nearby selection summary. Replace the crowded deletion area with a focused review step, preserve list focus/scroll during unrelated updates and keep navigation usable in narrow editor panes.
+
+- Storage: add optional native Codex and Claude Code conversation cleanup across projects, with age/provider/archive/search filters, explicit selection, a file and size preview, and deletion progress/errors. Protect open, queued and recently updated sessions; recheck previewed files and include subagent payloads. Use native provider deletion to keep their indexes consistent.
+
 - Dashboard: View usage now opens a dedicated account page with an "All accounts" button to return to the account overview. Tokens per 1% quota gives each provider a full-width row with its 5h and Weekly windows side by side, so a single account no longer fills only half the width.
 
 - Storage: sort restore history by the space each conversation actually frees (snapshot data shared with other history or Review no longer inflates its size), show the referenced total beside it, and add Quick select presets for the biggest space savers and history not saved in 7+ or 30+ days.

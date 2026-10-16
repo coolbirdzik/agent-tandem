@@ -85,7 +85,8 @@ try {
   await capture('accounts', `${settings}/?accounts=1&page=accounts`, 1440, 1080);
   await capture('account-switch', `${settings}/?accounts=1&switch=1`, 1440, 1080);
   await capture('preferences', `${settings}/?page=preferences`, 1200, 900);
-  await capture('storage', `${settings}/?storage=1`, 1440, 1580);
+  await capture('storage', `${settings}/?storage=1`, 1440, 1260);
+  await capture('storage-cleanup', `${settings}/?storage=1&nativeMatching=1&age=30`, 1440, 1000);
   await copyFile(path.join(root, 'artifacts/review-webview-marketplace.png'), path.join(output, 'editor-diff.png'));
   await copyFile(path.join(root, 'artifacts/readme-image-diff-marketplace.png'), path.join(output, 'image-diff.png'));
   await copyFile(path.join(root, 'artifacts/review-agent-changes-marketplace.png'), path.join(output, 'agent-changes.png'));

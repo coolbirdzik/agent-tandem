@@ -9,7 +9,8 @@ import { openReviewChanges, ReviewDocuments, reviewSnapshotUri } from './host/re
 import { ReviewWebview } from './host/review-webview';
 import { registerChangeNavigation, type ChangeNavigationState } from './host/change-navigation';
 import { ImageDiff } from './host/image-diff';
-import { imageSnapshots } from './core/media-preview';
+import { imageSnapshot, imageSnapshots } from './core/media-preview';
+import { gitImageChanges, redirectGitImageDiffs } from './host/git-image-changes';
 import { ReviewHunkActions } from './host/review-hunk-actions';
 import { probeCodex, probeClaude, findExecutable, cliInfo, installedCLIs } from './providers/probe';
 import { ProjectConversations, claudeMessages, type ClaudeHistoryAPI, type ConversationContent, type ConversationIndex } from './providers/conversations';
@@ -63,6 +64,9 @@ import { DesktopAccounts, desktopExecutable, windowsAntigravityCredential } from
 import { spawn as launchDesktopProcess } from 'node:child_process';
 import { withStorageLock } from './core/storage-lock';
 import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeletionPlan, type StorageProgress } from './core/storage';
+import { ConversationCleanup, type ConversationCleanupState, type DeletionProgress } from './core/conversation-cleanup';
+import { deleteCodexThread } from './providers/codex-history-mutation';
+import { addFreed, storageFreed } from './core/storage-freed';
 
 export interface ExtensionAPI {
   changeNavigationState(): ChangeNavigationState | undefined;
@@ -132,6 +136,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let selectionGeneration = 0;
   let uiGeneration = 0;
   let syncJob: Promise<ConversationIndex> | undefined;
+  // Native conversation deletion pauses history sync instead of failing on the 5-second sync timer.
+  let conversationDeleting = false;
   let disposed = false;
   const workspaceIdentity = (vscode.workspace.workspaceFolders ?? []).map(folder => process.platform === 'win32' ? folder.uri.toString().toLowerCase() : folder.uri.toString()).sort().join('\n');
   const queueStore = new ChatQueueStore(context.globalStorageUri.fsPath, workspaceIdentity);
@@ -201,20 +207,58 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let storageState: StorageState = { status: 'idle', root: storage.root }, cleanupPlan: CleanupPlan | undefined;
   let historyDeletionPlan: HistoryDeletionPlan | undefined;
   let storageJob: Promise<void> | undefined;
+  let conversationCleanupJob = false;
+  const assertConversationCleanupIdle = () => {
+    if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before deleting native conversation history.');
+    if (chatAbort || reviewing || externalSwitching || state.running || cliManaging) throw new Error('Wait for the active agent to finish before deleting conversations.');
+  };
+  const conversationCleanup = new ConversationCleanup(async row => {
+    assertConversationCleanupIdle();
+    if (row.provider === 'Codex') {
+      const selection = await managedCLI('Codex', state.project);
+      assertConversationCleanupIdle();
+      await deleteCodexThread(selection.entry.executable, row.id);
+    } else {
+      const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href);
+      if (!sdk.deleteSession) throw new Error('The Claude SDK does not support session deletion.');
+      assertConversationCleanupIdle(); await sdk.deleteSession(row.id);
+    }
+  }, () => new Set([state.conversation?.conversation.key, liveConversation?.conversation.key, ...chatQueue.snapshot().map(queue => queue.conversationKey)].filter((key): key is string => !!key)),
+  {}, path.join(context.globalStorageUri.fsPath, 'caches', 'conversation-message-times.json'));
+  let conversationCleanupState: ConversationCleanupState = { status: 'idle', roots: conversationCleanup.roots };
+  // Compressed transcript dates are read after the list is shown; every cleanup action stops this first.
+  let conversationDates: { abort: AbortController; job: Promise<void> } | undefined;
+  const stopConversationDates = async () => {
+    const current = conversationDates; conversationDates = undefined;
+    if (current) { current.abort.abort(); await current.job; }
+  };
+  const startConversationDates = () => {
+    const base = conversationCleanupState;
+    if (conversationDates || base.status !== 'ready' || base.plan || !base.dates) return;
+    const abort = new AbortController();
+    const job = conversationCleanup.resolveDates(base, abort.signal, next => { conversationCleanupState = next; settings.update(); }).then(next => { if (next && !abort.signal.aborted) { conversationCleanupState = next; settings.update(); } }, report)
+      .finally(() => { if (conversationDates?.abort === abort) conversationDates = undefined; });
+    conversationDates = { abort, job };
+  };
+  const conversationCleanupDisposed = new AbortController();
+  context.subscriptions.push({ dispose: () => { conversationDates?.abort.abort(); conversationCleanupDisposed.abort(); } });
   let usageState: Pick<UsageDashboardState, 'status' | 'data' | 'error'> = { status: 'idle' };
   let usageJob: Promise<void> | undefined, usageAbort: AbortController | undefined;
   let usageConversationTitles: Record<string, string> = {};
   let attributionBusy = false, attributionError: string | undefined, attributionNotice: string | undefined;
+  const freedKey = 'agentTandem.storageFreed';
+  // Totals only add what a run actually removed, so failed or partial runs never inflate them.
+  const recordFreed = (run: Parameters<typeof addFreed>[1]) => context.globalState.update(freedKey, addFreed(context.globalState.get(freedKey), run)).then(undefined, report);
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, ...accountManager.state, attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day', statusBar: readStatusBarPreferences(config) }, activeProvider: state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex' };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
     async (command, value) => vscode.commands.executeCommand(command, value), report);
   const accountManager = new AccountManager(accountProfiles, {
-    busy: () => !!chatAbort || reviewing,
+    busy: () => !!chatAbort || reviewing || conversationCleanupState.status === 'cleaning',
     project: () => state.project,
     current: provider => isChatAccount(provider) ? state.accounts?.[provider] : undefined,
     executable: async provider => {
@@ -566,6 +610,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }
   function syncConversations(): Promise<ConversationIndex> {
     if (syncJob) return syncJob;
+    // Deleting rewrites native session indexes; the sync after deletion picks up the result.
+    if (conversationDeleting) return Promise.resolve({ conversations: state.conversations ?? [], errors: state.syncErrors ?? [] });
     if (!state.project) return Promise.resolve({ conversations: [], errors: [] });
     const project = state.project, version = generation, selectedAtStart = selectionGeneration;
     state.syncing = true; update();
@@ -614,6 +660,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       const [before, after] = await Promise.all([documents.blob(file.original), documents.blob(file.modified)]);
       return imageSnapshots(history, file.file, before, after);
     }
+    if (file.original.scheme === 'git') {
+      // Git serves the index/HEAD side; an absent object (added or deleted file) reads as a missing side.
+      const read = (uri: vscode.Uri) => vscode.workspace.fs.readFile(uri).then(bytes => bytes, () => undefined);
+      const [before, after] = await Promise.all([read(file.original), read(file.modified)]);
+      return { before: imageSnapshot(file.file, before), after: imageSnapshot(file.file, after) };
+    }
   });
   changeNavigation.imageDiff = (file, title) => imageDiff.open(file, title);
   context.subscriptions.push(imageDiff);
@@ -645,6 +697,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }));
   register('agentTandem.open', () => { state.screen = 'changes'; update(); return preview.open(); });
   register('agentTandem.openInTab', () => preview.openInTab());
+  const openImageChanges = async (target: unknown) => {
+    const { files, index } = await gitImageChanges(target);
+    await changeNavigation.openFile(files, 'Git image changes', index);
+  };
+  register('agentTandem.openImageChanges', openImageChanges);
+  context.subscriptions.push(redirectGitImageDiffs(openImageChanges, report));
   const storageAction = async (operation: () => Promise<StorageState>) => {
     if (storageJob) throw new Error('Wait for storage management to finish.');
     storageState = { ...storageState, status: 'loading', error: undefined, progress: undefined }; settings.update();
@@ -656,6 +714,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     storageJob = job;
     try { await job; } finally { if (storageJob === job) storageJob = undefined; }
   };
+  const conversationCleanupAction = async (operation: () => Promise<ConversationCleanupState>, cleaning = false) => {
+    if (conversationCleanupJob) throw new Error('Wait for conversation cleanup to finish.');
+    conversationCleanupJob = true;
+    conversationCleanupState = { ...conversationCleanupState, status: cleaning ? 'cleaning' : 'loading', error: undefined, plan: undefined, dates: undefined, done: 0, total: conversationCleanupState.plan?.conversations.length };
+    settings.update();
+    try {
+      await stopConversationDates();
+      if (cleaning) {
+        // Let a sync already in flight finish; no new one starts until deletion ends.
+        conversationDeleting = true; await syncJob?.catch(() => undefined);
+        assertConversationCleanupIdle();
+      }
+      conversationCleanupState = await operation();
+    }
+    catch (error) {
+      conversationCleanup.cancel();
+      conversationCleanupState = { ...conversationCleanupState, status: 'error', plan: undefined, error: error instanceof Error ? error.message : String(error) };
+      throw error;
+    } finally { conversationDeleting = false; conversationCleanupJob = false; settings.update(); startConversationDates(); }
+  };
+  register('agentTandem.scanConversationCleanup', () => conversationCleanupAction(async () => { conversationCleanup.cancel(); return conversationCleanup.inspect(); }));
+  register('agentTandem.previewConversationCleanup', value => conversationCleanupAction(() => conversationCleanup.preview((value as { keys?: unknown } | undefined)?.keys)));
+  register('agentTandem.deleteConversations', async value => {
+    // Clicking Delete selected/all matching authorizes the selected keys or the filters, with their date cutoff.
+    const request = value as { token?: unknown; keys?: unknown; before?: unknown; filter?: unknown } | undefined;
+    const progress: DeletionProgress = {
+      signal: conversationCleanupDisposed.signal,
+      dates: dates => { conversationCleanupState = { ...conversationCleanupState, dates }; settings.update(); },
+      deleting: (done, total) => { conversationCleanupState = { ...conversationCleanupState, dates: undefined, done, total }; settings.update(); }
+    };
+    await conversationCleanupAction(() => withStorageLock(storage.root, () => request?.filter !== undefined
+      ? conversationCleanup.deleteMatching(request.filter, progress)
+      : request?.keys !== undefined
+        ? conversationCleanup.deleteSelected(request.keys, request.before, progress)
+        : conversationCleanup.delete(request?.token, progress.deleting)), true);
+    const deleted = conversationCleanupState.result;
+    if (deleted) await recordFreed({ bytes: deleted.bytes, conversations: deleted.removed.length });
+    await syncConversations().catch(report);
+    await vscode.commands.executeCommand('agentTandem.refreshUsageDashboard');
+  });
   // Each update posts the whole dashboard state, so per-file ticks are throttled; phase changes and the last file always render.
   let storageProgressAt = 0;
   const storageProgress = (progress: StorageProgress) => {
@@ -693,6 +791,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     // Its Delete history button is the explicit confirmation; do not ask twice.
     storageState = { ...storageState, status: 'cleaning' }; settings.update();
     const result = await storage.deleteHistory(approved, storageProgress); historyDeletionPlan = undefined;
+    await recordFreed({ bytes: result.bytes, files: result.removed });
     storageProgress({ phase: 'refreshing', done: approved.files.length, total: approved.files.length, bytes: result.bytes, totalBytes: approved.bytes });
     state.checkpointPreview = undefined; checkpointPlan = undefined;
     const project = state.project, conversation = state.conversation;
@@ -714,6 +813,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (answer !== 'Clean unused snapshots') return { ...(await storage.inspect()), plan: approved };
     storageState = { ...storageState, status: 'cleaning' }; settings.update();
     const result = await storage.cleanup(approved, storageProgress); cleanupPlan = undefined;
+    await recordFreed({ bytes: result.bytes, files: result.removed });
     storageProgress({ phase: 'refreshing', done: approved.files.length, total: approved.files.length, bytes: result.bytes, totalBytes: approved.bytes });
     return { ...(await storage.inspect()), result };
   }));
@@ -977,6 +1077,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       chatQueue.enqueue(request, state.chat, state.conversation?.conversation.key); state.error = undefined; await saveQueue(); return;
     }
     if (state.chat?.status === 'running' || chatAbort || reviewing || cliManaging) throw new Error('Wait for the active agent, change review or CLI action to finish.');
+    if (conversationCleanupState.status === 'cleaning') throw new Error('Wait for conversation cleanup to finish before starting an agent.');
     const dirty = vscode.workspace.textDocuments.find(document => document.isDirty && document.uri.scheme === 'file' && belongsToProject(path.dirname(document.uri.fsPath), state.project!));
     if (dirty) throw new Error(`Save ${path.basename(dirty.uri.fsPath)} before sending so its current contents can be reviewed and reverted.`);
     const selected = state.conversation?.conversation;
