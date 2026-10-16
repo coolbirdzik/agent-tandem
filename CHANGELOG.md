@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Dashboard: View usage now opens a dedicated account page with an "All accounts" button to return to the account overview. Tokens per 1% quota gives each provider a full-width row with its 5h and Weekly windows side by side, so a single account no longer fills only half the width.
+
 - Storage: sort restore history by the space each conversation actually frees (snapshot data shared with other history or Review no longer inflates its size), show the referenced total beside it, and add Quick select presets for the biggest space savers and history not saved in 7+ or 30+ days.
 
 - Storage: let users free change tracking baselines, which can hold most of the stored data for large projects. They appear per project in Restore history and as an opt-in "Change tracking baselines" choice in Clean up…; deleting one stops tracking for that project (pending review stays) and also sweeps the old unused baselines left by earlier scans.

@@ -8,9 +8,9 @@ To regenerate the PNG, render `icon.svg` at its native 256 × 256 size, preservi
 
 `screenshots/review.png` and `screenshots/chat.png` render the actual AgentTandem webview with the demonstration data in `scripts/preview-panel.mjs`. They contain no personal conversations or account data.
 
-`screenshots/history.jpg` uses the same panel fixture with conversation history open. `screenshots/dashboard.jpg` and `screenshots/storage.jpg` use `scripts/preview-settings.mjs --demo` with `?accounts=1` and `?storage=1`. The `--demo` option generates synthetic usage and never loads the user's local token records.
+`screenshots/history.png` uses the same panel fixture with conversation history open. The Settings captures (`dashboard`, `token-dashboard`, `accounts`, `account-switch`, `preferences`, `storage`) use `scripts/preview-settings.mjs --demo`. `account-detail` (after **View usage** on the first account card), `quota-burn-down`, `tokens-per-quota`, `conversations` (with one conversation opened) and `usage-breakdown` are section crops of the **All accounts · This month** dashboard. The `--demo` option generates synthetic usage and never loads the user's local token records. Run `node scripts/capture-readme.mjs` to regenerate them all.
 
-`screenshots/editor-diff.png` is an actual VS Code Development Host capture from `artifacts/inline-layout.png`, produced by `scripts/verify-floating-navigation.mjs`. It shows the local development build's native multi-file inline diff with experimental per-block action cards and navigation. The stable Marketplace build uses CodeLens instead. All source files in the image are navigation test fixtures.
+`screenshots/editor-diff.png`, `image-diff.png` and `agent-changes.png` are actual VS Code Development Host captures of the Marketplace build, produced by `node scripts/test-review-webview.mjs --marketplace-only --readme` and copied by `scripts/capture-readme.mjs`. All source files in the images are review test fixtures.
 
 ## Provider assets
 

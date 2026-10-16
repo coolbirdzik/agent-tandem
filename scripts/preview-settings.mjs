@@ -80,11 +80,12 @@ const storageDemo = { status: 'ready', root: 'Example profile / Code / User / gl
   categories: [{ label: 'Review snapshots & tracking', bytes: 96 * 1024 * 1024, files: 840 }, { label: 'Message checkpoints & Undo', bytes: 1024 * 1024, files: 12 }, { label: 'Chat attachments', bytes: 28 * 1024 * 1024, files: 18 }, { label: 'Usage & account evidence', bytes: 3 * 1024 * 1024, files: 24 }], cleanable: { bytes: 12 * 1024 * 1024, files: 2 },
   plan: { token: 'demo-preview', createdAt: now, bytes: 12 * 1024 * 1024, files: [{ relative: 'reviews/history/snapshots/00000000-0000-4000-8000-000000000001.json', bytes: 1024, modified: 0, changed: 0, inode: 1 }, { relative: `reviews/history/blobs/${'0'.repeat(64)}`, bytes: 12 * 1024 * 1024 - 1024, modified: 0, changed: 0, inode: 2 }] } };
 storageDemo.histories = [
-  { id: 'a'.repeat(64), projectId: 'website', project: 'L:/Code/demo-website', label: 'Demo · Update the dashboard layout', kind: 'checkpoints', count: 14, bytes: 64 * 1024 * 1024, createdAt: now - 8 * 86400000, updatedAt: now - 86400000 },
-  { id: 'b'.repeat(64), projectId: 'website', project: 'L:/Code/demo-website', label: 'Demo · Add image upload', kind: 'checkpoints', count: 6, bytes: 28 * 1024 * 1024, createdAt: now - 5 * 86400000, updatedAt: now - 3 * 86400000 },
-  { id: 'c'.repeat(64), projectId: 'desktop', project: 'L:/Code/demo-desktop', label: 'Demo · Fix folder drag and drop', kind: 'checkpoints', count: 9, bytes: 12 * 1024 * 1024, createdAt: now - 3 * 86400000, updatedAt: now - 3600000 },
-  { id: 'd'.repeat(64), projectId: 'website', project: 'L:/Code/demo-website', label: 'Last restore backup', kind: 'undo', count: 1, bytes: 8 * 1024 * 1024, createdAt: now - 86400000, updatedAt: now - 86400000 },
-];
+  { id: 'a'.repeat(64), projectId: 'website', project: 'L:/Code/demo-website', label: 'Demo · Update the dashboard layout', kind: 'checkpoints', count: 14, bytes: 64 * 1024 * 1024, reclaimable: 48 * 1024 * 1024, createdAt: now - 8 * 86400000, updatedAt: now - 86400000 },
+  { id: 'b'.repeat(64), projectId: 'website', project: 'L:/Code/demo-website', label: 'Demo · Add image upload', kind: 'checkpoints', count: 6, bytes: 28 * 1024 * 1024, reclaimable: 18 * 1024 * 1024, createdAt: now - 5 * 86400000, updatedAt: now - 3 * 86400000 },
+  { id: 'c'.repeat(64), projectId: 'desktop', project: 'L:/Code/demo-desktop', label: 'Demo · Fix folder drag and drop', kind: 'checkpoints', count: 9, bytes: 12 * 1024 * 1024, reclaimable: 9 * 1024 * 1024, createdAt: now - 3 * 86400000, updatedAt: now - 3600000 },
+  { id: 'd'.repeat(64), projectId: 'website', project: 'L:/Code/demo-website', label: 'Last restore backup', kind: 'undo', count: 1, bytes: 8 * 1024 * 1024, reclaimable: 2 * 1024 * 1024, createdAt: now - 86400000, updatedAt: now - 86400000 },
+  { id: 'e'.repeat(64), projectId: 'desktop', project: 'L:/Code/demo-desktop', label: 'Change tracking baseline', kind: 'tracking', count: 0, bytes: 22 * 1024 * 1024, reclaimable: 22 * 1024 * 1024, createdAt: now - 10 * 86400000, updatedAt: now - 2 * 86400000 },
+].sort((a, b) => b.reclaimable - a.reclaimable);
 storageDemo.plan = undefined;
 const server = createServer(async (request, response) => {
   try {

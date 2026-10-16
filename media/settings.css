@@ -147,8 +147,10 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 #api-cost-caption { margin: 4px 0 0; }
 .api-cost-parts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .api-cost-parts strong { display: block; margin-top: 5px; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.quota-estimates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
-.quota-estimate-provider h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin: 0 0 16px; }
+.quota-estimates { display: grid; gap: 32px; }
+.quota-estimate-windows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+.quota-estimate-provider h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+.quota-estimate-account { margin: 0 0 12px; }
 .quota-estimate-provider { min-width: 0; }
 .quota-estimate-row { border-top: 1px solid var(--line); padding: 14px 0; }
 .quota-estimate-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -409,6 +411,9 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 #usage-attribution { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 20px; margin-top: 24px; }
 #usage-attribution summary { font-weight: 500; }
 #account-overview > .section-heading { margin-bottom: 16px; }
+.account-detail-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+.account-detail-bar h2 { margin: 0; }
+.account-detail-bar p { margin: 2px 0 0; }
 @media (max-width: 1000px) {
   .filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   #reset-filters { justify-self: start; }
@@ -426,7 +431,8 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 }
 @media (max-width: 600px) {
   .api-cost-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .quota-estimates { grid-template-columns: 1fr; gap: 16px; }
+  .quota-estimates { gap: 16px; }
+  .quota-estimate-windows { grid-template-columns: 1fr; }
   .settings-header { gap: 12px; padding: 10px 16px; }
   .settings-brand { width: 100%; }
   .settings-header nav { gap: 14px; }

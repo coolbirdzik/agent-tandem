@@ -162,6 +162,10 @@ el('attribution-form').onsubmit = event => {
   const scope = assignmentScope(), accountId = el<HTMLSelectElement>('attribution-account').value;
   if (!state?.attributionBusy && validAssignmentScope(scope) && accountId) send('usageAttribution', { action: 'assign', scope, accountId: accountId === UNKNOWN_ACCOUNT ? null : accountId });
 };
+el('account-detail-back').onclick = () => {
+  for (const id of ['filter-account', 'filter-provider', 'filter-model']) el<HTMLSelectElement>(id).value = '';
+  renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); el('dashboard').scrollIntoView?.({ block: 'start' });
+};
 el('dashboard-view').onchange = () => {
   for (const id of ['filter-account', 'filter-provider', 'filter-model']) el<HTMLSelectElement>(id).value = '';
   renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
@@ -378,7 +382,13 @@ function scopedQuotaObservations(provider: ConversationProvider, account = dashb
 }
 function renderAccountGroups(filters: UsageFilters) {
   const grouped = el<HTMLSelectElement>('dashboard-view').value === 'accounts', selected = !!filters.accountId;
-  el('account-overview').hidden = !grouped; el('dashboard-detail').hidden = grouped && !selected;
+  el('account-overview').hidden = !grouped || selected; el('dashboard-detail').hidden = grouped && !selected;
+  el('account-detail-bar').hidden = !grouped || !selected;
+  if (grouped && selected) {
+    const group = dashboardGroups(filters).find(row => row.provider === filters.provider && (row.account?.id ?? UNKNOWN_ACCOUNT) === filters.accountId);
+    el('account-detail-title').textContent = group?.label || group?.account?.email || 'Unknown account';
+    el('account-detail-meta').textContent = `${filters.provider === 'Claude' ? 'Claude Code' : filters.provider ?? ''} · ${group?.account ? usageAccountLabel(group.account) : 'Unattributed history'}`;
+  }
   const root = el('account-groups'); root.replaceChildren();
   for (const group of dashboardGroups(filters)) {
     const id = group.account?.id ?? UNKNOWN_ACCOUNT, item = node('article', undefined, 'account-group'); item.dataset.provider = group.provider;
@@ -417,7 +427,7 @@ function renderAccountGroups(filters: UsageFilters) {
     open.onclick = () => {
       el<HTMLSelectElement>('filter-provider').value = group.provider; el<HTMLSelectElement>('filter-model').value = '';
       renderUsage(); el<HTMLSelectElement>('filter-account').value = id;
-      renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); el('dashboard-detail').scrollIntoView?.({ block: 'start' });
+      renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); el('dashboard').scrollIntoView?.({ block: 'start' });
     };
     open.classList.add('account-group-open'); item.append(open); root.append(item);
   }
@@ -630,6 +640,7 @@ function renderQuotaEstimates() {
     heading.append(providerIcon(provider), node('span', provider === 'Claude' ? 'Claude Code' : provider)); item.append(heading);
     const identity = usageAccount(provider, dashboardAccountStatus(provider)?.account);
     if (identity) item.append(node('p', usageAccountLabel(identity), 'muted quota-estimate-account'));
+    const windows = node('div', undefined, 'quota-estimate-windows'); item.append(windows);
     if (!state || (state.status === 'loading' && !state.data && !state.quotaHistory?.length && !state.quotaBaselines?.length && !quotaMeters(provider, state.accounts?.[provider]).length)) { const loading = node('div'); loadingRows(loading, 2); item.append(loading); root.append(item); continue; }
     const account = dashboardAccountStatus(provider), estimates = quotaEstimates(provider, account, state.data);
     const meters = quotaMeters(provider, account);
@@ -703,7 +714,7 @@ function renderQuotaEstimates() {
         if (trend.observations.length > 30) details.title = 'Latest 30 cycles shown; average includes all recorded cycles.';
         row.append(details);
       }
-      item.append(row);
+      windows.append(row);
     }
     root.append(item);
   }

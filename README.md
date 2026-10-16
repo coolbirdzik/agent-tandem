@@ -65,7 +65,11 @@ Run **AgentTandem: Open Settings and Usage Dashboard**, or use **Dashboard** bel
 
 ![Dashboard account overview with local token totals, saved profiles and live quota](media/screenshots/dashboard.png)
 
-Filter by **provider, account, model and date range**, including custom dates. Group activity by **day, week or month**. Inspect input, output, cache reads/writes, requests, provider/model breakdowns and daily activity. Search **Conversations** and select a row for its token, cache, model and cost details.
+**View usage** opens that account's own dashboard: its API activity, Local totals, cost, chart, quota, burn-down and estimates. Select **← All accounts** to return to the account overview.
+
+![Account detail for a fictional Codex Personal profile with the All accounts back button, API activity, local totals and quota](media/screenshots/account-detail.png)
+
+Filter by **provider, account, model and date range**, including custom dates. Group activity by **day, week or month**. Inspect input, output, cache reads/writes, requests, provider/model breakdowns and daily activity.
 
 | Source | What it shows |
 | --- | --- |
@@ -73,13 +77,37 @@ Filter by **provider, account, model and date range**, including custom dates. G
 | **Local** | Deduplicated token counts recorded in local Codex and Claude history across projects, including archived and subagent sessions. |
 | **Estimate** | API-equivalent USD cost, tokens per 1% quota and projected reset-cycle capacity. These are estimates, not subscription charges or invoices. |
 
+### Token dashboard
+
+**All accounts** shows API token activity (lifetime tokens, peak day, longest turn and streaks), Local input/output/cache totals, the API-equivalent cost split, token activity stacked by model and current account quota.
+
 ![Token dashboard with separate API activity, local input/output/cache totals, model activity and account quota](media/screenshots/token-dashboard.png)
 
 **API activity and Local totals are displayed separately and never added together.** Codex API activity depends on CLI/account support; Claude token details come from local history. Model filters apply to Local usage. Missing API metrics remain unavailable, and unknown model prices remain **Unpriced**.
 
 Account attribution preserves native per-turn evidence. Older Codex history may be labeled **Inferred from session creator**; unmatched history stays **Unknown account**. **Assign history to an account** lets you confirm a conversation/date range or keep it unknown without rewriting native transcripts.
 
-**Quota burn-down** shows observed usage pace and projected exhaustion. **Tokens per 1% quota** and reset-cycle comparisons use observed account/reset data, with API, Local and Device estimates kept separate. Other devices and incomplete history can affect these estimates. Local totals cover recorded history on this machine; they cannot include deleted or unlogged usage elsewhere.
+### Quota burn-down
+
+Each quota window (Codex/Claude Code × 5h/7d) gets a card plotting **remaining quota** in the current reset cycle against an **even pace** to reset, plus a **projection** from the recent burn rate. The card says whether the window is **On track** (and how much will be left at reset) or **Runs out ≈ time · before reset**, with even-pace, per-cycle and last-hour rates.
+
+![Quota burn-down cards for Codex and Claude Code 5h and 7d windows with remaining, even-pace and projection lines](media/screenshots/quota-burn-down.png)
+
+### Tokens per 1% quota
+
+Each provider takes a full-width row with its 5h and Weekly windows side by side. Estimates show how many tokens one percent of each quota window buys, the tokens left in the current cycle and the change against earlier cycles. **Tokens per reset cycle** lists recorded tokens, the full-cycle estimate at 100% and the change from the previous cycle. API, Local and Device estimates are kept separate. Other devices, model mix and incomplete history can affect these estimates. Local totals cover recorded history on this machine; they cannot include deleted or unlogged usage elsewhere.
+
+![Tokens per 1% quota estimates per account and window with per-reset-cycle tables](media/screenshots/tokens-per-quota.png)
+
+### Conversations and breakdowns
+
+Search **Conversations** by title or project and select a row for its tokens, input/cache, output, API cost, quota-window equivalents, per-model split and daily totals. **Assign this conversation** opens history assignment for it.
+
+![Conversation table with an opened conversation showing token totals, model split and daily usage](media/screenshots/conversations.png)
+
+**Daily breakdown by model** groups usage by the selected period with a model-mix bar; expand a period to see each model. **Usage by account** totals Local tokens per account and shows how each row was attributed.
+
+![Daily breakdown by model with model-mix bars and usage by account with attribution](media/screenshots/usage-breakdown.png)
 
 Refreshing reads quota and usage without sending an inference prompt. An open dashboard refreshes every minute and reuses a token-only history cache.
 

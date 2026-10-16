@@ -196,6 +196,14 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#accounts')!.textContent).toContain('two@test');
     expect(document.querySelector('#accounts')!.textContent).toContain('40% left');
     expect(document.querySelector('#accounts')!.textContent).not.toContain('80% left');
+    expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(false);
+    expect(document.querySelector('#account-detail-title')!.textContent).toBe('Work');
+    document.querySelector<HTMLButtonElement>('#account-detail-back')!.click();
+    expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe('');
+    expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>('#dashboard-detail')!.hidden).toBe(true);
+    [...document.querySelectorAll('.account-group')].find(row => row.textContent?.includes('Work'))!.querySelector<HTMLButtonElement>('button')!.click();
     choose('dashboard-view', 'all'); expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(true);
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('300');
     expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe('');
