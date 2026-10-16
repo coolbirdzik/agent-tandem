@@ -7,6 +7,8 @@ interface Lease { active: boolean }
 const held = new AsyncLocalStorage<Map<string, Lease>>();
 const queues = new Map<string, Promise<void>>();
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
+// Windows reports a file or directory another process is deleting as EPERM/EACCES/EBUSY until the delete completes.
+const deleting = (error: unknown) => process.platform === 'win32' && ['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code!);
 const staleOwnerMs = 60000;
 /** Recover only empty, unpublished owner temp files left by an interrupted write. */
 async function recoverOwnerlessLock(directory: string, ownerFile: string): Promise<boolean> {
@@ -67,7 +69,7 @@ async function acquire<T>(root: string, key: string, operation: () => Promise<T>
       if (!alive && (await readFile(ownerFile, 'utf8')) === JSON.stringify(previous)) {
         await unlink(ownerFile); await rmdir(directory).catch(() => undefined); continue;
       }
-    } catch (error) { if (!missing(error)) throw error; }
+    } catch (error) { if (!missing(error) && !deleting(error)) throw error; }
     if (performance.now() >= deadline) throw new Error('Snapshot storage is still in use by another capture or cleanup after 2 minutes. Wait for it to finish, then try again.');
     await new Promise(resolve => setTimeout(resolve, 25));
   }
@@ -83,6 +85,17 @@ async function acquire<T>(root: string, key: string, operation: () => Promise<T>
     lease.active = false;
     await unlink(temporaryOwner).catch(error => { if (!missing(error)) throw error; });
     if (await readFile(ownerFile, 'utf8').then(value => value === JSON.stringify(owner), () => false)) await unlink(ownerFile);
-    await rmdir(directory).catch(() => undefined);
+    await removeLockDirectory(directory);
+  }
+}
+/** A contender briefly reading owner.json can keep its delete pending on Windows, so rmdir needs a few retries. */
+async function removeLockDirectory(directory: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await rmdir(directory); return; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== 'win32' || attempt >= 20 || !(code === 'ENOTEMPTY' || deleting(error))) return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
 }
