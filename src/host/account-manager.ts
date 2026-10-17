@@ -14,6 +14,8 @@ interface Dependencies {
   executable(provider: AccountProvider): Promise<string>; changed(provider: AccountProvider): Promise<void>; update(): void;
   openDesktop?(provider: 'Cursor' | 'Antigravity'): Promise<void>;
   observed?(statuses: ProviderAccountStatus[]): Promise<void>;
+  // Native IDE extensions only read the CLI sign-in at startup, so offer a window reload.
+  switched?(provider: 'Codex' | 'Claude'): Promise<void> | void;
 }
 export class AccountManager {
   state: Pick<UsageDashboardState, 'managedAccounts' | 'accountsBusy' | 'accountsError' | 'accountsNotice' | 'accountSwitch'> = { managedAccounts: [] };
@@ -83,6 +85,7 @@ export class AccountManager {
     if (this.state.accountsBusy) throw new Error('Account operation is still running.');
     if (request.action === 'refresh') { this.state.accountsError = undefined; await this.refresh(); return; }
     this.state.accountsBusy = true; this.state.accountsError = undefined; this.state.accountsNotice = undefined; this.deps.update();
+    let reload: 'Codex' | 'Claude' | undefined;
     if (request.action === 'switch') {
       const profile = this.state.managedAccounts?.find(row => row.id === request.id);
       this.state.accountSwitch = { id: randomUUID(), profileId: request.id || '', provider: profile?.provider, label: profile?.label, status: 'running', startedAt: Date.now(), outcome: 'notChanged', logs: [] };
@@ -142,6 +145,7 @@ export class AccountManager {
             this.state.accountSwitch!.outcome = 'switched'; this.switchLog('Selected sign-in verified.', 'success');
           } catch (error) { this.switchLog('Verification failed.', 'error'); await rollback(); throw error; }
         });
+        if (isChatAccount(provider)) reload = provider;
         this.switchLog(isChatAccount(provider) ? 'Refreshing account, models and usage.' : 'Refreshing the saved account list.');
         await this.deps.changed(provider); this.state.accountsNotice = isChatAccount(provider) ? `${provider} switched in AgentTandem and the default CLI.` : `${provider} default sign-in switched. Reopen the app to use it.`;
         this.state.accountSwitch!.status = 'success'; this.state.accountSwitch!.notice = this.state.accountsNotice; this.switchLog(isChatAccount(provider) ? 'Account switch complete.' : 'Account switch complete. Reopen the IDE to use it.', 'success');
@@ -167,5 +171,7 @@ export class AccountManager {
       if (request.action === 'switch') this.state.accountSwitch!.finishedAt = Date.now();
       this.state.accountsBusy = false; await this.publish();
     }
+    // Not awaited: the prompt must not keep the account UI busy. The sign-in already changed even if the refresh failed.
+    if (reload) void Promise.resolve(this.deps.switched?.(reload)).catch(() => undefined);
   }
 }
