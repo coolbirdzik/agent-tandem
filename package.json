@@ -678,6 +678,11 @@
           "default": true,
           "description": "Show a File i/n button at the top of AgentTandem native diff editors. Click to choose a changed file. The button scrolls with the code."
         },
+        "agentTandem.revealReviewFileInExplorer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Select the file being reviewed in the Explorer as you move between changed files. Keyboard focus stays in the editor."
+        },
         "agentTandem.codexCLIId": {
           "type": "string",
           "default": "",

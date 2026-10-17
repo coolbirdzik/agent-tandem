@@ -3,6 +3,7 @@ import { useReviewDiffLayout } from './diff-layout';
 import path from 'node:path';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { ChangeFileBadge } from './change-file-badge';
+import { revealInExplorer } from './explorer-reveal';
 
 export interface ChangeComparison { file: string; original: vscode.Uri; modified: vscode.Uri; review?: { project: string; revision: string; group?: string } }
 interface Scope { files: ChangeComparison[]; title: string; index: number }
@@ -133,6 +134,11 @@ export class ChangeNavigation {
     void vscode.commands.executeCommand('setContext', 'agentTandem.changeNavigation', !!state);
     void vscode.commands.executeCommand('setContext', 'agentTandem.multipleChangedFiles', !!state && state.total > 1);
     this.changes.fire();
+    const comparison = this.comparison();
+    if (state && comparison) {
+      const target = comparison.review ? vscode.Uri.joinPath(vscode.Uri.file(comparison.review.project), comparison.file) : comparison.modified.scheme === 'file' ? comparison.modified : undefined;
+      if (target) void revealInExplorer(target);
+    }
     if (!state) { this.counter.hide(); return; }
     this.counter.text = `$(diff) File ${state.index}/${state.total}`;
     this.counter.tooltip = `${state.file}\nClick to choose a changed file. Previous/Next file skips directly between files; Previous/Next change follows individual edits.`;

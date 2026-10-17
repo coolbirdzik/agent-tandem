@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Review: select the file being reviewed in VS Code's Explorer as you move between changed files, in both the Monaco review and native diffs. Review files open from snapshots, so Explorer's own auto-reveal never followed them. Keyboard focus returns to the editor; deleted files are skipped. Turn off with `agentTandem.revealReviewFileInExplorer`.
+
 - Open Git image changes in AgentTandem's Before / After view. Clicking an image in Source Control, or a Git image diff tab restored after reload, no longer reaches VS Code's built-in binary image diff, which fails with "Cannot read properties of undefined (reading 'selection')" and closes. Staged changes compare HEAD → index, unstaged index → working tree (untracked as added), with file navigation across changed images. Also available as **AgentTandem: Open Image Changes**; turn off with `agentTandem.openGitImageDiffs`.
 
 - Review: add **Reject all** beside **Accept all** in the file toolbar. It restores the displayed file to its saved baseline after a confirmation naming the file, binds to the shown file and revision like Accept all, and can be undone. Accept/Reject buttons in the review editor are now rounded pills, set apart from the square navigation controls.

@@ -5,6 +5,7 @@ import type { ReviewRequest, ReviewState, ReviewStore } from '../core/review';
 import { reviewContext, type ReviewEditorState } from '../core/review-webview';
 import { reviewGroup } from '../core/review-groups';
 import { reviewWebviewHtml } from './review-webview-html';
+import { revealInExplorer } from './explorer-reveal';
 
 /** Shared stable-API review editor. The host owns scope, revisions and all decisions. */
 export class ReviewWebview implements vscode.Disposable {
@@ -74,6 +75,7 @@ export class ReviewWebview implements vscode.Disposable {
       ...(!files.length ? { notice: 'All changes in this review have been reviewed.' } : {}) };
     this.panel.title = file ? `${file.path.split(/[\\/]/).pop()} · AgentTandem Review` : 'AgentTandem · Review';
     this.post();
+    if (file && this.panel.active) void revealInExplorer(vscode.Uri.joinPath(vscode.Uri.file(scope.project), file.path));
   }
   private post(force = false) {
     if (!this.panel) return;
