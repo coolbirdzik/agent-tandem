@@ -24,6 +24,7 @@ import { runClaudeChat } from './providers/claude-chat';
 import { belongsToProject } from './providers/conversations';
 import { ReviewStore, type ReviewRequest, type ReviewHunkRequest, type CheckpointPlan } from './core/review';
 import { reviewGroup } from './core/review-groups';
+import { reviewIgnoredPaths } from './core/review-git';
 import { CheckpointStore } from './core/checkpoints';
 import { ModelStore } from './core/model-store';
 import { EffortStore } from './core/effort-store';
@@ -119,6 +120,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let externalProject: string | undefined;
   let externalTimer: ReturnType<typeof setTimeout> | undefined;
   let externalDirty = false;
+  // Paths changed since the last capture; undefined requires a full capture.
+  let externalPaths: Set<string> | undefined;
   let externalJob: Promise<void> | undefined;
   let externalSwitching = false;
   const state: ViewState = { sessions: [], running: false, providers: [], screen: 'changes' };
@@ -534,13 +537,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   function configureExternalWatcher(project: string, enabled: boolean) {
     if (enabled && externalProject === project && externalWatcher) return;
     externalWatcher?.dispose(); externalWatcher = undefined; externalProject = undefined;
-    clearTimeout(externalTimer); externalDirty = false;
+    clearTimeout(externalTimer); externalDirty = false; externalPaths = undefined;
     if (!enabled || !vscode.workspace.isTrusted || disposed) return;
     externalProject = project;
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(project, '**/*'));
     const changed = (uri: vscode.Uri) => {
       const name = path.relative(project, uri.fsPath).replace(/\\/g, '/');
       if (name.startsWith('../') || name.split('/').some(part => ['.git', 'node_modules', '.test-runtime'].includes(part)) || /\.agent-tandem-revert$/.test(name)) return;
+      externalPaths?.add(name); if (externalPaths && externalPaths.size > 2000) externalPaths = undefined;
       externalDirty = true; scheduleExternalCapture();
     };
     const events = [watcher.onDidCreate(changed), watcher.onDidChange(changed), watcher.onDidDelete(changed)];
@@ -550,20 +554,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     // Catch writes made while VS Code was closed or another root was selected.
     externalDirty = true; scheduleExternalCapture();
   }
-  async function captureExternalReview() {
+  async function captureExternalReview(manual = false) {
     const project = state.project, version = generation;
     if (!project || !state.review?.externalTracking || !vscode.workspace.isTrusted) return;
     if (externalJob) { await externalJob; if (externalDirty) scheduleExternalCapture(); return; }
     if (reviewing || chatAbort || externalSwitching) { scheduleExternalCapture(); return; }
     clearTimeout(externalTimer); externalDirty = false;
+    const paths = externalPaths && [...externalPaths], pending = new Set(state.review.files.map(file => file.path));
+    externalPaths = new Set();
     const job = (async () => {
-      state.reviewBusy = true; update();
+      // Build output in ignored folders changes constantly but can never become a review.
+      if (!manual && paths?.length && !paths.some(name => pending.has(name))) {
+        const ignored = await reviewIgnoredPaths(project, paths);
+        if (paths.every(name => ignored.has(name))) return;
+      }
+      // Background captures keep every view steady; only a requested refresh shows progress.
+      if (manual) { state.reviewBusy = true; update(); }
+      let changed = false;
       try {
         const captured = await reviews.scanExternal(project);
         const result = await attributeExternalReview(project, captured);
-        if (!disposed && generation === version && state.project === project) { state.review = result; state.reviewPreview = undefined; }
+        // A turn that started meanwhile publishes the newer review state itself.
+        if (!disposed && generation === version && state.project === project && !chatAbort && !activeReviewProjects.has(project) && JSON.stringify(result) !== JSON.stringify(state.review)) {
+          if (result.revision !== state.review?.revision) state.reviewPreview = undefined;
+          state.review = result; changed = true;
+        }
       } finally {
-        if (!disposed && generation === version && state.project === project) { state.reviewBusy = false; update(); }
+        if (!disposed && generation === version && state.project === project && (manual || changed)) { if (manual) state.reviewBusy = false; update(); }
       }
     })();
     externalJob = job;
@@ -584,6 +601,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     }
     return edits.length ? reviews.attributeConversations(project, edits) : review;
   }
+  // Review actions wait for a background capture instead of failing.
+  async function settleExternalCapture() { while (externalJob) await externalJob.catch(() => undefined); }
   async function refreshReview(project = state.project, recover = false) {
     if (!project) return;
     let review = await reviews.read(project);
@@ -1266,7 +1285,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (disposed || version !== generation || request.project !== state.project || request.revision !== state.review?.revision) throw new Error('The project or review changed. Choose the current changes again.');
       if (chatAbort || reviewing || externalJob || externalSwitching) throw new Error('Wait for the agent and change capture to finish.');
     };
-    ready();
+    await settleExternalCapture(); ready();
     const files = await reviews.editorFiles(request);
     let conversation;
     if (!remove) {
@@ -1284,7 +1303,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         conversation = selected.conversation;
       }
     }
-    ready();
+    await settleExternalCapture(); ready();
     reviewing = true; state.reviewBusy = true; state.error = undefined; update();
     try {
       const result = await reviews.setConversationLink(request, conversation);
@@ -1295,7 +1314,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   };
   register('agentTandem.linkReviewConversation', value => setReviewConversation(value));
   register('agentTandem.unlinkReviewConversation', value => setReviewConversation(value, true));
-  register('agentTandem.refreshReview', async () => { if (state.review?.externalTracking) await captureExternalReview(); else await refreshReview(state.project, true); });
+  register('agentTandem.refreshReview', async () => { if (state.review?.externalTracking) await captureExternalReview(true); else await refreshReview(state.project, true); });
   register('agentTandem.reviewLatest', async () => {
     followRoot();
     const project = state.project;
@@ -1310,6 +1329,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const previewRevert = async (value: unknown) => {
     const request = reviewRequest(value), project = state.project;
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before reviewing agent changes.');
+    await settleExternalCapture();
     if (chatAbort || reviewing || externalJob || externalSwitching) throw new Error('Wait for the agent and change capture to finish.');
     const hunk = (value as Partial<ReviewHunkRequest>).hunk;
     if (hunk !== undefined && (typeof hunk !== 'string' || !request.file || !(await reviews.hunks(request)).some(item => item.id === hunk))) throw new Error('This change is stale. Review the updated preview.');
@@ -1325,6 +1345,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const hunk = (value as Partial<ReviewHunkRequest>).hunk;
     if (hunk !== undefined && (typeof hunk !== 'string' || !request.file)) throw new Error('Choose a change to review.');
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before reviewing agent changes.');
+    await settleExternalCapture();
     if (chatAbort || reviewing || externalJob || externalSwitching) throw new Error('Wait for the agent and change capture to finish.');
     if (revert || hunk !== undefined) {
       const targets = state.review?.files.filter(file => (!request.file || file.path === request.file) && (!request.group || reviewGroup(file) === request.group)) ?? [];
@@ -1380,6 +1401,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const project = state.project, undo = state.review?.undo;
     if (!project || !undo || (value !== undefined && (!value || typeof value !== 'object' || (value as { id?: string }).id !== undo.id || (value as { project?: string }).project !== project))) throw new Error('This Revert is no longer available to Undo.');
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before undoing Revert.');
+    await settleExternalCapture();
     if (chatAbort || reviewing || externalJob || externalSwitching) throw new Error('Wait for the agent and change capture to finish.');
     const dirty = vscode.workspace.textDocuments.find(document => document.isDirty && undo.files.some(file => vscode.Uri.joinPath(vscode.Uri.file(project), file).toString().toLowerCase() === document.uri.toString().toLowerCase()));
     if (dirty) throw new Error(`Cannot undo ${path.basename(dirty.uri.fsPath)} while it has unsaved edits. Your edits were kept.`);
@@ -1396,7 +1418,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     decideReview, report);
   context.subscriptions.push(hunkActions);
   reviewEditor = new ReviewWebview(context.extensionUri, reviews,
-    () => ({ project: state.project, review: state.review, conversations: state.conversations, busy: !!chatAbort || reviewing || !!externalJob || externalSwitching }),
+    () => ({ project: state.project, review: state.review, conversations: state.conversations, busy: !!chatAbort || reviewing || externalSwitching, capturing: externalJob }),
     async (command, value) => vscode.commands.executeCommand(command, value),
     request => openReviewChanges(reviews, request, changeNavigation, () => !disposed && request.project === state.project && request.revision === state.review?.revision));
   context.subscriptions.push(reviewEditor);

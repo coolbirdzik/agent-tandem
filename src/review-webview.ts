@@ -11,7 +11,10 @@ const create = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '', classN
   const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
 };
 const icon = (name: string) => { const node = create('span', '', `codicon codicon-${name}`); node.setAttribute('aria-hidden', 'true'); return node; };
-let state: ReviewEditorState = { files: [], busy: true }, signature = '', active = 0;
+let state: ReviewEditorState = { files: [], busy: true }, signature = '', listSignature = '', active = 0;
+// Rendered actions share this binding. A new revision that leaves the shown
+// file's snapshots unchanged updates it in place instead of rebuilding the diff.
+let bound: { revision: string | undefined; file: string | undefined } = { revision: undefined, file: undefined };
 let sections: HTMLElement[] = [];
 let codeEditor: ReviewCodeEditor | undefined;
 const send = (type: string, extra: Record<string, unknown> = {}) => {
@@ -59,7 +62,7 @@ function navigateFile(direction: number) {
   if (file) send('selectFile', { file: file.path, navigation: 'first' });
 }
 function block(hunk: ReviewHunk, index: number) {
-  const binding = { revision: state.revision, file: state.file!.path };
+  const binding = bound;
   const section = create('section', '', 'diff-block'); section.tabIndex = -1;
   section.dataset.hunk = hunk.id; section.setAttribute('aria-label', `Change block ${index + 1}`);
   const header = create('header', '', 'block-toolbar');
@@ -111,17 +114,24 @@ function render(next: ReviewEditorState) {
     if (!state.busy && fileBinding.file && state.revision === fileBinding.revision && state.file?.path === fileBinding.file) decide(type, undefined, active, fileBinding);
   };
   renderContext();
-  const nextSignature = `${state.project}:${state.revision}:${state.file?.path}`;
-  if (nextSignature === signature) { controls(); return; }
-  signature = nextSignature;
-  const picker = element<HTMLSelectElement>('files'); picker.replaceChildren();
-  state.files.forEach(file => { const option = create('option', file.path); option.value = file.path; option.selected = file.path === state.file?.path; picker.append(option); });
-  element('file-count').textContent = state.files.length ? `File ${state.files.findIndex(file => file.path === state.file?.path) + 1}/${state.files.length}` : '0 files';
+  const nextList = `${state.files.map(file => file.path).join('\0')}\n${state.file?.path}`;
+  if (nextList !== listSignature) {
+    listSignature = nextList;
+    const picker = element<HTMLSelectElement>('files'); picker.replaceChildren();
+    state.files.forEach(file => { const option = create('option', file.path); option.value = file.path; option.selected = file.path === state.file?.path; picker.append(option); });
+    element('file-count').textContent = state.files.length ? `File ${state.files.findIndex(file => file.path === state.file?.path) + 1}/${state.files.length}` : '0 files';
+  }
   element('file-kind').textContent = state.file?.kind ?? '';
+  // Captures elsewhere in the workspace change the revision; only new snapshots
+  // of this file need a new diff editor.
+  const nextSignature = JSON.stringify([state.project, state.file?.path, state.file?.before, state.file?.after, state.file?.beforeText?.length, state.file?.afterText?.length,
+    state.file?.hunks.map(hunk => hunk.id), state.file?.notice, state.file ? undefined : state.notice, Math.min(state.files.length, 2)]);
+  if (nextSignature === signature) { bound.revision = state.revision; controls(); return; }
+  signature = nextSignature; bound = { revision: state.revision, file: state.file?.path };
   const diff = element('diff'); codeEditor?.dispose(); codeEditor = undefined; diff.classList.remove('monaco-review'); diff.replaceChildren(); sections = [];
   if (!state.file) diff.append(create('div', state.notice ?? 'No pending changes. Saved edits will appear in Review.', 'empty'));
   else if (state.file.notice) {
-    const binding = { revision: state.revision, file: state.file.path };
+    const binding = bound;
     const empty = create('section', '', `file-review${state.file.images ? ' image-file-review' : ''}`);
     const metadata = create('div', '', 'file-review-meta');
     const heading = create('div', '', 'file-review-heading'); heading.append(icon(state.file.images ? 'file-media' : state.file.binary ? 'file-binary' : 'file'), create('h2', state.file.path));

@@ -62,6 +62,16 @@ describe('Git commits automatically accept pending review', () => {
     const review = await f.store.read(f.project);
     expect(review.files).toEqual([]); expect(review.externalTracking).toBeUndefined();
   });
+  it('drops pending build output once .gitignore covers it without inventing deletions', async () => {
+    const f = await fixture(); await mkdir(path.join(f.project, 'target')); await f.set('target/out.bin', 'build 1\n'); await f.set('two.ts', 'pending\n');
+    expect((await f.store.scanExternal(f.project)).files.map(file => file.path)).toEqual(['target/out.bin', 'two.ts']);
+    await f.set('.gitignore', 'target/\n'); await f.set('target/out.bin', 'build 2\n');
+    const review = await f.store.scanExternal(f.project);
+    expect(review.files.map(file => file.path)).toEqual(['.gitignore', 'two.ts']);
+    expect(review.notice).toContain('now ignored by .gitignore');
+    await f.set('target/out.bin', 'build 3\n');
+    expect((await f.store.scanExternal(f.project)).files.map(file => file.path)).toEqual(['.gitignore', 'two.ts']);
+  });
   it('reconciles commits made during a running agent turn only after capture finishes', async () => {
     const f = await fixture(); await f.store.begin(f.project, 'turn'); await f.set('one.ts', 'committed in turn\n');
     await f.git('add', 'one.ts'); await f.commit(); await f.set('two.ts', 'still pending\n');

@@ -76,6 +76,31 @@ describe('Conversation change evidence', () => {
     const second = conversationEdits(patch('*** Begin Patch\n*** Update File: source.ts\n@@\n-middle\n+new\n*** End Patch', 1300), codex, '/project', '/project');
     expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'old\n', 'new\n', [...first, ...second])).toEqual([claude, codex]);
   });
+  it('prefers the hunks Claude Code applied over the model-supplied strings', () => {
+    // Claude Code applied a normalized edit; the input strings no longer match the file.
+    const applied = { structuredPatch: [{ oldStart: 2, oldLines: 2, newStart: 2, newLines: 3, lines: [' keep', '-old', '+new', '+more'] }] };
+    const edits = conversationEdits([
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'edit-1', name: 'Edit', input: { file_path: 'source.ts', old_string: 'keep\n  old', new_string: 'unrelated' } }] } },
+      { type: 'user', timestamp: new Date(1200).toISOString(), toolUseResult: applied, message: { content: [{ type: 'tool_result', tool_use_id: 'edit-1', content: 'Done' }] } },
+    ], claude, '/project', '/project');
+    expect(edits.map(edit => edit.operation.kind)).toEqual(['hunks']);
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'head\r\nkeep\r\nold\r\ntail\n', 'head\r\nkeep\r\nnew\r\nmore\r\ntail\n', edits)).toEqual([claude]);
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'keep\nold\nhead\n', 'keep\nnew\nmore\nhead\n', edits)).toBeUndefined();
+  });
+  it('reads completed Codex FileChange events with their exact line endings', () => {
+    const event = (changes: unknown, status = 'completed') => ({ type: 'event_msg', timestamp: new Date(1200).toISOString(), payload: { type: 'item_completed', item: { type: 'FileChange', id: 'exec-1', status, changes } } });
+    const update = conversationEdits([event({ '/project/source.ts': { type: 'update', unified_diff: '@@ -1,2 +1,3 @@\n keep\r\n-old\r\n+new\r\n+lf\n', move_path: null } })], codex, '/project', '/project');
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'keep\r\nold\r\n', 'keep\r\nnew\r\nlf\n', update)).toEqual([codex]);
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'keep\r\nold\r\n', 'keep\r\nnew\r\nlf\r\n', update)).toBeUndefined();
+    const other = conversationEdits([event({ '/project/added.ts': { type: 'add', content: 'added\n' }, '/project/old.ts': { type: 'update', unified_diff: '@@ -1 +1 @@\n-a\n+b\n', move_path: '/project/new.ts' } })], codex, '/project', '/project');
+    expect(other.map(edit => [edit.path, edit.operation.kind])).toEqual([['added.ts', 'write'], ['old.ts', 'delete']]);
+    expect(conversationEdits([event({ '/project/source.ts': { type: 'add', content: 'x\n' } }, 'failed')], codex, '/project', '/project')).toEqual([]);
+  });
+  it('matches a Claude Edit whose LF strings changed a CRLF file', () => {
+    const edits = conversationEdits(records('Edit', { file_path: 'source.ts', old_string: 'keep\nold', new_string: 'keep\nnew\nmore' }, 1200), claude, '/project', '/project');
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'head\r\nkeep\r\nold\r\n', 'head\r\nkeep\r\nnew\r\nmore\r\n', edits)).toEqual([claude]);
+    expect(captureConversations({ from: 1000, to: 1500 }, 'source.ts', 'head\r\nkeep\r\nold\r\n', 'head\r\nkeep\r\nnew\r\nother\r\n', edits)).toBeUndefined();
+  });
   it.each(['@@\n-old\n+new', '@@\n keep\n-old\n+new\n tail'])('preserves mixed line endings while verifying patch evidence: %s', chunk => {
     const before = 'head\r\nkeep\nold\r\ntail\n', after = 'head\r\nkeep\nnew\r\ntail\n';
     const edits = conversationEdits(patch(`*** Begin Patch\n*** Update File: source.ts\n${chunk}\n*** End Patch`, 1200), codex, '/project', '/project');

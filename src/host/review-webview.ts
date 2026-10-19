@@ -19,7 +19,7 @@ export class ReviewWebview implements vscode.Disposable {
   private pending?: ReturnType<typeof setTimeout>;
   private acting = false;
   constructor(private extensionUri: vscode.Uri, private reviews: ReviewStore,
-    private current: () => { project?: string; review?: ReviewState; busy: boolean; conversations?: readonly { key: string }[] },
+    private current: () => { project?: string; review?: ReviewState; busy: boolean; capturing?: Promise<void>; conversations?: readonly { key: string }[] },
     private invoke: (command: string, value?: unknown) => Promise<unknown>,
     private native: (request: ReviewRequest) => Promise<void>) {}
   get state(): ReviewEditorState { return this.model; }
@@ -91,6 +91,10 @@ export class ReviewWebview implements vscode.Disposable {
     const data = message as Record<string, unknown>;
     if (data.type === 'ready') { this.post(true); return; }
     if (this.acting) return;
+    // Background captures do not lock the editor; an action waits for one, and
+    // a capture that changed the revision rejects it below as stale.
+    await this.current().capturing?.catch(() => undefined);
+    if (this.acting || !this.panel) return;
     try {
       const current = this.current(), scope = this.scope;
       if (!scope || scope.project !== current.project || data.revision !== this.model.revision || data.revision !== current.review?.revision) throw new Error('Changes updated. Review the refreshed diff before deciding.');

@@ -131,6 +131,14 @@ describe('Shared Webview review', () => {
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', file: 'first.ts', revision: 'r2', hunk: fixture().file!.hunks[1]!.id });
     expect(document.getElementById('undo')!.hidden).toBe(false);
   });
+  it('keeps the diff editor when a new revision leaves the displayed file unchanged', () => {
+    const editor = editors.at(-1)!, block = document.querySelector('.diff-block');
+    render({ ...fixture(), revision: 'r2' });
+    expect(editor.dispose).not.toHaveBeenCalled(); expect(editors.at(-1)).toBe(editor);
+    expect(document.querySelector('.diff-block')).toBe(block);
+    document.querySelector<HTMLButtonElement>('.accept')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', file: 'first.ts', revision: 'r2', hunk: fixture().file!.hunks[0]!.id });
+  });
   it('keeps delayed button handlers bound to the displayed file and revision even if another file has identical hunks', () => {
     const old = document.querySelector<HTMLButtonElement>('.reject')!.onclick!;
     render({ ...fixture(), revision: 'new-revision', file: { ...fixture().file!, path: 'second.ts' } });

@@ -39,6 +39,19 @@ export async function reviewUncommittedPaths(project: string, head: string): Pro
   return new Set(stdout.split('\0').filter(Boolean));
 }
 
+/** Untracked paths Git now ignores. Outside a repository nothing is reported. */
+export function reviewIgnoredPaths(project: string, names: string[]): Promise<Set<string>> {
+  if (!names.length) return Promise.resolve(new Set());
+  return new Promise(resolve => {
+    const child = execFile('git', ['check-ignore', '-z', '--stdin'], options(project), (error, stdout) => {
+      // Exit 1 means no path matched; any other failure ignores nothing.
+      resolve(new Set(error && (error as { code?: unknown }).code !== 1 ? [] : String(stdout).split('\0').filter(Boolean)));
+    });
+    child.stdin?.on('error', () => undefined);
+    child.stdin?.end(names.join('\0'));
+  });
+}
+
 /** Compare using the path's clean filters, including attributes that disable CRLF conversion. */
 export async function reviewGitEquivalentFiles(project: string, name: string, before: string, after: string): Promise<boolean> {
   const { stdout } = await execute('git', ['hash-object', `--path=${name}`, '--', before, after], options(project));
