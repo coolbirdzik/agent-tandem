@@ -2,6 +2,7 @@ import { spawn, execFile } from 'node:child_process';
 import { access, readFile, readdir, realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { ProviderStatus } from '../core/types';
@@ -68,6 +69,35 @@ async function versionedExecutables(root: string, relative: string): Promise<str
   return (await Promise.all(candidates.map(async file => await exists(file) ? file : undefined))).filter((file): file is string => !!file);
 }
 
+/** The OpenAI VS Code extension keeps one native Codex binary per host architecture. */
+async function vscodeExtensionCodexExecutables(): Promise<string[]> {
+  const platform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : process.platform === 'linux' ? 'linux' : undefined;
+  if (!platform) return [];
+
+  // These are the user extension directories used by VS Code, VS Code Insiders
+  // and Cursor. Keep the list explicit so scanning Manage CLIs never becomes a
+  // broad filesystem search. Cursor uses the same extension package layout, so
+  // the OpenAI extension's bundled Codex binary is valid there as well.
+  const home = process.platform === 'win32' ? process.env.USERPROFILE : os.homedir();
+  if (!home) return [];
+  const editorRoots = ['.vscode', '.vscode-insiders', '.cursor'].map(editor => path.join(home, editor, 'extensions'));
+  // Keep the existing Windows mapping: x64-compatible Node processes use the
+  // extension's x86_64 payload, while native arm64 uses aarch64. On POSIX,
+  // avoid claiming an x86_64 binary for an unsupported Node architecture.
+  const architecture = process.arch === 'arm64' ? 'aarch64' : process.arch === 'x64' || process.platform === 'win32' ? 'x86_64' : undefined;
+  if (!architecture) return [];
+  const executable = platform === 'windows' ? 'codex.exe' : 'codex';
+  const files: string[] = [];
+  for (const editorRoot of editorRoots) {
+    const extensions = await readdir(editorRoot).catch(() => []);
+    for (const extension of extensions.filter(entry => entry.startsWith('openai.chatgpt-'))) {
+      const native = path.join(editorRoot, extension, 'bin', `${platform}-${architecture}`, executable);
+      if (await exists(native)) files.push(native);
+    }
+  }
+  return files;
+}
+
 /** Choices are explicit; alternate installations never affect terminal detection. */
 export async function installedCLIExecutables(name: 'codex' | 'claude'): Promise<string[]> {
   const files = new Set<string>();
@@ -91,14 +121,9 @@ export async function installedCLIExecutables(name: 'codex' | 'claude'): Promise
           for (const file of await versionedExecutables(desktopRoot, 'codex.exe')) files.add(file);
         }
       }
-      const editorRoot = path.join(process.env.USERPROFILE, '.vscode/extensions');
-      const extensions = await readdir(editorRoot).catch(() => []);
-      for (const extension of extensions.filter(entry => entry.startsWith('openai.chatgpt-'))) {
-        const native = path.join(editorRoot, extension, 'bin', process.arch === 'arm64' ? 'windows-aarch64' : 'windows-x86_64', 'codex.exe');
-        if (await exists(native)) files.add(native);
-      }
     }
   }
+  if (name === 'codex') for (const file of await vscodeExtensionCodexExecutables()) files.add(file);
   if (name === 'codex' && process.platform === 'win32') {
     const home = process.env.CODEX_HOME || (process.env.USERPROFILE && path.join(process.env.USERPROFILE, '.codex'));
     if (home) {
