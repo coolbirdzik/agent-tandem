@@ -1,0 +1,32 @@
+/* Match the editor's hover palette across every extension webview. */
+.tandem-hover-hint,.burn-tooltip {
+  color:var(--vscode-editorHoverWidget-foreground,var(--vscode-foreground));
+  background:var(--vscode-editorHoverWidget-background,var(--vscode-editor-background));
+  border:1px solid var(--vscode-editorHoverWidget-border,var(--vscode-widget-border,transparent));
+  border-radius:6px;
+  box-shadow:0 2px 8px var(--vscode-widget-shadow,rgba(0,0,0,.2));
+  padding:6px 9px;
+  font-family:var(--vscode-font-family,sans-serif);
+  font-size:12px;
+  font-weight:400;
+  line-height:1.5;
+  text-align:left;
+}
+.tandem-hover-hint {
+  position:fixed;
+  margin:0;
+  inset:auto;
+  z-index:2147483647;
+  width:max-content;
+  max-width:min(340px,calc(100vw - 16px));
+  max-height:calc(100vh - 16px);
+  overflow:auto;
+  box-sizing:border-box;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  user-select:text;
+}
+.tandem-hover-hint[hidden] { display:none; }
+@media (forced-colors:active) {
+  .tandem-hover-hint,.burn-tooltip { background:Canvas; color:CanvasText; border-color:CanvasText; box-shadow:none; }
+}

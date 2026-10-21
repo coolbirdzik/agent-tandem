@@ -72,3 +72,18 @@ it('colors each agent with its own text color while low quota keeps its alert co
   expect(codex.color).toBe('#ff8800');
   host.settings.statusBarClaudeColor = 'not-a-color'; bar.update(state); expect(claude.color.id).toBe('charts.green'); bar.dispose();
 });
+
+it('does not rewrite or show quota items again for identical refresh data', () => {
+  const bar = new QuotaStatusBar(); bar.update(state);
+  const claude = host.items.find(item => item.id.endsWith('claude'));
+  const write = vi.fn();
+  Object.defineProperty(claude, 'text', { configurable: true, set: write });
+  bar.update(structuredClone(state));
+  expect(write).not.toHaveBeenCalled(); expect(claude.show).toHaveBeenCalledTimes(1);
+  bar.update({ ...state, accounts: { ...state.accounts, Claude: { ...state.accounts!.Claude!, status: 'loading', quotaCached: true } } });
+  expect(write).not.toHaveBeenCalled();
+  expect(claude.color.id).toBe('charts.green');
+  bar.update({ ...state, accounts: { ...state.accounts, Claude: { ...state.accounts!.Claude!, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 25 }] } } } });
+  expect(write).toHaveBeenLastCalledWith('$(agent-tandem-claude) 5h 75%');
+  bar.dispose();
+});

@@ -383,13 +383,38 @@
         "command": "agentTandem.openImageChanges",
         "title": "AgentTandem: Open Image Changes",
         "icon": "$(file-media)"
+      },
+      {
+        "command": "agentTandem.header.newChat",
+        "title": "New chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentTandem.header.history",
+        "title": "Conversation history",
+        "icon": "$(history)"
+      },
+      {
+        "command": "agentTandem.header.review",
+        "title": "Review changes",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "agentTandem.header.refresh",
+        "title": "Refresh conversations",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentTandem.header.more",
+        "title": "More actions",
+        "icon": "$(ellipsis)"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "agentTandem",
-          "title": "AgentTandem",
+          "title": "Agent Tandem",
           "icon": "media/tandem.svg"
         }
       ]
@@ -398,13 +423,19 @@
       "agentTandem": [
         {
           "id": "agentTandem.panel",
-          "name": "Review",
+          "name": "Agent Tandem",
           "type": "webview"
         }
       ]
     },
     "menus": {
-      "view/title": [],
+      "view/title": [
+        {
+          "command": "agentTandem.header.more",
+          "when": "view == agentTandem.panel",
+          "group": "navigation@5"
+        }
+      ],
       "editor/title": [
         {
           "command": "agentTandem.previousFile",
@@ -491,6 +522,26 @@
         {
           "command": "agentTandem.openImageChanges",
           "when": "resourceExtname =~ /^.(png|apng|jpe?g|jfif|gif|webp|bmp|ico|avif|svg|tiff?)$/i"
+        },
+        {
+          "command": "agentTandem.header.newChat",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.header.history",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.header.review",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.header.refresh",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.header.more",
+          "when": "false"
         }
       ],
       "scm/resourceState/context": [
@@ -818,7 +869,7 @@
     "test:cli:live": "npm run build && node scripts/test-cli-manager-live.mjs",
     "test:context:history": "npm run build && node scripts/test-context-history.mjs",
     "probe:providers": "node scripts/probe-providers.mjs",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links --skip-license --out artifacts/agent-tandem-0.1.1.vsix",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links --skip-license --out artifacts/agent-tandem-$npm_package_version.vsix",
     "package:marketplace": "node scripts/package-marketplace.mjs",
     "test:marketplace": "node scripts/test-marketplace.mjs",
     "bump:patch": "node scripts/release.mjs bump patch",

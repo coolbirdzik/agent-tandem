@@ -1,9 +1,13 @@
+import { hoverHints } from './ui/hover-hints';
+import { autoHideScrollbars } from './ui/scrollbars';
 import { ReviewCodeEditor } from './review-monaco';
 import type { ReviewEditorState } from './core/review-webview';
 import type { ReviewHunk } from './core/review-hunks';
 import { renderImageComparison } from './image-comparison';
 
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState(): { file?: string; line?: number; scroll?: number } | undefined; setState(value: unknown): void };
+autoHideScrollbars();
+hoverHints();
 const api = acquireVsCodeApi();
 const saved = api.getState();
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;

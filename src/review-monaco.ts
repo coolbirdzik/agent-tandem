@@ -62,7 +62,9 @@ export class ReviewCodeEditor {
       hideUnchangedRegions: { enabled: false }, minimap: { enabled: false },
       scrollBeyondLastLine: false, fixedOverflowWidgets: true, wordWrap: 'off',
       stickyScroll: { enabled: false }, codeLens: false, links: false, contextmenu: false,
-      padding: { top: 12, bottom: 24 }, lineNumbersMinChars: 4,
+      padding: { top: 8, bottom: 16 },
+      scrollbar: { vertical: 'auto', horizontal: 'auto', verticalHasArrows: false, horizontalHasArrows: false, verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: true },
+      lineNumbersMinChars: 4,
       ariaLabel: `Saved changes in ${file.path}`,
     });
     const syncTheme = () => {
@@ -86,14 +88,14 @@ export class ReviewCodeEditor {
     const modified = this.editor.getModifiedEditor();
     modified.changeViewZones(accessor => sections.forEach((node, index) => {
       const hunk = file.hunks[index]!;
-      const zone: monaco.editor.IViewZone = { afterLineNumber: Math.min(hunk.newLine, this.modified.getLineCount()), ordinal: -10000, heightInPx: 52, domNode: node, showInHiddenAreas: true };
+      const zone: monaco.editor.IViewZone = { afterLineNumber: Math.min(hunk.newLine, this.modified.getLineCount()), ordinal: -10000, heightInPx: 44, domNode: node, showInHiddenAreas: true };
       this.zones.push({ id: accessor.addZone(zone), node, zone });
     }));
     // Toolbar height follows wrapping at narrow widths, without covering code.
     this.resizeObserver = new ResizeObserver(() => {
       if (this.disposed) return;
       modified.changeViewZones(accessor => this.zones.forEach(({ id, node, zone }) => {
-        const height = Math.ceil(node.firstElementChild?.getBoundingClientRect().height ?? 52);
+        const height = Math.ceil(node.firstElementChild?.getBoundingClientRect().height ?? 44);
         if (height > 0 && height !== zone.heightInPx) { zone.heightInPx = height; accessor.layoutZone(id); }
       }));
     });

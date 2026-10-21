@@ -500,7 +500,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     // Replacing an in-flight poll must retain its last completed snapshot.
     const previous = existing ? existing.previous : state.accounts?.[provider];
     const stop = () => abort.abort(); signal?.addEventListener('abort', stop, { once: true });
-    const loading = { ...previous, status: 'loading' as const, quotaCached: !!previous?.quota, error: undefined };
+    const background = !force && previous?.status === 'ready';
+    const loading = { ...previous, status: background ? 'ready' as const : 'loading' as const, quotaCached: background ? previous.quotaCached : !!previous?.quota, error: undefined };
     state.accounts = { ...state.accounts, [provider]: loading }; update();
     const current = () => !disposed && project === state.project && state.accounts?.[provider] === loading && !abort.signal.aborted;
     const job = (async () => {
@@ -643,13 +644,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     }
     return content;
   }
-  function syncConversations(): Promise<ConversationIndex> {
+  function syncConversations(background = false): Promise<ConversationIndex> {
     if (syncJob) return syncJob;
     // Deleting rewrites native session indexes; the sync after deletion picks up the result.
     if (conversationDeleting) return Promise.resolve({ conversations: state.conversations ?? [], errors: state.syncErrors ?? [] });
     if (!state.project) return Promise.resolve({ conversations: [], errors: [] });
     const project = state.project, version = generation, selectedAtStart = selectionGeneration;
-    state.syncing = true; update();
+    if (!background || !state.syncedAt) { state.syncing = true; update(); }
     syncJob = (async () => {
       const index = await source.list(project);
       if (disposed || version !== generation) return index;
@@ -732,6 +733,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }));
   register('agentTandem.open', () => { state.screen = 'changes'; update(); return preview.open(); });
   register('agentTandem.openInTab', () => preview.openInTab());
+  for (const action of ['newChat', 'history', 'review', 'refresh', 'more'] as const) {
+    register(`agentTandem.header.${action}`, () => preview.headerAction(action));
+  }
   const openImageChanges = async (target: unknown) => {
     const { files, index } = await gitImageChanges(target);
     await changeNavigation.openFile(files, 'Git image changes', index);
@@ -1528,7 +1532,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (version === uiGeneration) { state.screen = 'tools'; update(); await preview.open(); }
     return state.providers;
   });
-  const timer = setInterval(() => { void syncConversations().catch(error => { state.syncErrors = [error instanceof Error ? error.message : 'Sync failed.']; update(); }); }, 5000);
+  const timer = setInterval(() => { void syncConversations(true).catch(error => { state.syncErrors = [error instanceof Error ? error.message : 'Sync failed.']; update(); }); }, 5000);
   const accountTimer = setInterval(() => { void refreshAccounts(); }, 60000);
   const followRoot = () => {
     if (!setCurrentRoot()) return;

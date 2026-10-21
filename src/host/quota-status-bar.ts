@@ -10,10 +10,15 @@ export function readStatusBarPreferences(config: vscode.WorkspaceConfiguration):
 
 export class QuotaStatusBar implements vscode.Disposable {
   private items = new Map<ConversationProvider, vscode.StatusBarItem>();
+  private rendered = new Map<ConversationProvider, string>();
+  private visible = new Set<ConversationProvider>();
+  private hide(provider: ConversationProvider, item: vscode.StatusBarItem) {
+    if (this.visible.delete(provider)) item.hide();
+  }
   private alignment?: StatusBarPreferences['alignment'];
   update(state: ViewState) {
     const config = vscode.workspace.getConfiguration('agentTandem'), preferences = readStatusBarPreferences(config);
-    if (!config.get('showQuotaInStatusBar', true)) { for (const item of this.items.values()) item.hide(); return; }
+    if (!config.get('showQuotaInStatusBar', true)) { for (const [provider, item] of this.items) this.hide(provider, item); return; }
     if (this.alignment !== preferences.alignment) {
       this.dispose(); this.alignment = preferences.alignment;
       for (const [index, provider] of (['Codex', 'Claude'] as const).entries()) {
@@ -23,17 +28,28 @@ export class QuotaStatusBar implements vscode.Disposable {
       }
     }
     const values = quotaStatuses(state, preferences);
-    for (const [provider, item] of this.items) if (!values.some(value => value.provider === provider)) item.hide();
+    for (const [provider, item] of this.items) if (!values.some(value => value.provider === provider)) this.hide(provider, item);
     for (const value of values) {
-      const item = this.items.get(value.provider)!; item.text = value.text; item.tooltip = value.tooltip;
+      const item = this.items.get(value.provider)!;
+      const signature = JSON.stringify([value, preferences.codexColor, preferences.claudeColor]);
+      const show = !this.visible.has(value.provider);
+      if (this.rendered.get(value.provider) === signature) {
+        if (show) { item.show(); this.visible.add(value.provider); }
+        continue;
+      }
+      this.rendered.set(value.provider, signature);
+      if (item.text !== value.text) item.text = value.text;
+      if (item.tooltip !== value.tooltip) item.tooltip = value.tooltip;
       const alert = value.tone === 'exhausted' ? 'error' : value.tone === 'warning' ? 'warning' : undefined;
-      item.backgroundColor = alert ? new vscode.ThemeColor(`statusBarItem.${alert}Background`) : undefined;
+      const background = alert ? `statusBarItem.${alert}Background` : undefined;
+      if (item.backgroundColor?.id !== background) item.backgroundColor = background ? new vscode.ThemeColor(background) : undefined;
       // A chosen agent color replaces the quota-status color; low quota alerts still win so they stay readable.
       const custom = value.provider === 'Claude' ? preferences.claudeColor : preferences.codexColor;
-      item.color = !alert && custom ? custom.startsWith('#') ? custom : new vscode.ThemeColor(custom)
-        : new vscode.ThemeColor(alert ? `statusBarItem.${alert}Foreground` : value.tone === 'healthy' ? 'charts.green' : value.tone === 'loading' ? value.provider === 'Claude' ? 'charts.orange' : 'charts.blue' : 'statusBar.foreground');
-      item.accessibilityInformation = { label: value.tooltip }; item.show();
+      const color = !alert && custom ? custom : alert ? `statusBarItem.${alert}Foreground` : value.tone === 'healthy' ? 'charts.green' : value.tone === 'loading' ? value.provider === 'Claude' ? 'charts.orange' : 'charts.blue' : 'statusBar.foreground';
+      if ((typeof item.color === 'string' ? item.color : item.color?.id) !== color) item.color = color.startsWith('#') ? color : new vscode.ThemeColor(color);
+      if (item.accessibilityInformation?.label !== value.tooltip) item.accessibilityInformation = { label: value.tooltip };
+      if (show) { item.show(); this.visible.add(value.provider); }
     }
   }
-  dispose() { for (const item of this.items.values()) item.dispose(); this.items.clear(); this.alignment = undefined; }
+  dispose() { for (const item of this.items.values()) item.dispose(); this.items.clear(); this.rendered.clear(); this.visible.clear(); this.alignment = undefined; }
 }

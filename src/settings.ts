@@ -1,3 +1,5 @@
+import { hoverHints } from './ui/hover-hints';
+import { autoHideScrollbars } from './ui/scrollbars';
 import { dashboardAccountGroups, emptyTotals, localDay, modelColorSlots, periodKey, usageBreakdown, type TokenTotals, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
 import type { ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
@@ -16,6 +18,8 @@ import { CheckboxRangeSelection } from './ui/checkbox-range';
 import { conversationTime, matchesConversation, type ConversationFilter } from './core/conversation-filter';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
+autoHideScrollbars();
+hoverHints();
 const api = acquireVsCodeApi(), send = (type: string, value?: unknown) => api.postMessage({ type, value });
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => {

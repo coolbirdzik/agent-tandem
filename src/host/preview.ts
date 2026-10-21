@@ -102,6 +102,10 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
     this.subscriptions.push(view.onDidChangeVisibility(() => { if (view.visible) this.update(); }));
     this.update();
   }
+  async headerAction(action: 'newChat' | 'history' | 'review' | 'refresh' | 'more') {
+    await this.open();
+    await this.view?.webview.postMessage({ type: 'headerAction', action });
+  }
   openInTab() {
     if (this.tab) { this.tab.reveal(); this.update(); return; }
     const tab = vscode.window.createWebviewPanel('agentTandem.preview', 'AgentTandem', vscode.ViewColumn.One, { enableScripts: true });
