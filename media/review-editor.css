@@ -1,7 +1,8 @@
+@import url("./hover-hints.css");
 :root{color-scheme:light dark;--review-border:var(--vscode-panel-border,transparent);--review-accept:#a3d9b5;--review-reject:#efa1a9;--review-surface:var(--vscode-editor-background)}
 .vscode-light,.vscode-high-contrast-light{--review-accept:#246344;--review-reject:#a13242}
 *{box-sizing:border-box}
-body{margin:0;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font:13px var(--vscode-font-family);line-height:1.5}
+body{margin:0;padding:0;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);font:13px var(--vscode-font-family);line-height:1.5}
 button,select{font:inherit;color:inherit}
 button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:5px 10px;border:1px solid transparent;border-radius:6px;background:transparent;cursor:pointer;white-space:nowrap;line-height:20px;transition:background-color .15s,border-color .15s,color .15s}
 button:hover:not(:disabled){background:var(--vscode-toolbar-hoverBackground)}
@@ -45,7 +46,7 @@ select{width:100%;min-width:0;background:var(--vscode-dropdown-background);color
 #error,#status{margin:12px 20px;padding:10px 12px;border-left:3px solid var(--vscode-focusBorder);background:var(--vscode-textBlockQuote-background)}
 #error{border-color:var(--vscode-errorForeground);color:var(--vscode-errorForeground)}
 [hidden]{display:none!important}
-main{padding:16px 20px 24px}
+main{padding:12px 16px 16px}
 .diff-block{margin:0;border:0;border-radius:0;scroll-margin-top:115px}
 .diff-block:focus{outline:none}.diff-block.current>.block-toolbar{border-left-color:var(--vscode-focusBorder)}
 .diff-block:focus-visible>.block-toolbar{outline:1px solid var(--vscode-focusBorder);outline-offset:-1px}
@@ -98,7 +99,48 @@ body{display:flex;flex-direction:column}
 main{flex:1;min-height:0;overflow:auto}
 main.monaco-review{padding:0;overflow:hidden}
 .monaco-review .diff-block{font:14px var(--vscode-font-family);color:var(--vscode-editor-foreground);overflow:visible;z-index:1}
-.monaco-review .block-toolbar{padding:8px 12px;gap:12px;flex-wrap:wrap;min-height:52px;width:100%}
+.monaco-review .block-toolbar{padding:6px 12px;gap:8px;flex-wrap:wrap;min-height:44px;width:100%}
 .monaco-review .block-meta{gap:6px;font-size:12px}
 .monaco-review .block-actions button{font-size:12px;min-height:32px;padding:5px 10px}
-@media(max-width:700px){.monaco-review .block-toolbar{gap:8px;padding:8px}.monaco-review .block-meta{width:100%}.monaco-review .block-actions button{padding:5px 8px}.monaco-review .block-actions{gap:8px}.block-navigation{padding-left:8px}.monaco-review .block-label{margin-right:0}main.monaco-review{padding:0}}
+@media(max-width:700px){.monaco-review .block-toolbar{gap:8px;padding:6px 8px}.monaco-review .block-meta{width:100%}.monaco-review .block-actions button{padding:5px 8px}.monaco-review .block-actions{gap:8px}.block-navigation{padding-left:8px}.monaco-review .block-label{margin-right:0}main.monaco-review{padding:0}}
+
+/* Native scrollbar styling cannot force overlays across operating systems.
+   Hide the native gutter only while the interactive overlay is installed. */
+html.overlay-scrollbars, html.overlay-scrollbars * { scrollbar-width: none !important; scrollbar-gutter: auto !important; }
+html.overlay-scrollbars::-webkit-scrollbar, html.overlay-scrollbars *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.scrollbar-track { position: absolute; touch-action: none; user-select: none; pointer-events: none; opacity: 0; transition: opacity 100ms linear; }
+.scrollbar-track[data-axis="y"] { top: 0; right: 0; width: 10px; }
+.scrollbar-track[data-axis="x"] { bottom: 0; left: 0; height: 10px; }
+.scroll-shadow-overlay.is-scrolling > .scrollbar-track,
+.scrollbar-track:hover, .scrollbar-track:focus-visible, .scrollbar-track.is-dragging { opacity: 1; pointer-events: auto; }
+.scrollbar-thumb { position: absolute; border-radius: 999px; background: var(--vscode-scrollbarSlider-background, #80808066); }
+.scrollbar-track[data-axis="y"] > .scrollbar-thumb { width: 100%; }
+.scrollbar-track[data-axis="x"] > .scrollbar-thumb { height: 100%; }
+.scrollbar-track:hover > .scrollbar-thumb { background: var(--vscode-scrollbarSlider-hoverBackground, #80808099); }
+.scrollbar-track.is-dragging > .scrollbar-thumb { background: var(--vscode-scrollbarSlider-activeBackground, #808080bb); }
+.scrollbar-track:focus-visible { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: -1px; }
+@media (prefers-reduced-motion: reduce) { .scrollbar-track { transition: none; } }
+@media (forced-colors: active) { .scrollbar-thumb { background: CanvasText; } }
+
+/* Shadows mark edges with more content, independently of scrollbar visibility. */
+.scroll-shadow-overlay {
+  position: fixed;
+  pointer-events: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  --scroll-shadow-color: var(--vscode-scrollbar-shadow, #0003);
+  --scroll-shadow-top: inset 0 0 transparent;
+  --scroll-shadow-bottom: inset 0 0 transparent;
+  --scroll-shadow-left: inset 0 0 transparent;
+  --scroll-shadow-right: inset 0 0 transparent;
+  box-shadow: var(--scroll-shadow-top), var(--scroll-shadow-bottom), var(--scroll-shadow-left), var(--scroll-shadow-right);
+}
+.scroll-shadow-overlay[data-scroll-shadow~="top"] { --scroll-shadow-top: inset 0 8px 8px -8px var(--scroll-shadow-color); }
+.scroll-shadow-overlay[data-scroll-shadow~="bottom"] { --scroll-shadow-bottom: inset 0 -8px 8px -8px var(--scroll-shadow-color); }
+.scroll-shadow-overlay[data-scroll-shadow~="left"] { --scroll-shadow-left: inset 8px 0 8px -8px var(--scroll-shadow-color); }
+.scroll-shadow-overlay[data-scroll-shadow~="right"] { --scroll-shadow-right: inset -8px 0 8px -8px var(--scroll-shadow-color); }
+
+/* Match the overlay thumbs inside Monaco editors. */
+.monaco-scrollable-element > .scrollbar > .slider { border-radius: 999px; }

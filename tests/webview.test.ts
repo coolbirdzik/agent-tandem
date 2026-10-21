@@ -25,6 +25,117 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const item of listeners.splice(0)) window.removeEventListener(item.type, item.listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Single tandem webview', () => {
+  it('keeps history rows, messages, selection and quota attached across refetches with identical data', () => {
+    const value: ViewState = { ...state, syncedAt: 1, accounts: { Claude: { status: 'ready', updatedAt: 1,
+      quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 20 }] } } } };
+    render(value);
+    const row = document.querySelector<HTMLButtonElement>('.conversation-link')!;
+    const message = document.querySelector('.message')!;
+    const heading = document.querySelector('#thread-heading h2')!;
+    const filter = document.querySelector('.history-filters button span')!;
+    const summary = document.querySelector<HTMLButtonElement>('.account-summary')!;
+    summary.click();
+    const meter = document.querySelector('.account-popover progress')!;
+    const refresh = document.querySelector<HTMLButtonElement>('[data-account-refresh]')!;
+    const range = document.createRange(); range.selectNodeContents(message.querySelector('.message-text')!);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    const selectionNode = window.getSelection()!.anchorNode;
+    const mutations = new MutationObserver(() => undefined);
+    mutations.observe(document.getElementById('conversations')!, { childList: true, subtree: true });
+    render({ ...structuredClone(value), syncing: true, accounts: { Claude: { ...value.accounts!.Claude!, status: 'loading', quotaCached: true } } });
+    expect(document.querySelector('.conversation-link')).toBe(row);
+    expect(document.querySelector('.message')).toBe(message);
+    expect(document.querySelector('.history-filters button span')).toBe(filter);
+    expect(document.querySelector('.account-summary')).toBe(summary);
+    expect(summary.textContent).toContain('5h 80%');
+    expect(document.querySelector('.account-popover progress')).toBe(meter);
+    expect(document.querySelector('[data-account-refresh]')).toBe(refresh);
+    expect(refresh.disabled).toBe(true);
+    expect(window.getSelection()!.anchorNode).toBe(selectionNode);
+    render({ ...structuredClone(value), syncedAt: 2, accounts: { Claude: { ...value.accounts!.Claude!, updatedAt: 2 } } });
+    expect(document.querySelector('.account-summary')).toBe(summary);
+    expect(refresh.disabled).toBe(false);
+    render({ ...value, conversation: { ...value.conversation!, conversation: { ...conversation, revision: 'metadata-only' } } });
+    expect(document.querySelector('.message')).toBe(message);
+    expect(document.querySelector('#thread-heading h2')).toBe(heading);
+    expect(mutations.takeRecords()).toHaveLength(0);
+    const ring = summary.querySelector('.quota-ring-value');
+    render({ ...value, accounts: { Claude: { ...value.accounts!.Claude!, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 30 }] } } } });
+    expect(document.querySelector('.account-summary')).toBe(summary);
+    expect(summary.querySelector('.quota-ring-value')).toBe(ring);
+    expect(summary.textContent).toContain('5h 70%');
+    expect(ring!.getAttribute('stroke-dasharray')).toBe('70 100');
+    mutations.disconnect(); window.getSelection()!.removeAllRanges();
+  });
+
+  it('updates changed history and messages while retaining unaffected rows and expanded tools', () => {
+    render(state);
+    const row = document.querySelector<HTMLButtonElement>('.conversation-link')!;
+    const tool = document.querySelector<HTMLDetailsElement>('.message details')!; tool.open = true;
+    const toolMessage = tool.closest('.message');
+    const updated: ViewState = { ...state,
+      conversations: [{ ...conversation, title: 'Renamed conversation', revision: '2' }, state.conversations![1]!],
+      conversation: { ...state.conversation!, conversation: { ...conversation, revision: '2' },
+        messages: [{ ...state.conversation!.messages[0]!, text: 'Updated answer' }, state.conversation!.messages[1]!, { id: 'new', role: 'assistant', text: 'New answer' }] } };
+    render(updated);
+    expect(document.querySelector('.conversation-link')).toBe(row);
+    expect(row.textContent).toContain('Renamed conversation');
+    expect(document.querySelector('[data-message-id="a1"]')!.textContent).toContain('Updated answer');
+    expect(document.querySelector('[data-message-id="t1"]')).toBe(toolMessage);
+    expect(tool.open).toBe(true);
+    expect(document.querySelectorAll('.message')).toHaveLength(3);
+    render({ ...updated, conversations: [updated.conversations![0]!], conversation: { ...updated.conversation!, conversation: { ...conversation, revision: '3' }, messages: [updated.conversation!.messages[0]!] } });
+    expect(document.querySelectorAll('.conversation-link')).toHaveLength(1);
+    expect(document.querySelectorAll('.message')).toHaveLength(1);
+    expect(toolMessage!.isConnected).toBe(false);
+  });
+
+  it('routes native title actions through the existing chat, history, review and refresh behavior', () => {
+    render(state);
+    const action = (name: string) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'headerAction', action: name } }));
+    action('newChat');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'newChat', selection: 'Claude' });
+    action('history');
+    expect(document.querySelector<HTMLElement>('#history-view')!.hidden).toBe(false);
+    action('review');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'screen', selection: 'changes' });
+    action('refresh');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'sync', selection: undefined });
+    expect(document.body.dataset.editorTab).toBe('false');
+    expect(panelHtml(resources, true)).toContain('data-editor-tab="true"');
+  });
+
+  it('opens the title More actions as a local popover and supports selection and dismissal', () => {
+    render(state);
+    const more = document.querySelector<HTMLDetailsElement>('#more-menu')!;
+    const open = () => window.dispatchEvent(new MessageEvent('message', { data: { type: 'headerAction', action: 'more' } }));
+    postMessage.mockClear();
+    open();
+    expect(more.open).toBe(true);
+    expect(document.activeElement?.id).toBe('open-tab');
+    expect(postMessage).not.toHaveBeenCalled();
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(document.activeElement?.id).toBe('open-settings');
+    (document.activeElement as HTMLButtonElement).click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'settings', selection: undefined });
+    expect(more.open).toBe(false);
+    open();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(more.open).toBe(false);
+    expect(document.activeElement?.id).toBe('chat-input');
+    open();
+    document.body.click();
+    expect(more.open).toBe(false);
+    open(); open();
+    expect(more.open).toBe(false);
+    render({ ...state, running: true });
+    open();
+    expect(document.activeElement?.id).toBe('menu-stop');
+    (document.activeElement as HTMLButtonElement).click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'stop', selection: undefined });
+    expect(more.open).toBe(false);
+  });
+
   it('offers scoped conversation links for script and binary changes and labels removable manual links', () => {
     const names = ['media/provider-icons.ttf', 'media/screenshots/preferences.png', 'tests/quota-status-bar.test.ts', 'tests/settings.test.ts', 'tests/status-bar-preferences.test.ts'];
     const review = { revision: 'scripts', busy: false, files: names.map((name, i) => ({ path: name, kind: 'modified' as const, binary: i < 2 })) };
@@ -524,6 +635,22 @@ describe('Single tandem webview', () => {
     defaultSelect.value = ''; defaultSelect.dispatchEvent(new Event('change'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ action: 'default', id: '' }) });
   });
+  it('shows automatic Codex fallback distinctly from an explicit terminal selection', () => {
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { executable: '/editor/bin/codex', version: 'codex-cli 0.162.0', source: 'extension' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
+    const machine = document.querySelector<HTMLSelectElement>('#cli-default-Codex')!;
+    expect(machine.value).toBe('');
+    expect(machine.selectedOptions[0]!.textContent).toBe('Automatic (PATH, then current Codex extension)');
+    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex')!.value).toBe('');
+    expect(document.querySelector('.cli-active')!.textContent).toContain('Automatic → Codex extension · codex-cli 0.162.0');
+    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex option[value="path"]')!.textContent).toBe('Terminal CLI (PATH)');
+  });
+  it('shows the automatic PATH source, version and path without a managed entry', () => {
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { executable: '/terminal/codex', version: 'codex-cli 0.150.0', source: 'automatic-path' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
+    expect(document.querySelector('.cli-active')!.textContent).toBe('Automatic → Terminal PATH · codex-cli 0.150.0');
+    expect(document.querySelector('.cli-selections')!.parentElement!.textContent).toContain('/terminal/codex');
+    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex')!.value).toBe('');
+    expect(document.querySelector<HTMLSelectElement>('#cli-default-Codex option[value="cx"]')!.textContent).toBe('Pinned: My Codex');
+  });
   it('preserves CLI input drafts across sync, edits entries inline and restores fields on Cancel', () => {
     render(cliState); postMessage.mockClear();
     const name = document.querySelector<HTMLInputElement>('[data-cli-draft="add:Codex:name"]')!; name.value = 'Portable'; name.focus();
@@ -686,7 +813,7 @@ describe('Single tandem webview', () => {
     input.value = 'Edited request'; input.dispatchEvent(new Event('input'));
     render({ ...editable, syncing: true });
     expect(input.value).toBe('Edited request'); expect(document.activeElement).toBe(input);
-    expect(document.querySelector('.message.user .message-text')!.textContent).toBe('Original request');
+    expect(document.querySelector('.message.user .message-text p')!.textContent).toBe('Original request');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'sendChat', selection: expect.objectContaining({ text: 'Edited request', conversationKey: 'Claude:c1', edit: { messageId: 'u1', revision: '1' } }) });
     expect(document.querySelector<HTMLButtonElement>('#chat-edit-cancel')!.disabled).toBe(true);
@@ -1128,8 +1255,8 @@ describe('Single tandem webview', () => {
     document.querySelector<HTMLButtonElement>('#history-close')!.click();
     expect(document.querySelector<HTMLElement>('#thread-view')!.hidden).toBe(false);
   });
-  it('formats code, headings and lists while removing active and command links', () => {
-    render({ ...state, conversation: { conversation, messages: [{ id: 'md', role: 'assistant', text: '## Changes\n\n- **Fixed** login\n\n```ts\nconst ok = true;\n```\n\n[bad](command:workbench.action.closeWindow) [web](https://example.com)\n\n<img src=x onerror=bad()>' }] } });
+  it.each(['assistant', 'user'] as const)('formats %s code, headings and lists while removing active and command links', role => {
+    render({ ...state, conversation: { conversation, messages: [{ id: 'md', role, text: '## Changes\n\n- **Fixed** login\n\n```ts\nconst ok = true;\n```\n\n[bad](command:workbench.action.closeWindow) [web](https://example.com)\n\n<img src=x onerror=bad()>' }] } });
     expect(document.querySelector('.markdown h2')?.textContent).toBe('Changes');
     expect(document.querySelector('.markdown li strong')?.textContent).toBe('Fixed');
     expect(document.querySelector('.markdown pre code')?.textContent).toContain('const ok = true;');
@@ -1137,6 +1264,37 @@ describe('Single tandem webview', () => {
     expect(links[0]?.getAttribute('href')).toBeNull();
     expect(links[1]?.getAttribute('href')).toBe('https://example.com');
     expect(document.querySelector('.markdown img')).toBeNull();
+  });
+  it('folds overflowing user messages, preserves expansion across updates and rechecks on resize', () => {
+    let height = 600;
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.id === 'message-content-long' ? height : 80;
+    });
+    const messages = [{ id: 'long', role: 'user' as const, text: 'Long message' }, { id: 'short', role: 'user' as const, text: 'Short message' }, { id: 'reply', role: 'assistant' as const, text: 'Reply' }];
+    const show = (revision: string, key = conversation.key) => render({ ...state, conversation: { conversation: { ...conversation, key, revision }, messages } });
+    const toggle = () => document.querySelector<HTMLButtonElement>('[data-message-id="long"] .message-toggle')!;
+    show('fold-1');
+    expect(toggle().hidden).toBe(false);
+    expect(toggle().textContent).toBe('Show more');
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    expect(document.getElementById(toggle().getAttribute('aria-controls')!)?.classList.contains('message-collapsed')).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-message-id="short"] .message-toggle')!.hidden).toBe(true);
+    expect(document.querySelector('[data-message-id="reply"] .message-toggle')).toBeNull();
+    toggle().click();
+    expect(toggle().textContent).toBe('Show less');
+    expect(document.querySelector('#message-content-long')!.classList.contains('message-collapsed')).toBe(false);
+    show('fold-2');
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    show('fold-3', 'another-conversation');
+    expect(toggle().getAttribute('aria-expanded')).toBe('false');
+    show('fold-4');
+    expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    toggle().click();
+    expect(toggle().textContent).toBe('Show more');
+    height = 200; window.dispatchEvent(new Event('resize'));
+    expect(toggle().hidden).toBe(true);
+    height = 600; window.dispatchEvent(new Event('resize'));
+    expect(toggle().hidden).toBe(false);
   });
   it('shows step output and routes file selection to the editor without a panel patch', () => {
     const selection = { sessionId: 's1', stepId: 'step1' }, change = { path: 'login.ts', kind: 'modified' as const, binary: false };

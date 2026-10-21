@@ -39,7 +39,7 @@ export async function run() {
       await action(provider, 'default', { id: '' });
       const recovered = await refreshModels(provider);
       assert.equal(recovered?.status, 'ready', recovered?.error);
-      assert.equal(api.viewState().cliManager!.active[provider]?.source, 'default', 'Inherited terminal default remains Use default CLI');
+      assert.equal(api.viewState().cliManager!.active[provider]?.source, provider === 'Codex' ? 'automatic-path' : 'default', 'Inherited terminal default remains Use default CLI');
       await action(provider, 'use', { id: 'path' });
       assert.equal(api.viewState().cliManager!.active[provider]?.source, 'path', 'Explicit terminal choice is distinct from inherited default');
       await unlink(row.executable);

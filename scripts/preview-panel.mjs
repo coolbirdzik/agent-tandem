@@ -35,7 +35,7 @@ if (process.argv.includes('--history') && historyRoot) {
   state.checkpoints = [];
 }
 const theme = `:root{--vscode-sideBar-background:#181818;--vscode-editor-background:#1f1f1f;--vscode-foreground:#cccccc;--vscode-descriptionForeground:#999999;--vscode-panel-border:#303030;--vscode-widget-border:#303030;--vscode-list-hoverBackground:#292929;--vscode-list-inactiveSelectionBackground:#333333;--vscode-font-family:'Segoe UI',sans-serif;--vscode-editor-font-family:Consolas,monospace;--vscode-focusBorder:#007fd4;--vscode-textLink-foreground:#4daafc;--vscode-button-background:#0078d4;--vscode-button-hoverBackground:#026ec1;--vscode-button-foreground:#ffffff;--vscode-input-foreground:#cccccc;--vscode-input-placeholderForeground:#868686;--vscode-input-background:#222222;--vscode-dropdown-background:#222222;--vscode-dropdown-foreground:#cccccc;--vscode-errorForeground:#f48771;--vscode-textCodeBlock-background:#202020}`;
-const assets = new Map(['/dist/webview.js', '/media/panel.css', '/media/codicons/codicon.css', '/media/codicons/codicon.ttf', '/media/codex.svg', '/media/claude.svg'].map(uri => [uri, path.join(process.cwd(), uri.slice(1))]));
+const assets = new Map(['/media/hover-hints.css', '/dist/webview.js', '/media/panel.css', '/media/codicons/codicon.css', '/media/codicons/codicon.ttf', '/media/codex.svg', '/media/claude.svg'].map(uri => [uri, path.join(process.cwd(), uri.slice(1))]));
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, 'http://127.0.0.1'), pathname = url.pathname;

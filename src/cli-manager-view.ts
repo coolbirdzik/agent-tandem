@@ -53,13 +53,18 @@ export class CLIManagerView {
       heading.append(this.button('Scan', () => this.request(provider, 'scan'), locked), this.button('Check versions', () => this.request(provider, 'refresh'), locked)); group.append(heading);
       const rows = manager.registry.entries.filter(row => row.provider === provider), active = manager.active[provider];
       const selections = node('div', undefined, 'cli-selections');
-      const defaultSelect = this.select('Default on this machine', `cli-default-${provider}`, [['', 'Terminal CLI (PATH)'], ...rows.map(row => [row.id, row.name, !row.enabled || !!row.error] as [string, string, boolean])], manager.registry.defaults[provider], locked,
+      const defaultSelect = this.select('Default on this machine', `cli-default-${provider}`, [['', provider === 'Codex' ? 'Automatic (PATH, then current Codex extension)' : 'Terminal CLI (PATH)'], ...rows.map(row => [row.id, `Pinned: ${row.name}`, !row.enabled || !!row.error] as [string, string, boolean])], manager.registry.defaults[provider], locked,
         id => this.request(provider, 'default', { id }));
-      const projectSelect = this.select('This project', `cli-project-${provider}`, [['', 'Use default CLI'], ['path', 'Terminal CLI (PATH)'], ...rows.map(row => [row.id, row.name, !row.enabled || !!row.error] as [string, string, boolean])], active?.source === 'project' ? active.id ?? 'unavailable' : active?.source === 'path' ? 'path' : '', locked || !state.project,
+      const projectSelect = this.select('This project', `cli-project-${provider}`, [['', 'Use default CLI'], ['path', 'Terminal CLI (PATH)'], ...rows.map(row => [row.id, `Pinned: ${row.name}`, !row.enabled || !!row.error] as [string, string, boolean])], active?.source === 'project' ? active.id ?? 'unavailable' : active?.source === 'path' ? 'path' : '', locked || !state.project,
         id => this.request(provider, 'use', { id }));
       selections.append(defaultSelect, projectSelect); group.append(selections);
       if (active?.error) group.append(node('p', active.error, 'cli-entry-error'));
-      else if (active?.id) { const row = rows.find(row => row.id === active.id); group.append(node('p', `Using ${row?.name ?? 'CLI'} · ${active.source === 'project' ? 'project selection' : active.source === 'default' ? 'default' : 'terminal PATH'}`, 'cli-active')); }
+      else if (active?.id || active?.executable) {
+        const row = rows.find(row => row.id === active.id);
+        const source = active.source === 'extension' ? 'Automatic → Codex extension' : active.source === 'automatic-path' ? 'Automatic → Terminal PATH' : active.source === 'project' ? 'Pinned for this project' : active.source === 'path' ? 'Terminal PATH' : manager.registry.defaults[provider] ? 'Pinned machine default' : 'Terminal PATH';
+        group.append(node('p', `${source} · ${active.version || row?.version || row?.name || 'CLI'}`, 'cli-active'));
+        if (active.executable) group.append(node('p', active.executable, 'cli-path'));
+      }
       if (!rows.length) group.append(node('p', 'No CLI entries. Add an executable or scan installed CLIs.', 'meta'));
       for (const row of rows) group.append(this.entry(row, locked, active?.id === row.id, manager.registry.defaults[provider] === row.id));
       const add = node('form', undefined, 'cli-add-form'); add.setAttribute('aria-label', `Add ${provider} CLI`);

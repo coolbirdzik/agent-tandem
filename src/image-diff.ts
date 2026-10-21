@@ -1,6 +1,8 @@
+import { hoverHints } from './ui/hover-hints';
 import { renderImageComparison } from './image-comparison';
 import type { ImageComparison } from './core/media-preview';
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
+hoverHints();
 const api = acquireVsCodeApi();
 const data = JSON.parse(document.getElementById('image-data')!.textContent!) as { images: ImageComparison; file: string };
 document.getElementById('images')!.append(renderImageComparison(data.images, data.file));

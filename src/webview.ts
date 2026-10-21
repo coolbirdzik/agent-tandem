@@ -1,3 +1,5 @@
+import { hoverHints } from './ui/hover-hints';
+import { autoHideScrollbars } from './ui/scrollbars';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { Selection } from './core/change-preview';
@@ -20,6 +22,8 @@ import type { ChatAttachment } from './core/attachments';
 import { ChatAttachments, attachmentCards } from './ui/chat-attachments';
 interface EditDraft extends ChatEdit { previousDraft: string; previousAttachments?: ChatAttachment[] }
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState?(): { reviewCollapsed?: boolean; collapsedReviewGroups?: string[] }; setState?(value: unknown): void };
+autoHideScrollbars();
+hoverHints();
 const api = acquireVsCodeApi();
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const dropdowns = new Dropdowns(document.body);
@@ -29,6 +33,14 @@ let lastState: ViewState | undefined;
 const providerAccounts = new ProviderAccounts(element('provider-accounts'), provider => { if (lastState?.project) send('refreshAccount', { project: lastState.project, provider }); });
 const queueView = new ChatQueueView(element('chat-queue'), action => send('queueAction', action));
 let conversationRevision = '';
+const messageSignatures = new WeakMap<HTMLElement, string>();
+const expandedMessages = new Set<string>();
+const collapsedMessageHeight = 320;
+const messageFolds = new Map<HTMLElement, () => void>();
+const messageResize = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
+  for (const entry of entries) messageFolds.get(entry.target as HTMLElement)?.();
+}) : undefined;
+window.addEventListener('resize', () => { for (const update of messageFolds.values()) update(); });
 let changeRevision = '';
 const screenScroll = new Map<string, number>();
 let currentScreen = 'conversations';
@@ -213,6 +225,29 @@ element('activity-stop').onclick = () => send('stopChat');
 const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 marked.use({ renderer: { html: ({ text }) => escapeHtml(text), image: ({ text }) => escapeHtml(text) } });
 const closeMenu = () => { element<HTMLDetailsElement>('more-menu').open = false; };
+const moreMenu = element<HTMLDetailsElement>('more-menu');
+const menuButtons = () => [...moreMenu.querySelectorAll<HTMLButtonElement>('.menu-items button')].filter(button => !button.hidden && !button.disabled);
+function toggleMoreMenu() {
+  closeModelPopover();
+  moreMenu.open = !moreMenu.open;
+  if (moreMenu.open) menuButtons()[0]?.focus();
+}
+moreMenu.addEventListener('click', event => {
+  if ((event.target as Element).closest('button')) closeMenu();
+});
+moreMenu.addEventListener('keydown', event => {
+  const buttons = menuButtons();
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  let next: number;
+  switch (event.key) {
+    case 'ArrowDown': next = (index + 1) % buttons.length; break;
+    case 'ArrowUp': next = (index - 1 + buttons.length) % buttons.length; break;
+    case 'Home': next = 0; break;
+    case 'End': next = buttons.length - 1; break;
+    default: return;
+  }
+  event.preventDefault(); buttons[next]?.focus();
+});
 function showHistory(show: boolean) {
   if (show && !historyVisible) {
     providerFilter = 'all';
@@ -226,6 +261,7 @@ function showHistory(show: boolean) {
 
 
 element('stop').onclick = () => send(lastState?.chat?.status === 'running' ? 'stopChat' : 'stop');
+element('menu-stop').onclick = () => send('stop');
 element('probe').onclick = () => send('probe');
 element('sync').onclick = () => send('sync');
 element('open-tab')?.addEventListener('click', () => send('tab'));
@@ -241,6 +277,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-provider]').forEach(node => 
 document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach(node => { node.onclick = () => { closeMenu(); send('screen', node.dataset.screen); }; });
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !modelPopover.hidden) { event.preventDefault(); event.stopPropagation(); closeModelPopover(true); return; }
+  if (event.key === 'Escape' && moreMenu.open) {
+    event.preventDefault(); closeMenu();
+    if (document.body.dataset.editorTab === 'true') moreMenu.querySelector<HTMLElement>('summary')?.focus();
+    else chatInput.focus();
+    return;
+  }
   if (event.key === 'Escape') { closeMenu(); if (historyVisible) showHistory(false); else cancelEdit(); }
 });
 window.addEventListener('click', event => {
@@ -468,6 +510,14 @@ function renderRevertPreview(state: ViewState, disabled: boolean) {
   const actions = create('div', undefined, 'review-actions');
   const confirm = button('Confirm Revert', () => send('confirmRevert', { token: preview.token }), disabled || stale); confirm.className = 'revert-confirm'; confirm.dataset.focusKey = 'confirm-revert';
   actions.append(confirm, button('Cancel', () => send('cancelRevert'), disabled)); pane.append(actions);
+}
+/** Leave matching nodes attached so focus, selection and hover survive refreshes. */
+function reconcileChildren(root: HTMLElement, children: HTMLElement[]) {
+  const retained = new Set(children);
+  for (const child of [...root.children]) if (!retained.has(child as HTMLElement)) child.remove();
+  children.forEach((child, index) => {
+    if (root.children[index] !== child) root.insertBefore(child, root.children[index] ?? null);
+  });
 }
 function render(state: ViewState) {
   if (lastState?.project !== state.project || lastState?.conversation?.conversation.key !== state.conversation?.conversation.key ||
@@ -808,7 +858,10 @@ function render(state: ViewState) {
     const provider = node.dataset.provider!;
     const count = workspaceConversations.filter(item => provider === 'all' || item.provider === provider).length;
     const label = provider === 'all' ? 'All' : provider === 'Claude' ? 'Claude Code' : 'Codex';
-    node.replaceChildren(create('span', label), create('span', String(count), 'history-provider-count'));
+    if (node.dataset.count !== String(count)) {
+      node.dataset.count = String(count);
+      node.replaceChildren(create('span', label), create('span', String(count), 'history-provider-count'));
+    }
     node.setAttribute('aria-label', `${label}: ${count} conversations`);
     node.setAttribute('aria-pressed', String(provider === providerFilter));
   });
@@ -817,43 +870,78 @@ function render(state: ViewState) {
   const query = element<HTMLInputElement>('conversation-search').value.trim().toLocaleLowerCase();
   const conversations = workspaceConversations.filter(item => (providerFilter === 'all' || item.provider === providerFilter) && `${item.title} ${item.provider}`.toLocaleLowerCase().includes(query));
   element('conversation-count').textContent = String(conversations.length);
-  const list = element('conversations'); list.replaceChildren();
-  if (!conversations.length) list.append(emptyState(state.syncing ? 'Reading history…' : query ? 'No matches' : 'No conversations yet', query ? 'Try another search or provider.' : 'Saved Claude Code and Codex sessions for this workspace appear here.', 'history'));
-  for (const conversation of conversations) {
-    const link = button('', () => { pendingConversation = conversation.key; send('conversation', conversation.key); }); link.className = 'conversation-link'; link.dataset.focusKey = conversation.key;
-    link.setAttribute('aria-pressed', String(state.conversation?.conversation.key === conversation.key));
-    const label = create('span', undefined, 'conversation-label'), meta = create('span', undefined, 'conversation-meta');
-    const time = create('span', relativeTime(conversation.updatedAt), 'conversation-time'); time.title = new Date(conversation.updatedAt).toLocaleString();
-    meta.append(providerBadge(conversation.provider, false), time);
-    label.append(create('span', conversation.title, 'conversation-title'), meta);
-    link.append(providerIcon(conversation.provider), label); list.append(link);
+  const list = element('conversations');
+  const rows = new Map([...list.querySelectorAll<HTMLButtonElement>('.conversation-link')].map(row => [row.dataset.focusKey!, row]));
+  const nextRows: HTMLElement[] = [];
+  if (!conversations.length) {
+    const title = !state.syncedAt && state.syncing ? 'Reading history…' : query ? 'No matches' : 'No conversations yet';
+    const signature = JSON.stringify([title, query, state.project]);
+    const existing = list.firstElementChild as HTMLElement | null;
+    const empty = existing?.dataset.emptySignature === signature ? existing : emptyState(title, query ? 'Try another search or provider.' : 'Saved Claude Code and Codex sessions for this workspace appear here.', 'history');
+    empty.dataset.emptySignature = signature; nextRows.push(empty);
   }
+  for (const conversation of conversations) {
+    let link = rows.get(conversation.key);
+    if (!link) {
+      link = button('', () => { pendingConversation = conversation.key; send('conversation', conversation.key); });
+      link.className = 'conversation-link'; link.dataset.focusKey = conversation.key;
+      const label = create('span', undefined, 'conversation-label'), meta = create('span', undefined, 'conversation-meta');
+      meta.append(providerBadge(conversation.provider, false), create('span', '', 'conversation-time'));
+      label.append(create('span', '', 'conversation-title'), meta);
+      link.append(providerIcon(conversation.provider), label);
+    }
+    link.setAttribute('aria-pressed', String(state.conversation?.conversation.key === conversation.key));
+    const title = link.querySelector<HTMLElement>('.conversation-title')!, time = link.querySelector<HTMLElement>('.conversation-time')!;
+    if (title.textContent !== conversation.title) title.textContent = conversation.title;
+    const label = relativeTime(conversation.updatedAt);
+    if (time.textContent !== label) time.textContent = label;
+    if (time.dataset.updatedAt !== String(conversation.updatedAt)) {
+      time.dataset.updatedAt = String(conversation.updatedAt);
+      time.title = new Date(conversation.updatedAt).toLocaleString();
+    }
+    nextRows.push(link);
+  }
+  reconcileChildren(list, nextRows);
 
-  const revision = JSON.stringify([state.project, state.conversation?.conversation.key, state.conversation?.conversation.revision, state.conversation?.notice, state.conversation ? '' : state.syncing, reviewDisabled, state.checkpoints, state.checkpointUndo]);
+  const revision = JSON.stringify([state.project, state.conversation?.conversation.key, state.conversation?.conversation.revision, state.conversation?.notice, state.conversation?.messages, state.conversation ? '' : !state.syncedAt && state.syncing, reviewDisabled, state.checkpoints, state.checkpointUndo]);
   const chatChanged = revision !== conversationRevision;
   const sameConversation = !!state.conversation && element('conversation').dataset.key === state.conversation.conversation.key;
   if (chatChanged) {
     conversationRevision = revision;
-    const chat = element('conversation'), heading = element('thread-heading'); chat.replaceChildren(); heading.replaceChildren();
+    const chat = element('conversation'), heading = element('thread-heading');
+    const existingMessages = new Map(sameConversation ? [...chat.querySelectorAll<HTMLElement>(':scope > .message')].map(node => [node.dataset.messageId!, node]) : []);
+    const nextMessages: HTMLElement[] = [];
+    if (!sameConversation || !state.conversation) chat.replaceChildren();
     chat.dataset.key = state.conversation?.conversation.key ?? ''; heading.hidden = !state.conversation;
     if (selectedMessage?.key !== chat.dataset.key) clearMessageSelection();
-    if (!state.conversation) chat.append(emptyState(!state.project ? 'Open a workspace' : 'What are we building?', !state.project ? 'Open a folder in VS Code to chat with Claude Code or Codex.' : 'Choose your agent below and send a message to start working on this project.', !state.project ? 'folder-opened' : 'comment-discussion', state.conversations?.length ? () => showHistory(true) : undefined));
-    else {
+    if (!state.conversation) {
+      heading.replaceChildren(); delete heading.dataset.signature;
+      chat.append(emptyState(!state.project ? 'Open a workspace' : 'What are we building?', !state.project ? 'Open a folder in VS Code to chat with Claude Code or Codex.' : 'Choose your agent below and send a message to start working on this project.', !state.project ? 'folder-opened' : 'comment-discussion', state.conversations?.length ? () => showHistory(true) : undefined));
+    } else {
       const provider = state.conversation.conversation.provider;
-      heading.append(providerBadge(provider), create('h2', state.conversation.conversation.title), create('div', `${state.conversation.messages.length} messages · ${relativeTime(state.conversation.conversation.updatedAt)}`, 'thread-meta'));
-      if (state.checkpointUndo) {
-        const undo = button('Undo restore', () => send('previewCheckpoint', { project: state.project!, id: state.checkpointUndo!.id }), reviewDisabled);
-        undo.classList.add('checkpoint-undo'); undo.title = 'Preview code from before the last restore'; undo.dataset.focusKey = 'undo-checkpoint'; heading.append(undo);
+      const missingCheckpoint = !chatRunning && state.conversation.messages.some(message => message.role === 'user' && !state.checkpoints?.some(entry => entry.messageId === message.id));
+      const headingSignature = JSON.stringify([state.project, state.conversation.conversation.key, provider, state.conversation.conversation.title, state.conversation.messages.length, relativeTime(state.conversation.conversation.updatedAt), state.checkpointUndo, reviewDisabled, missingCheckpoint]);
+      if (heading.dataset.signature !== headingSignature) {
+        heading.dataset.signature = headingSignature; heading.replaceChildren();
+        heading.append(providerBadge(provider), create('h2', state.conversation.conversation.title), create('div', `${state.conversation.messages.length} messages · ${relativeTime(state.conversation.conversation.updatedAt)}`, 'thread-meta'));
+        if (state.checkpointUndo) {
+          const undo = button('Undo restore', () => send('previewCheckpoint', { project: state.project!, id: state.checkpointUndo!.id }), reviewDisabled);
+          undo.classList.add('checkpoint-undo'); undo.title = 'Preview code from before the last restore'; undo.dataset.focusKey = 'undo-checkpoint'; heading.append(undo);
+        }
+        if (missingCheckpoint) {
+          const hint = create('p', 'Messages without a saved checkpoint cannot restore code. New messages sent here create a checkpoint.', 'checkpoint-hint');
+          heading.append(hint);
+        }
       }
-      if (!chatRunning && state.conversation.messages.some(message => message.role === 'user' && !state.checkpoints?.some(entry => entry.messageId === message.id))) {
-        const hint = create('p', 'Messages without a saved checkpoint cannot restore code. New messages sent here create a checkpoint.', 'checkpoint-hint');
-        heading.append(hint);
-      }
-      if (state.conversation.notice) chat.append(create('p', state.conversation.notice, 'empty'));
-      if (!state.conversation.messages.length) chat.append(create('p', 'This session has no saved messages yet.', 'empty'));
+      if (state.conversation.notice) nextMessages.push(create('p', state.conversation.notice, 'empty'));
+      if (!state.conversation.messages.length) nextMessages.push(create('p', 'This session has no saved messages yet.', 'empty'));
       for (const message of state.conversation.messages) {
+        const checkpoint = state.checkpoints?.find(entry => entry.messageId === message.id);
+        const signature = JSON.stringify([message, provider, state.project, state.conversation.conversation.id, reviewDisabled, checkpoint, state.chat?.requestId === message.id ? state.chat.phase : undefined]);
+        const existing = existingMessages.get(message.id);
+        if (existing && messageSignatures.get(existing) === signature) { nextMessages.push(existing); continue; }
         const node = create('article', undefined, `message ${message.role}`);
-        node.dataset.messageId = message.id;
+        node.dataset.messageId = message.id; messageSignatures.set(node, signature);
         if (message.role === 'user') {
           node.tabIndex = -1; node.dataset.focusKey = `message:${chat.dataset.key}:${message.id}`;
           node.setAttribute('aria-label', `Your message: ${message.text.slice(0, 100)}`);
@@ -878,24 +966,49 @@ function render(state: ViewState) {
             const edit = button('', () => editMessage(message.id), reviewDisabled || !state.conversation.conversation.id);
             edit.className = 'icon-button message-edit'; edit.append(icon('edit')); edit.title = 'Edit and resend'; edit.setAttribute('aria-label', 'Edit and resend message'); edit.dataset.focusKey = `edit:${message.id}`; actions.append(edit); author.append(actions);
           }
-          const content = create('div', undefined, message.role === 'user' ? 'message-text' : 'message-text markdown');
-          if (message.role === 'user') content.textContent = message.text;
-          else {
-            content.innerHTML = DOMPurify.sanitize(marked.parse(message.text, { async: false }), { ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td'], ALLOWED_ATTR: ['href', 'title', 'class', 'start'], ALLOW_DATA_ATTR: false });
-            content.querySelectorAll<HTMLAnchorElement>('a').forEach(link => {
-              if (!/^(https?:|mailto:)/i.test(link.getAttribute('href') ?? '')) link.removeAttribute('href');
-              else { link.rel = 'noopener noreferrer'; link.target = '_blank'; }
-            });
-          }
+          const content = create('div', undefined, 'message-text markdown');
+          content.innerHTML = DOMPurify.sanitize(marked.parse(message.text, { async: false }), { ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td'], ALLOWED_ATTR: ['href', 'title', 'class', 'start'], ALLOW_DATA_ATTR: false });
+          content.querySelectorAll<HTMLAnchorElement>('a').forEach(link => {
+            if (!/^(https?:|mailto:)/i.test(link.getAttribute('href') ?? '')) link.removeAttribute('href');
+            else { link.rel = 'noopener noreferrer'; link.target = '_blank'; }
+          });
           node.append(content);
+          if (message.role === 'user') {
+            const key = JSON.stringify([state.project, chat.dataset.key, message.id]);
+            content.id = `message-content-${message.id}`;
+            const toggle = button('', () => {
+              if (expandedMessages.has(key)) expandedMessages.delete(key);
+              else expandedMessages.add(key);
+              update(); updateMessageNav();
+            });
+            toggle.className = 'message-toggle'; toggle.hidden = true;
+            toggle.dataset.focusKey = `message-toggle:${message.id}`;
+            toggle.setAttribute('aria-controls', content.id);
+            const update = () => {
+              const expanded = expandedMessages.has(key);
+              content.classList.toggle('message-collapsed', !expanded);
+              const overflowing = content.scrollHeight > collapsedMessageHeight;
+              if (toggle.hidden !== !overflowing) toggle.hidden = !overflowing;
+              toggle.setAttribute('aria-expanded', String(expanded));
+              const label = expanded ? 'Show less' : 'Show more';
+              if (toggle.textContent !== label) toggle.replaceChildren(create('span', label), icon(expanded ? 'chevron-up' : 'chevron-down'));
+            };
+            content.classList.toggle('message-collapsed', !expandedMessages.has(key));
+            node.append(toggle);
+            messageFolds.set(content, update); messageResize?.observe(content);
+          }
           if (message.attachments?.length) { const cards = create('div', undefined, 'message-attachments chat-attachments'); attachmentCards(cards, message.attachments); node.append(cards); }
         }
-        chat.append(node);
+        nextMessages.push(node);
       }
+      reconcileChildren(chat, nextMessages);
+      for (const update of messageFolds.values()) update();
     }
+    for (const content of messageFolds.keys()) if (!chat.contains(content)) { messageResize?.unobserve(content); messageFolds.delete(content); }
   }
 
   const stop = element<HTMLButtonElement>('stop');
+  element('menu-stop').hidden = !state.running;
   stop.hidden = !state.running && (!chatRunning || state.chat?.phase === 'finishing');
   stop.disabled = state.chat?.phase === 'stopping';
   stop.title = chatRunning ? 'Stop agent' : 'Stop demo'; stop.setAttribute('aria-label', stop.title);
@@ -935,5 +1048,16 @@ function render(state: ViewState) {
   else scroller.scrollTop = previousScroll;
   updateMessageNav();
 }
-window.addEventListener('message', event => { if (event.data?.type === 'state' && event.data.state) render(event.data.state as ViewState); });
+window.addEventListener('message', event => {
+  if (event.data?.type === 'state' && event.data.state) render(event.data.state as ViewState);
+  if (event.data?.type === 'headerAction') {
+    switch (event.data.action) {
+      case 'newChat': element<HTMLButtonElement>('new-chat').click(); break;
+      case 'history': showHistory(true); break;
+      case 'review': send('screen', 'changes'); break;
+      case 'refresh': element<HTMLButtonElement>('sync').click(); break;
+      case 'more': toggleMoreMenu(); break;
+    }
+  }
+});
 api.postMessage({ type: 'ready' });

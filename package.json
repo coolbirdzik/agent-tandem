@@ -383,13 +383,38 @@
         "command": "agentTandem.openImageChanges",
         "title": "AgentTandem: Open Image Changes",
         "icon": "$(file-media)"
+      },
+      {
+        "command": "agentTandem.header.newChat",
+        "title": "New chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentTandem.header.history",
+        "title": "Conversation history",
+        "icon": "$(history)"
+      },
+      {
+        "command": "agentTandem.header.review",
+        "title": "Review changes",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "agentTandem.header.refresh",
+        "title": "Refresh conversations",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentTandem.header.more",
+        "title": "More actions",
+        "icon": "$(ellipsis)"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "agentTandem",
-          "title": "AgentTandem",
+          "title": "Agent Tandem",
           "icon": "media/tandem.svg"
         }
       ]
@@ -398,13 +423,19 @@
       "agentTandem": [
         {
           "id": "agentTandem.panel",
-          "name": "Review",
+          "name": "Agent Tandem",
           "type": "webview"
         }
       ]
     },
     "menus": {
-      "view/title": [],
+      "view/title": [
+        {
+          "command": "agentTandem.header.more",
+          "when": "view == agentTandem.panel",
+          "group": "navigation@5"
+        }
+      ],
       "editor/title": [
         {
           "command": "agentTandem.previousFile",
@@ -491,6 +522,26 @@
         {
           "command": "agentTandem.openImageChanges",
           "when": "resourceExtname =~ /^.(png|apng|jpe?g|jfif|gif|webp|bmp|ico|avif|svg|tiff?)$/i"
+        },
+        {
+          "command": "agentTandem.header.newChat",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.header.history",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.header.review",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.header.refresh",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.header.more",
+          "when": "false"
         }
       ],
       "scm/resourceState/context": [
@@ -698,7 +749,7 @@
         "agentTandem.codexExecutable": {
           "type": "string",
           "default": "",
-          "description": "Optional absolute path to an enabled native Codex executable in Manage CLIs. Uses the managed default or terminal PATH order when empty. A managed project entry ID takes precedence.",
+          "description": "Optional absolute path to an enabled native Codex executable in Manage CLIs. Uses the managed default when empty; automatic selection tries a valid PATH Codex, then the current VS Code host's Codex extension. A managed project entry ID takes precedence.",
           "scope": "resource"
         },
         "agentTandem.claudeExecutable": {
@@ -715,7 +766,7 @@
           ],
           "default": "default",
           "scope": "resource",
-          "description": "Use the managed default/explicit executable, or the enabled terminal CLI on PATH. Configure this in Manage CLIs."
+          "description": "Use the managed default/explicit executable (automatic: valid PATH Codex, then current Codex extension), or require the enabled terminal CLI on PATH. Configure this in Manage CLIs."
         },
         "agentTandem.claudeCLISelection": {
           "type": "string",
@@ -818,7 +869,7 @@
     "test:cli:live": "npm run build && node scripts/test-cli-manager-live.mjs",
     "test:context:history": "npm run build && node scripts/test-context-history.mjs",
     "probe:providers": "node scripts/probe-providers.mjs",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links --skip-license --out artifacts/agent-tandem-0.1.1.vsix",
+    "package": "node scripts/package.mjs",
     "package:marketplace": "node scripts/package-marketplace.mjs",
     "test:marketplace": "node scripts/test-marketplace.mjs",
     "bump:patch": "node scripts/release.mjs bump patch",
@@ -831,6 +882,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/semver": "7.8.0",
     "@types/vscode": "1.100.0",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^4.0.0",
@@ -849,6 +901,7 @@
     "dompurify": "3.4.16",
     "ignore": "^7.0.5",
     "marked": "18.1.0",
-    "monaco-editor": "0.57.0"
+    "monaco-editor": "0.57.0",
+    "semver": "7.8.5"
   }
 }

@@ -9,6 +9,23 @@ const remaining = (window: QuotaWindow) => `${Math.round(Math.max(0, 100 - windo
 const planLabel = (value?: string) => value ? value.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase()) : '';
 const resetLabel = (window: QuotaWindow) => window.resetsAt ? `Resets ${new Date(window.resetsAt).toLocaleString()}` : 'Reset time unavailable';
 
+/** Summary descendants contain only display markup; keep their elements as values change. */
+function updateSummary(current: Element, next: Element) {
+  for (const attribute of [...current.attributes]) if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+  for (const attribute of [...next.attributes]) if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
+  const children = [...next.childNodes];
+  children.forEach((child, index) => {
+    const existing = current.childNodes[index];
+    if (existing?.nodeType === Node.ELEMENT_NODE && child.nodeType === Node.ELEMENT_NODE && (existing as Element).tagName === (child as Element).tagName) {
+      updateSummary(existing as Element, child as Element);
+    } else if (existing?.nodeType === Node.TEXT_NODE && child.nodeType === Node.TEXT_NODE) {
+      if (existing.textContent !== child.textContent) existing.textContent = child.textContent;
+    } else if (existing) existing.replaceWith(child);
+    else current.append(child);
+  });
+  while (current.childNodes.length > children.length) current.lastChild!.remove();
+}
+
 export class ProviderAccounts {
   private accounts: Accounts = {};
   private revision = '';
@@ -28,14 +45,27 @@ export class ProviderAccounts {
   render(accounts: Accounts | undefined, project: string | undefined, activeProvider: ConversationProvider, visible = true) {
     this.root.hidden = !project || !visible;
     if (!project || !visible) { this.close(); this.revision = ''; return; }
-    const revision = JSON.stringify([project, activeProvider, accounts?.[activeProvider], accounts?.[activeProvider]?.quota?.bankedResets?.availableCount ? Math.floor(Date.now() / 60000) : undefined]);
-    if (revision === this.revision) return;
+    this.accounts = accounts ?? {};
+    const status = this.accounts[activeProvider];
+    // Timestamps and background loading do not change the displayed quota.
+    const revision = JSON.stringify([project, activeProvider, status?.account, status?.quota, status?.error,
+      status?.quota ? undefined : status?.status, status?.quota?.bankedResets?.availableCount ? Math.floor(Date.now() / 60000) : undefined]);
+    if (revision === this.revision) {
+      if (this.provider) {
+        const refresh = this.popover.querySelector<HTMLButtonElement>('[data-account-refresh]');
+        if (refresh) refresh.disabled = status?.status === 'loading';
+        const updated = this.popover.querySelector<HTMLElement>('.account-updated');
+        const label = status?.updatedAt ? `Updated ${new Date(status.updatedAt).toLocaleTimeString()}` : '';
+        if (updated && updated.textContent !== label) updated.textContent = label;
+      }
+      return;
+    }
     if (this.provider && this.provider !== activeProvider) this.close();
     this.revision = revision; this.accounts = accounts ?? {};
     const focusProvider = (document.activeElement as HTMLElement | null)?.dataset.accountProvider;
     const refreshFocused = this.popover.contains(document.activeElement) && (document.activeElement as HTMLElement).dataset.accountRefresh !== undefined;
     const closeFocused = document.activeElement?.classList.contains('account-close');
-    this.root.replaceChildren();
+    const existingSummary = this.root.querySelector<HTMLButtonElement>('[data-account-provider]');
     for (const provider of [activeProvider]) {
       const status = this.accounts[provider], account = status?.account;
       const button = node('button', undefined, 'account-summary'); button.type = 'button'; button.dataset.accountProvider = provider;
@@ -43,7 +73,7 @@ export class ProviderAccounts {
       const icon = node('img'); icon.src = document.body.dataset[provider === 'Claude' ? 'claudeIcon' : 'codexIcon']!; icon.alt = ''; icon.className = 'provider-icon'; icon.dataset.provider = provider;
       const identity = account ? account.email || account.method : status?.status === 'error' ? 'Account unavailable' : 'Loading account…';
       const quota = node('span', undefined, 'account-quota-summary');
-      if (status?.status === 'loading') quota.append(node('span', 'Updating…'));
+      if (status?.status === 'loading' && !status.quota) quota.append(node('span', 'Updating…'));
       else if (status?.quota?.windows.length) {
         for (const window of status.quota.windows.slice(0, 2)) {
           const label = node('span', undefined, 'quota-mini');
@@ -73,7 +103,9 @@ export class ProviderAccounts {
       button.title = [`${provider} · ${identity}${account?.plan ? ` · ${planLabel(account.plan)}` : ''}`, status?.quota?.windows.map(window => `${window.label}: ${remaining(window)} · ${resetLabel(window)}`).join('\n') || 'Quota unavailable', ...bankedResetDetails(resets), 'API quota remaining · Open account and quota details'].join('\n');
       button.setAttribute('aria-label', button.title);
       button.append(icon, quota, node('span', undefined, 'codicon codicon-chevron-up')); button.lastElementChild!.setAttribute('aria-hidden', 'true');
-      button.onclick = () => this.open(provider); this.root.append(button);
+      button.onclick = () => this.open(provider);
+      if (existingSummary?.dataset.accountProvider === provider) updateSummary(existingSummary, button);
+      else this.root.replaceChildren(button);
     }
     if (focusProvider) this.root.querySelector<HTMLButtonElement>(`[data-account-provider="${focusProvider}"]`)?.focus({ preventScroll: true });
     if (this.provider) {
@@ -103,7 +135,7 @@ export class ProviderAccounts {
       this.popover.append(node('p', account.email || account.method, 'account-detail-identity'));
       this.popover.append(node('p', [account.plan ? planLabel(account.plan) : undefined, account.method, account.organization].filter(Boolean).join(' · '), 'account-detail-meta'));
     }
-    if (status?.status === 'loading') this.popover.append(node('p', 'Updating account and quota…', 'account-detail-meta'));
+    if (status?.status === 'loading' && !status.quota) this.popover.append(node('p', 'Updating account and quota…', 'account-detail-meta'));
     if (status?.error) this.popover.append(node('p', status.error, 'account-detail-meta'));
     for (const window of status?.quota?.windows ?? []) {
       const row = node('div', undefined, 'quota-window'), label = node('div', undefined, 'quota-window-heading');

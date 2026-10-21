@@ -7,6 +7,7 @@ await copyFile('node_modules/acorn/LICENSE', 'dist/acorn-LICENSE.txt');
 await copyFile('node_modules/monaco-editor/LICENSE', 'dist/monaco-LICENSE.txt');
 await copyFile('node_modules/monaco-editor/ThirdPartyNotices.txt', 'dist/monaco-ThirdPartyNotices.txt');
 await copyFile('node_modules/ignore/LICENSE-MIT', 'dist/ignore-LICENSE.txt');
+await copyFile('node_modules/semver/LICENSE', 'dist/semver-LICENSE.txt');
 await copyFile('node_modules/jsonc-parser/LICENSE.md', 'dist/jsonc-parser-LICENSE.md');
 await mkdir('media/codicons', { recursive: true });
 await copyFile('node_modules/@vscode/codicons/LICENSE-CODE', 'media/codicons/License.txt');
