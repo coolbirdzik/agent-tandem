@@ -8,6 +8,7 @@ export function autoHideScrollbars(root: Document = document): () => void {
   const generatedIds = new Map<HTMLElement, string>();
   let nextId = 0;
   let stopDrag: (() => void) | undefined;
+  let dragTarget: HTMLElement | undefined;
   const hadClass = root.documentElement.classList.contains('overlay-scrollbars');
   root.documentElement.classList.add('overlay-scrollbars');
 
@@ -23,9 +24,6 @@ export function autoHideScrollbars(root: Document = document): () => void {
   }
 
   const disposeShadows = scrollShadows(root, (element, overlay) => {
-    for (const [target, layer] of overlays) {
-      if (!layer.isConnected) overlays.delete(target);
-    }
     overlays.set(element, overlay);
     overlay.removeAttribute('aria-hidden');
     if (!element.id) {
@@ -107,6 +105,7 @@ export function autoHideScrollbars(root: Document = document): () => void {
           setOffset((coordinate(event) - (axis === 'y' ? rect.top : rect.left) - thumbSize / 2) * max / travel);
         }
         const start = coordinate(event), initial = offset(), pointerId = event.pointerId;
+        dragTarget = element;
         track!.classList.add('is-dragging');
         track!.setPointerCapture?.(pointerId);
         const move = (e: PointerEvent) => {
@@ -120,6 +119,7 @@ export function autoHideScrollbars(root: Document = document): () => void {
           root.removeEventListener('pointerup', end);
           root.removeEventListener('pointercancel', end);
           stopDrag = undefined;
+          dragTarget = undefined;
           reveal(element);
         };
         root.addEventListener('pointermove', move);
@@ -127,6 +127,17 @@ export function autoHideScrollbars(root: Document = document): () => void {
         root.addEventListener('pointercancel', end);
       };
     }
+  }, element => {
+    // Release every reference as soon as a message or its scrollbar disappears,
+    // including the last scroller (there may never be another overlay render).
+    if (dragTarget === element) stopDrag?.();
+    clearTimeout(timers.get(element));
+    timers.delete(element);
+    element.classList.remove('is-scrolling');
+    overlays.delete(element);
+    const id = generatedIds.get(element);
+    if (id && element.id === id) element.removeAttribute('id');
+    generatedIds.delete(element);
   });
   const onScroll = (event: Event) => {
     const target = event.target === root ? root.scrollingElement : event.target;

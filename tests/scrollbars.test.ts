@@ -117,3 +117,61 @@ it('discovers new overflowing content, removes obsolete bars, and leaves Monaco 
   paint();
   expect(document.querySelectorAll('.scrollbar-track')).toHaveLength(0);
 });
+
+it('cleans up removed scroll containers without waiting for another overlay or disposal', async () => {
+  vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout'] });
+  dispose = autoHideScrollbars();
+  paint();
+  for (let i = 0; i < 10; i++) {
+    const element = scroller();
+    await Promise.resolve(); paint();
+    expect(element.id).toMatch(/^tandem-scroll-/);
+    element.dispatchEvent(new Event('scroll'));
+    paint();
+    element.remove();
+    await Promise.resolve(); paint();
+    expect(element.id).toBe('');
+    expect(element.classList.contains('is-scrolling')).toBe(false);
+    expect(document.querySelector('.scroll-shadow-overlay')).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  }
+});
+
+it('ends an active drag when its container is removed and preserves user IDs', async () => {
+  vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout'] });
+  const element = scroller(); element.id = 'saved-scroller';
+  dispose = autoHideScrollbars(); paint();
+  const track = document.querySelector<HTMLElement>('[data-axis="y"]')!;
+  const pointer = (type: string, clientY: number) => {
+    const event = new MouseEvent(type, { clientY, button: 0, bubbles: true });
+    Object.defineProperty(event, 'pointerId', { value: 1 }); return event;
+  };
+  track.firstElementChild!.dispatchEvent(pointer('pointerdown', 0));
+  expect(track.classList.contains('is-dragging')).toBe(true);
+  element.remove();
+  await Promise.resolve(); paint();
+  expect(track.classList.contains('is-dragging')).toBe(false);
+  expect(element.id).toBe('saved-scroller');
+  const offset = element.scrollTop;
+  document.dispatchEvent(pointer('pointermove', 50));
+  expect(element.scrollTop).toBe(offset);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('releases generated IDs when overflow disappears and recreates working bars when it returns', async () => {
+  vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout'] });
+  const element = scroller();
+  dispose = autoHideScrollbars(); paint();
+  Object.defineProperties(element, { scrollHeight: { value: 100 }, scrollWidth: { value: 200 } });
+  element.textContent = 'Short content';
+  await Promise.resolve(); paint();
+  expect(element.id).toBe('');
+  expect(document.querySelector('.scrollbar-track')).toBeNull();
+  Object.defineProperty(element, 'scrollHeight', { value: 400 });
+  element.textContent = 'Long content';
+  await Promise.resolve(); paint();
+  const track = document.querySelector<HTMLElement>('[data-axis="y"]')!;
+  expect(track.getAttribute('aria-controls')).toBe(element.id);
+  track.dispatchEvent(new KeyboardEvent('keydown', { key: 'End' }));
+  expect(element.scrollTop).toBe(300);
+});

@@ -1,5 +1,6 @@
 /** Keep edge shadows in sync with scrolling, layout and dynamically rendered lists. */
-export function scrollShadows(root: Document = document, decorateOverlay?: (element: HTMLElement, overlay: HTMLElement) => void): () => void {
+export function scrollShadows(root: Document = document, decorateOverlay?: (element: HTMLElement, overlay: HTMLElement) => void,
+  removeOverlay?: (element: HTMLElement) => void): () => void {
   const view = root.defaultView!;
   const tracked = new Set<HTMLElement>();
   const overlays = new Map<HTMLElement, HTMLElement>();
@@ -61,7 +62,7 @@ export function scrollShadows(root: Document = document, decorateOverlay?: (elem
   function restore(element: HTMLElement) {
     element.removeAttribute('data-scroll-shadow');
     overlays.get(element)?.remove();
-    overlays.delete(element);
+    if (overlays.delete(element)) removeOverlay?.(element);
   }
 
   function renderOverlay(element: HTMLElement, edges: string) {
