@@ -144,7 +144,20 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
   it('deduplicates a current extension link that points at the same native binary', async () => {
     const f = await extensionFixture();
     await symlink(path.join(f.root, '.vscode', 'extensions', 'openai.chatgpt-test'), path.join(f.root, '.vscode', 'extensions', 'openai.chatgpt-current'), 'dir');
-    expect(await installedCLIExecutables('codex')).toEqual([f.extension]);
+    const files = await installedCLIExecutables('codex');
+    expect(files).toHaveLength(1);
+    expect(await realpath(files[0]!)).toBe(f.extension);
+  });
+  it('discovers the editor-reported installation outside default extension directories', async () => {
+    const f = await extensionFixture();
+    await rm(path.join(f.root, '.vscode'), { recursive: true });
+    const installation = path.join(f.root, 'custom-extensions', 'openai.chatgpt-custom');
+    const binary = path.join(installation, path.relative(path.join(f.root, '.vscode', 'extensions', 'openai.chatgpt-test'), f.extension));
+    await mkdir(path.dirname(binary), { recursive: true }); await writeFile(binary, '');
+    expect(await installedCLIExecutables('codex')).toEqual([]);
+    expect(await installedCLIExecutables('codex', [installation])).toEqual([binary]);
+    expect(await installedCLIExecutables('claude', [installation])).toEqual([]);
+    await expect(findExecutable('codex')).rejects.toThrow('was not found');
   });
   it('scans the VS Code Insiders and Cursor extension roots', async () => {
     const f = await extensionFixture();

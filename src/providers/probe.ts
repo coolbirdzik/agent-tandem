@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { rcompare, valid } from 'semver';
 import type { ProviderStatus } from '../core/types';
 
 const execute = promisify(execFile);
@@ -70,7 +71,7 @@ async function versionedExecutables(root: string, relative: string): Promise<str
 }
 
 /** The OpenAI VS Code extension keeps one native Codex binary per host architecture. */
-async function vscodeExtensionCodexExecutables(): Promise<string[]> {
+async function vscodeExtensionCodexExecutables(extensionPaths: readonly string[], scan = true, currentHostOnly = false): Promise<string[]> {
   const platform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : process.platform === 'linux' ? 'linux' : undefined;
   if (!platform) return [];
 
@@ -79,27 +80,70 @@ async function vscodeExtensionCodexExecutables(): Promise<string[]> {
   // broad filesystem search. Cursor uses the same extension package layout, so
   // the OpenAI extension's bundled Codex binary is valid there as well.
   const home = process.platform === 'win32' ? process.env.USERPROFILE : os.homedir();
-  if (!home) return [];
-  const editorRoots = ['.vscode', '.vscode-insiders', '.cursor'].map(editor => path.join(home, editor, 'extensions'));
+  const editorRoots = new Set([
+    ...(home && !(currentHostOnly && extensionPaths.length) ? ['.vscode', '.vscode-insiders', '.cursor'].map(editor => path.join(home, editor, 'extensions')) : []),
+    ...extensionPaths.map(installation => path.dirname(installation)),
+  ]);
   // Keep the existing Windows mapping: x64-compatible Node processes use the
   // extension's x86_64 payload, while native arm64 uses aarch64. On POSIX,
   // avoid claiming an x86_64 binary for an unsupported Node architecture.
   const architecture = process.arch === 'arm64' ? 'aarch64' : process.arch === 'x64' || process.platform === 'win32' ? 'x86_64' : undefined;
   if (!architecture) return [];
   const executable = platform === 'windows' ? 'codex.exe' : 'codex';
-  const files: string[] = [];
-  for (const editorRoot of editorRoots) {
+  // VS Code reports the actual installation path, including custom extension
+  // directories, portable installations and extensions on a remote host.
+  const installations = new Set(extensionPaths);
+  for (const editorRoot of scan ? editorRoots : []) {
     const extensions = await readdir(editorRoot).catch(() => []);
     for (const extension of extensions.filter(entry => entry.startsWith('openai.chatgpt-'))) {
-      const native = path.join(editorRoot, extension, 'bin', `${platform}-${architecture}`, executable);
-      if (await exists(native)) files.push(native);
+      installations.add(path.join(editorRoot, extension));
     }
+  }
+  const files: string[] = [];
+  for (const installation of installations) {
+    const native = path.join(installation, 'bin', `${platform}-${architecture}`, executable);
+    if (await exists(native)) files.push(native);
   }
   return files;
 }
 
+/** Prefer the current extension host; scan its siblings only as a fallback. */
+export async function latestExtensionCodexCLI(extensionPaths: readonly string[] = [], signal?: AbortSignal, beforeVerify?: (executable: string) => void): Promise<CLIInfo | undefined> {
+  const verify = async (executable: string) => {
+    signal?.throwIfAborted();
+    // Selection restrictions must propagate, rather than trigger a fallback.
+    beforeVerify?.(executable);
+    try {
+      const info = await cliInfo('codex', executable, signal);
+      return /^codex-cli\s+/i.test(info.version) ? info : undefined;
+    } catch (error) { if (signal?.aborted) throw error; return undefined; }
+  };
+  const current = await vscodeExtensionCodexExecutables(extensionPaths, false);
+  for (const executable of current) {
+    const info = await verify(executable);
+    if (info) return info;
+  }
+  const files = (await vscodeExtensionCodexExecutables(extensionPaths, true, true)).filter(file => !current.includes(file));
+  const candidates = await Promise.all(files.map(async executable => {
+    const installation = path.resolve(executable, '../../..');
+    let version = path.basename(installation).replace(/^openai\.chatgpt-/, '').replace(/-(?:linux|darwin|win32|alpine)-(?:x64|arm64|armhf|ia32)$/, '');
+    try {
+      const manifest = JSON.parse(await readFile(path.join(installation, 'package.json'), 'utf8'));
+      if (typeof manifest.version === 'string') version = manifest.version;
+    } catch { /* Platform suffixes can be removed from older installation names. */ }
+    return { executable, version: valid(version) };
+  }));
+  const ordered = candidates.filter((candidate): candidate is { executable: string; version: string } => !!candidate.version);
+  ordered.sort((a, b) => rcompare(a.version, b.version));
+  for (const candidate of ordered) {
+    const info = await verify(candidate.executable);
+    if (info) return info;
+  }
+  return undefined;
+}
+
 /** Choices are explicit; alternate installations never affect terminal detection. */
-export async function installedCLIExecutables(name: 'codex' | 'claude'): Promise<string[]> {
+export async function installedCLIExecutables(name: 'codex' | 'claude', codexExtensionPaths: readonly string[] = []): Promise<string[]> {
   const files = new Set<string>();
   try { files.add(await findExecutable(name)); } catch { /* A manual choice can repair discovery. */ }
   for (const folder of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
@@ -123,7 +167,7 @@ export async function installedCLIExecutables(name: 'codex' | 'claude'): Promise
       }
     }
   }
-  if (name === 'codex') for (const file of await vscodeExtensionCodexExecutables()) files.add(file);
+  if (name === 'codex') for (const file of await vscodeExtensionCodexExecutables(codexExtensionPaths)) files.add(file);
   if (name === 'codex' && process.platform === 'win32') {
     const home = process.env.CODEX_HOME || (process.env.USERPROFILE && path.join(process.env.USERPROFILE, '.codex'));
     if (home) {
@@ -143,8 +187,8 @@ export async function installedCLIExecutables(name: 'codex' | 'claude'): Promise
   return [...unique.values()];
 }
 
-export async function installedCLIs(name: 'codex' | 'claude'): Promise<CLIInfo[]> {
-  const files = await installedCLIExecutables(name);
+export async function installedCLIs(name: 'codex' | 'claude', codexExtensionPaths: readonly string[] = []): Promise<CLIInfo[]> {
+  const files = await installedCLIExecutables(name, codexExtensionPaths);
   const results = await Promise.allSettled(files.map(file => cliInfo(name, file)));
   return results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
 }

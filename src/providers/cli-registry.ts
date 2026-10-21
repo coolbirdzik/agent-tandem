@@ -2,7 +2,7 @@ import type { ConversationProvider } from './conversations';
 
 export interface CLIEntry { id: string; provider: ConversationProvider; name: string; executable: string; version: string; enabled: boolean; error?: string }
 export interface CLIRegistry { version: 1; initialized: boolean; revision: string; entries: CLIEntry[]; defaults: Record<ConversationProvider, string> }
-export interface CLIActive { id?: string; source: 'project' | 'default' | 'path'; error?: string }
+export interface CLIActive { id?: string; executable?: string; version?: string; source: 'project' | 'default' | 'path' | 'extension' | 'automatic-path'; error?: string }
 export interface CLIManagerState { registry: CLIRegistry; active: Partial<Record<ConversationProvider, CLIActive>>; busy: boolean; trusted: boolean; error?: string }
 export interface CLIRequest { project?: string; revision: string; provider: ConversationProvider; action: 'add' | 'edit' | 'toggle' | 'remove' | 'default' | 'use' | 'scan' | 'refresh'; id?: string; name?: string; executable?: string; enabled?: boolean }
 export const emptyCLIRegistry = (): CLIRegistry => ({ version: 1, initialized: false, revision: 'new', entries: [], defaults: { Codex: '', Claude: '' } });

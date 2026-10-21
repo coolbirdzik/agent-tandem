@@ -20,6 +20,7 @@
 !dist/diff-LICENSE.txt
 !dist/acorn-LICENSE.txt
 !dist/ignore-LICENSE.txt
+!dist/semver-LICENSE.txt
 !dist/jsonc-parser-LICENSE.md
 !dist/codicons-LICENSE.txt
 !dist/marked-LICENSE.md

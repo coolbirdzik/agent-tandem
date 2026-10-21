@@ -12,7 +12,8 @@ import { ImageDiff } from './host/image-diff';
 import { imageSnapshot, imageSnapshots } from './core/media-preview';
 import { gitImageChanges, redirectGitImageDiffs } from './host/git-image-changes';
 import { ReviewHunkActions } from './host/review-hunk-actions';
-import { probeCodex, probeClaude, findExecutable, cliInfo, installedCLIs } from './providers/probe';
+import { probeCodex, probeClaude, cliInfo, installedCLIs } from './providers/probe';
+import { ManagedCLIResolver } from './providers/managed-cli';
 import { ProjectConversations, claudeMessages, type ClaudeHistoryAPI, type ConversationContent, type ConversationIndex } from './providers/conversations';
 import { claudeContent } from './providers/chat-input';
 import { UISelectionStore } from './core/ui-selection';
@@ -38,7 +39,7 @@ import type { ConversationProvider } from './providers/conversations';
 import { AccessModeStore } from './core/access-store';
 import { accessMode, accessSelection, defaultAccessModes } from './providers/access';
 import { CLIStore, type CLIRegistration } from './core/cli-store';
-import { allowedCLI, defaultCLI, cliRequest, cliPathKey, emptyCLIRegistry, type CLIRegistry, type CLIActive } from './providers/cli-registry';
+import { cliRequest, cliPathKey, emptyCLIRegistry, type CLIRegistry, type CLIActive } from './providers/cli-registry';
 import { ContextStore } from './core/context-store';
 import { ChatQueue } from './core/chat-queue';
 import { ChatQueueStore } from './core/chat-queue-store';
@@ -108,6 +109,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const effortStore = new EffortStore(path.join(context.globalStorageUri.fsPath, 'efforts'));
   const fastModeStore = new FastModeStore(path.join(context.globalStorageUri.fsPath, 'fast-mode'));
   const cliStore = new CLIStore(path.join(context.globalStorageUri.fsPath, 'cli'));
+  const cliResolver = new ManagedCLIResolver(cliStore);
+  const codexExtensionIdentity = () => {
+    const extension = vscode.extensions.getExtension('openai.chatgpt');
+    return extension ? `${extension.extensionUri.toString()}@${extension.packageJSON.version}` : '';
+  };
+  let codexExtensionRevision = codexExtensionIdentity();
   const contextStore = new ContextStore(path.join(context.globalStorageUri.fsPath, 'context'));
   let cliInit: Promise<CLIRegistry> | undefined;
   let cliManaging = false;
@@ -220,7 +227,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (row.provider === 'Codex') {
       const selection = await managedCLI('Codex', state.project);
       assertConversationCleanupIdle();
-      await deleteCodexThread(selection.entry.executable, row.id);
+      await deleteCodexThread(selection.cli.executable, row.id);
     } else {
       const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href);
       if (!sdk.deleteSession) throw new Error('The Claude SDK does not support session deletion.');
@@ -266,7 +273,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     current: provider => isChatAccount(provider) ? state.accounts?.[provider] : undefined,
     executable: async provider => {
       if (!isChatAccount(provider)) throw new Error('Use Open app for desktop accounts.');
-      return (await managedCLI(provider, state.project)).entry.executable;
+      return (await managedCLI(provider, state.project)).cli.executable;
     },
     openDesktop: async provider => {
       if (!vscode.workspace.isTrusted || vscode.env.remoteName) throw new Error('Open a trusted local workspace to manage desktop sign-ins.');
@@ -293,9 +300,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       const cli = await managedCLI(provider, state.project, signal), env = typeof profile === 'string' ? undefined : accountProfiles.environment(profile);
       const read = async () => {
         signal?.throwIfAborted();
-        if (provider === 'Codex') return readCodexAccount(state.project!, cli.entry.executable, signal, undefined, env);
-        const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href) as typeof import('./providers/claude-history');
-        return readClaudeAccount(state.project!, sdk.query, cli.entry.executable, signal, env);
+        try {
+          if (provider === 'Codex') return await readCodexAccount(state.project!, cli.cli.executable, signal, undefined, env);
+          const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href) as typeof import('./providers/claude-history');
+          return await readClaudeAccount(state.project!, sdk.query, cli.cli.executable, signal, env);
+        } catch (error) { if (!signal?.aborted) cliResolver.invalidateOnFailure(provider, error); throw error; }
       };
       return typeof profile === 'string' ? read() : withStorageLock(accountProfiles.home(profile.id), read);
     },
@@ -383,7 +392,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const cliIdKey = (provider: ConversationProvider) => provider === 'Codex' ? 'codexCLIId' : 'claudeCLIId';
   async function discoverCLIs(providers: ConversationProvider[]): Promise<CLIRegistration[]> {
     const results = await Promise.allSettled(providers.map(async provider => {
-      const files = await installedCLIs(provider === 'Codex' ? 'codex' : 'claude');
+      const codexExtension = provider === 'Codex' ? vscode.extensions.getExtension('openai.chatgpt') : undefined;
+      const files = await installedCLIs(provider === 'Codex' ? 'codex' : 'claude', codexExtension ? [codexExtension.extensionPath] : []);
       for (const folder of vscode.workspace.workspaceFolders ?? []) {
         const configured = vscode.workspace.getConfiguration('agentTandem', folder.uri).get<string>(cliKey(provider));
         if (configured && !files.some(file => cliPathKey(file.executable) === cliPathKey(configured))) {
@@ -402,29 +412,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }
   async function managedCLI(provider: ConversationProvider, project?: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
+    if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before resolving a CLI.');
     let stop!: () => void;
     const stopped = new Promise<never>((_, reject) => { stop = () => reject(new Error('CLI selection cancelled.')); });
     signal?.addEventListener('abort', stop, { once: true });
-    let registry;
-    try { registry = await Promise.race([ensureCLIRegistry(), stopped]); signal?.throwIfAborted(); }
+    try { await Promise.race([ensureCLIRegistry(), stopped]); signal?.throwIfAborted(); }
     finally { signal?.removeEventListener('abort', stop); }
     const config = vscode.workspace.getConfiguration('agentTandem', project ? vscode.Uri.file(project) : undefined);
     const terminal = config.get<string>(cliModeKey(provider)) === 'terminal';
-    const selectedId = terminal ? '' : config.get<string>(cliIdKey(provider)) ?? '';
-    const selectedEntry = selectedId ? registry.entries.find(entry => entry.id === selectedId && entry.provider === provider) : undefined;
-    if (selectedId && !selectedEntry) throw new Error(`The selected ${provider} CLI was removed. Choose another CLI in Manage CLIs.`);
-    const configured = terminal ? '' : selectedEntry?.executable ?? config.get<string>(cliKey(provider)) ?? '';
-    const fallback = !configured && !terminal ? defaultCLI(registry, provider) : undefined;
-    const executable = await findExecutable(provider === 'Codex' ? 'codex' : 'claude', configured || fallback?.executable);
-    const entry = allowedCLI(registry, provider, executable);
-    return { entry, source: configured ? 'project' as const : terminal ? 'path' as const : 'default' as const };
+    const codexExtension = provider === 'Codex' ? vscode.extensions.getExtension('openai.chatgpt') : undefined;
+    return cliResolver.resolve(provider, {
+      terminal, id: config.get<string>(cliIdKey(provider)), executable: config.get<string>(cliKey(provider)),
+      codexExtensionPaths: codexExtension ? [codexExtension.extensionPath] : [],
+    }, signal);
   }
   async function refreshCLIManager() {
     const project = state.project;
     try {
       const registry = await ensureCLIRegistry(), active: Partial<Record<ConversationProvider, CLIActive>> = {};
       for (const provider of ['Codex', 'Claude'] as const) {
-        try { const selection = await managedCLI(provider, project); active[provider] = { id: selection.entry.id, source: selection.source }; }
+        try { const selection = await managedCLI(provider, project); active[provider] = { id: selection.entry?.id, source: selection.source, ...selection.cli }; }
         catch (error) {
           const config = vscode.workspace.getConfiguration('agentTandem', project ? vscode.Uri.file(project) : undefined);
           const terminal = config.get<string>(cliModeKey(provider)) === 'terminal', configured = terminal ? '' : config.get<string>(cliKey(provider));
@@ -462,7 +469,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const job = (async () => {
       try {
         const selected = await managedCLI(provider, project, abort.signal);
-        const cli = await cliInfo(provider === 'Codex' ? 'codex' : 'claude', selected.entry.executable, abort.signal);
+        const cli = selected.cli;
         let choices;
         if (provider === 'Codex') choices = await codexModels(project, cli.executable, abort.signal);
         else {
@@ -471,6 +478,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         }
         if (current()) state.modelCatalogs = { ...state.modelCatalogs, [provider]: { status: 'ready', choices, cli } };
       } catch (error) {
+        if (!abort.signal.aborted) cliResolver.invalidateOnFailure(provider, error);
         if (current()) state.modelCatalogs = { ...state.modelCatalogs, [provider]: { status: 'error', choices: [], error: error instanceof Error ? error.message : 'Could not load models.' } };
       } finally {
         if (modelJobs.get(provider)?.abort === abort) modelJobs.delete(provider);
@@ -499,16 +507,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       try {
         const selected = await managedCLI(provider, project, abort.signal);
         let account;
-        if (provider === 'Codex') account = await readCodexAccount(project, selected.entry.executable, abort.signal);
+        if (provider === 'Codex') account = await readCodexAccount(project, selected.cli.executable, abort.signal);
         else {
           const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href) as typeof import('./providers/claude-history');
-          account = await readClaudeAccount(project, sdk.query, selected.entry.executable, abort.signal);
+          account = await readClaudeAccount(project, sdk.query, selected.cli.executable, abort.signal);
         }
         if (current()) {
           account = await accountManager.rememberQuota(provider, account);
           if (current()) state.accounts = { ...state.accounts, [provider]: account };
         }
-      } catch {
+      } catch (error) {
+        if (!abort.signal.aborted) cliResolver.invalidateOnFailure(provider, error);
         if (current()) state.accounts = { ...state.accounts, [provider]: { ...previous, status: 'error', quotaCached: !!previous?.quota, error: `Could not read ${provider} account. Check the selected CLI and sign-in, then refresh.` } };
       } finally {
         signal?.removeEventListener('abort', stop);
@@ -927,7 +936,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     update();
   });
   register('agentTandem.manageCLIs', async () => { state.screen = 'cli'; update(); await refreshCLIManager(); await preview.open(); });
-  register('agentTandem.refreshCLIs', () => refreshCLIManager());
+  register('agentTandem.refreshCLIs', () => { cliResolver.invalidate(); return refreshCLIManager(); });
   register('agentTandem.chooseCLI', async value => {
     if (value !== 'Codex' && value !== 'Claude') throw new Error('Choose a provider.');
     if (!state.project || !vscode.workspace.isTrusted) throw new Error('Open and trust a local project before choosing its CLI.');
@@ -942,7 +951,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (!selection) return;
     if (selection.id === 'manage') { state.screen = 'cli'; update(); await refreshCLIManager(); return; }
     if (project !== state.project || chatAbort || reviewing || cliManaging) throw new Error('The workspace or agent changed. Choose the CLI again.');
-    cliManaging = true;
+    cliManaging = true; cliResolver.invalidate();
     try { await setProjectCLI(provider, selection.id); await loadModels(provider, true); void loadAccount(provider, true); }
     finally { cliManaging = false; await refreshCLIManager(); }
   });
@@ -998,7 +1007,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     } catch (error) {
       if (state.cliManager) state.cliManager.error = (error as Error).message;
       throw error;
-    } finally { cliManaging = false; await refreshCLIManager(); }
+    } finally { cliResolver.invalidate(); cliManaging = false; await refreshCLIManager(); }
   });
   register('agentTandem.refreshAccount', async value => {
     const selection = value as { project?: string; provider?: ConversationProvider } | undefined;
@@ -1204,7 +1213,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         else if (user && !request.text && request.attachments.every(item => item.mimeType.startsWith('image/'))) user.text = '[Image]';
       }
       const selectedCLI = await managedCLI(request.provider, request.project, abort.signal);
-      const cli = await cliInfo(request.provider === 'Codex' ? 'codex' : 'claude', selectedCLI.entry.executable, abort.signal);
+      const cli = selectedCLI.cli;
       validateModelCLI(model || reasoningEffort, requestedCatalog, cli);
       await Promise.all([accessStore.save(request.project, request.provider, mode), modelStore.save(request.project, request.provider, model), effortStore.save(request.project, request.provider, model, reasoningEffort), ...(speed.fastMode !== undefined ? [fastModeStore.save(request.project, speed.fastMode)] : [])]);
       activeReviewProjects.add(request.project);
@@ -1225,6 +1234,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       }
       if (current()) state.chat!.status = result;
     } catch (error) {
+      if (!abort.signal.aborted) cliResolver.invalidateOnFailure(request.provider, error);
       if (current()) { state.chat!.status = abort.signal.aborted ? 'interrupted' : 'failed'; if (!abort.signal.aborted) report(error); }
     } finally {
       abort.abort();
@@ -1511,8 +1521,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const config = vscode.workspace.getConfiguration('agentTandem');
     const version = ++uiGeneration;
     state.providers = await Promise.all((['Codex', 'Claude'] as const).map(async provider => {
-      try { const selected = await managedCLI(provider, state.project); return provider === 'Codex' ? await probeCodex(selected.entry.executable) : await probeClaude(selected.entry.executable); }
-      catch (error) { return { provider, available: false, detail: (error as Error).message }; }
+      try { const selected = await managedCLI(provider, state.project); return provider === 'Codex' ? await probeCodex(selected.cli.executable) : await probeClaude(selected.cli.executable); }
+      catch (error) { cliResolver.invalidateOnFailure(provider, error); return { provider, available: false, detail: (error as Error).message }; }
     }));
     for (const provider of state.providers) output.appendLine(`${provider.provider}: ${provider.detail}`);
     if (version === uiGeneration) { state.screen = 'tools'; update(); await preview.open(); }
@@ -1522,6 +1532,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const accountTimer = setInterval(() => { void refreshAccounts(); }, 60000);
   const followRoot = () => {
     if (!setCurrentRoot()) return;
+    cliResolver.invalidate();
     saveQueue();
     void Promise.all([restoreAccessModes(), restoreModels(), restoreEfforts(), restoreFastMode(), refreshCLIManager()]).then(update).catch(report);
     void loadModels(state.composeProvider ?? 'Codex');
@@ -1531,11 +1542,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     void (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() => syncConversations()).catch(report);
   };
   context.subscriptions.push({ dispose: () => { disposed = true; externalWatcher?.dispose(); clearTimeout(externalTimer); chatAbort?.abort(); usageAbort?.abort(); for (const job of modelJobs.values()) job.abort.abort(); for (const job of accountJobs.values()) job.abort.abort(); generation++; selectionGeneration++; clearInterval(timer); clearInterval(accountTimer); } },
-    vscode.workspace.onDidGrantWorkspaceTrust(() => { void refreshReview(state.project, true).catch(report); void refreshCLIManager(); refreshAccounts(); void loadModels(state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex'); }),
+    vscode.extensions.onDidChange(() => {
+      const revision = codexExtensionIdentity();
+      if (revision === codexExtensionRevision) return;
+      codexExtensionRevision = revision; cliResolver.invalidate('Codex');
+      modelJobs.get('Codex')?.abort.abort(); modelJobs.delete('Codex');
+      state.modelCatalogs = { ...state.modelCatalogs, Codex: undefined };
+      void refreshCLIManager(); void loadModels('Codex', true); void loadAccount('Codex', true);
+    }),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => { cliResolver.invalidate(); void refreshReview(state.project, true).catch(report); void refreshCLIManager(); refreshAccounts(); void loadModels(state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex'); }),
     vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('agentTandem.showQuotaInStatusBar') || event.affectsConfiguration('agentTandem.usageDashboardDefaultGrouping') || Object.values(STATUS_BAR_CONFIGURATION).some(key => event.affectsConfiguration(`agentTandem.${key}`))) update();
       if (event.affectsConfiguration('agentTandem.autoTrackExternalChanges')) void refreshReview(state.project).catch(report);
       if (!['codexExecutable', 'claudeExecutable', 'codexCLISelection', 'claudeCLISelection', 'codexCLIId', 'claudeCLIId'].some(key => event.affectsConfiguration(`agentTandem.${key}`))) return;
+      cliResolver.invalidate();
       for (const job of modelJobs.values()) job.abort.abort(); modelJobs.clear(); state.modelCatalogs = {};
       resetAccounts();
       void refreshCLIManager();

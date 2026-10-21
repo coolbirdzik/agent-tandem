@@ -524,6 +524,22 @@ describe('Single tandem webview', () => {
     defaultSelect.value = ''; defaultSelect.dispatchEvent(new Event('change'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ action: 'default', id: '' }) });
   });
+  it('shows automatic Codex fallback distinctly from an explicit terminal selection', () => {
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { executable: '/editor/bin/codex', version: 'codex-cli 0.162.0', source: 'extension' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
+    const machine = document.querySelector<HTMLSelectElement>('#cli-default-Codex')!;
+    expect(machine.value).toBe('');
+    expect(machine.selectedOptions[0]!.textContent).toBe('Automatic (PATH, then current Codex extension)');
+    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex')!.value).toBe('');
+    expect(document.querySelector('.cli-active')!.textContent).toContain('Automatic → Codex extension · codex-cli 0.162.0');
+    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex option[value="path"]')!.textContent).toBe('Terminal CLI (PATH)');
+  });
+  it('shows the automatic PATH source, version and path without a managed entry', () => {
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { executable: '/terminal/codex', version: 'codex-cli 0.150.0', source: 'automatic-path' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
+    expect(document.querySelector('.cli-active')!.textContent).toBe('Automatic → Terminal PATH · codex-cli 0.150.0');
+    expect(document.querySelector('.cli-selections')!.parentElement!.textContent).toContain('/terminal/codex');
+    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex')!.value).toBe('');
+    expect(document.querySelector<HTMLSelectElement>('#cli-default-Codex option[value="cx"]')!.textContent).toBe('Pinned: My Codex');
+  });
   it('preserves CLI input drafts across sync, edits entries inline and restores fields on Cancel', () => {
     render(cliState); postMessage.mockClear();
     const name = document.querySelector<HTMLInputElement>('[data-cli-draft="add:Codex:name"]')!; name.value = 'Portable'; name.focus();

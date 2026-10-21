@@ -698,7 +698,7 @@
         "agentTandem.codexExecutable": {
           "type": "string",
           "default": "",
-          "description": "Optional absolute path to an enabled native Codex executable in Manage CLIs. Uses the managed default or terminal PATH order when empty. A managed project entry ID takes precedence.",
+          "description": "Optional absolute path to an enabled native Codex executable in Manage CLIs. Uses the managed default when empty; automatic selection tries a valid PATH Codex, then the current VS Code host's Codex extension. A managed project entry ID takes precedence.",
           "scope": "resource"
         },
         "agentTandem.claudeExecutable": {
@@ -715,7 +715,7 @@
           ],
           "default": "default",
           "scope": "resource",
-          "description": "Use the managed default/explicit executable, or the enabled terminal CLI on PATH. Configure this in Manage CLIs."
+          "description": "Use the managed default/explicit executable (automatic: valid PATH Codex, then current Codex extension), or require the enabled terminal CLI on PATH. Configure this in Manage CLIs."
         },
         "agentTandem.claudeCLISelection": {
           "type": "string",
@@ -831,6 +831,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/semver": "7.8.0",
     "@types/vscode": "1.100.0",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^4.0.0",
@@ -849,6 +850,7 @@
     "dompurify": "3.4.16",
     "ignore": "^7.0.5",
     "marked": "18.1.0",
-    "monaco-editor": "0.57.0"
+    "monaco-editor": "0.57.0",
+    "semver": "7.8.5"
   }
 }
