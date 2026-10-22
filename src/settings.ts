@@ -16,6 +16,7 @@ import { validAssignmentScope, type UsageAssignmentScope } from './core/usage-at
 import type { CleanupKind } from './core/storage';
 import { CheckboxRangeSelection } from './ui/checkbox-range';
 import { conversationTime, matchesConversation, type ConversationFilter } from './core/conversation-filter';
+import { quotaCycleCharts } from './ui/quota-cycle-charts';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 autoHideScrollbars();
@@ -758,17 +759,36 @@ function renderQuotaEstimates() {
           if (current) detail.title = `${number(current.observedTokens)} tokens from ${new Date(current.from).toLocaleString()} to ${new Date(current.to).toLocaleString()}`;
           row.append(detail);
         }
+        const allCycles = quotaCycles(trend.observations);
+        row.append(quotaCycleCharts(allCycles, trend.tokensPerPercent, JSON.stringify([provider, identity?.id, account?.account?.plan, trend.label, trend.source])));
         const details = node('div', undefined, 'quota-trend-history');
         details.append(node('h4', 'Tokens per reset cycle'));
+        const calculation = node('details', undefined, 'usage-details quota-calculation');
+        calculation.append(node('summary', 'Calculation details'));
+        const totalTokens = trend.observations.reduce((sum, sample) => sum + sample.observedTokens, 0);
+        const totalQuota = trend.observations.reduce((sum, sample) => sum + sample.usedPercent, 0);
+        calculation.append(node('p', `${number(totalTokens)} recorded tokens ÷ ${number(totalQuota)} quota percentage points = ≈ ${number(Math.round(trend.tokensPerPercent))} tokens / 1% across ${trend.observations.length} cycles.`));
+        calculation.append(node('p', trend.source === 'API'
+          ? 'Recorded tokens are the API counter increase between the two quota readings. If recording began below 100% remaining, earlier usage is unknown. Older records may have no saved starting percentage.'
+          : `Recorded tokens are the ${trend.source === 'Device' ? 'device' : 'account-matched local'} history found in each reset cycle, and may cover only part of the account usage. The 100% starting point is the cycle boundary, not a measured token counter.`));
+        calculation.append(node('p', 'Full quota = recorded tokens ÷ quota used × 100. This is an extrapolation; model mix, cached tokens and usage on other devices can change the ratio.'));
+        details.append(calculation);
         const tableRoot = node('div', undefined, 'table-wrap');
-        const cycles = quotaCycles(trend.observations).slice(-30).reverse();
-        table(tableRoot, ['Reset', 'Recorded', '≈ At 100%', 'vs prev.'], cycles.map(sample => [
+        const cycles = allCycles.slice(-30).reverse();
+        table(tableRoot, ['Reset', 'Quota remaining', 'Recorded tokens', 'Quota used (pp)', '≈ Tokens / 1%', '≈ Full quota', 'vs prev.'], cycles.map(sample => [
           `${new Date(sample.resetsAt).toLocaleString(undefined, { month: 'short', day: 'numeric', ...(sample.label === '5h' ? { hour: '2-digit', minute: '2-digit' } : {}) })}${sample.active ? ' · current' : ''}`,
-          sample.observedTokens, Math.round(sample.capacityTokens), sample.changePercent === undefined ? '—' : `${sample.changePercent > 0 ? '+' : ''}${Math.round(sample.changePercent * 10) / 10}%`,
-        ]));
+          sample.remainingFrom === undefined ? 'Start unknown' : `${number(sample.remainingFrom)}% → ${number(sample.remainingTo!)}%`,
+          number(sample.observedTokens), number(sample.usedPercent), number(Math.round(sample.tokensPerPercent)), Math.round(sample.capacityTokens),
+          sample.changePercent === undefined ? '—' : `${sample.changePercent > 0 ? '+' : ''}${Math.round(sample.changePercent * 10) / 10}%`,
+        ]), 2);
         tableRoot.querySelectorAll('tbody tr').forEach((line, index) => {
           const cycle = cycles[index]!;
           line.querySelector('td')!.title = `Reset ${new Date(cycle.resetsAt).toLocaleString()} · ${cycle.partial ? 'Partial observation' : 'Full cycle'} · ${number(cycle.usedPercent)}% quota observed\n${new Date(cycle.from).toLocaleString()} – ${new Date(cycle.to).toLocaleString()}`;
+          const period = node('small', `${new Date(cycle.from).toLocaleString()} – ${new Date(cycle.to).toLocaleString()}`, 'muted quota-recorded-period');
+          line.querySelector('td')!.append(period);
+          line.children[1]!.setAttribute('title', cycle.source === 'API' ? 'Quota remaining at the first and last API readings' : 'Cycle boundary → remaining quota; recorded local tokens may be incomplete');
+          line.children[2]!.setAttribute('title', number(cycle.observedTokens));
+          line.children[4]!.setAttribute('title', `${number(cycle.observedTokens)} tokens ÷ ${number(cycle.usedPercent)} percentage points`);
           if (index >= 3) (line as HTMLElement).hidden = true;
         });
         details.append(tableRoot);

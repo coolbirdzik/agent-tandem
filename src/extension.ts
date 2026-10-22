@@ -316,11 +316,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     },
     update: () => { settings.update(); quickAccounts.update(); },
     switched: async provider => {
-      const reload = 'Reload Window';
-      const choice = await vscode.window.showInformationMessage(`${provider} account switched. Reload the window so the ${provider} extension uses the new sign-in?`, reload, 'Later');
-      if (choice !== reload) return;
-      if (chatAbort || reviewing) { await vscode.window.showWarningMessage('Finish the active agent turn, then reload the window.'); return; }
-      await vscode.commands.executeCommand('workbench.action.reloadWindow');
+      const restart = 'Restart Extension Host';
+      const choice = await vscode.window.showInformationMessage(`${provider} account switched. Restart the extension host so the ${provider} extension uses the new sign-in?`, restart, 'Later');
+      if (choice !== restart) return;
+      if (chatAbort || reviewing) { await vscode.window.showWarningMessage('Finish the active agent turn, then restart the extension host.'); return; }
+      await vscode.commands.executeCommand('workbench.action.restartExtensionHost');
     },
     observed: async statuses => {
       savedQuotaTicks = await quotaPaceStore.record(statuses.flatMap(status => {

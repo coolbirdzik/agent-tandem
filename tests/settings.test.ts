@@ -430,8 +430,12 @@ describe('Settings usage dashboard', () => {
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('37,500 tokens per percentage point');
     const latest = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
     expect(latest[0]?.textContent).toContain('current'); expect(latest[0]?.getAttribute('title')).toContain('Partial observation');
-    expect(latest[1]?.getAttribute('title')).toBe('1,000,000');
-    expect(latest[2]?.getAttribute('title')).toBe('5,000,000'); expect(latest[3]?.textContent).toBe('+100%');
+    expect(latest[1]?.textContent).toBe('100% → 80%');
+    expect(latest[2]?.textContent).toBe('1,000,000');
+    expect(latest[3]?.textContent).toBe('20'); expect(latest[4]?.textContent).toBe('50,000');
+    expect(latest[5]?.getAttribute('title')).toBe('5,000,000'); expect(latest[6]?.textContent).toBe('+100%');
+    expect(root.querySelector('.quota-calculation')?.textContent).toContain('1,500,000 recorded tokens ÷ 40 quota percentage points');
+    expect(root.querySelector('.quota-recorded-period')?.textContent).toContain(new Date(now).toLocaleString());
     expect(recent[0]).not.toHaveProperty('accountId');
     expect(document.querySelector('.quota-estimate-note details[open]')).toBeNull();
     expect(document.querySelector('.quota-estimate-note')?.tagName).toBe('DETAILS');
@@ -466,8 +470,23 @@ describe('Settings usage dashboard', () => {
     const root = document.querySelector('#quota-estimates')!;
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('100,000 tokens per percentage point');
     expect(root.querySelector('.quota-estimate-source')!.getAttribute('title')).toContain('API counters');
+    const cells = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
+    expect(cells[1]?.textContent).toBe('84% → 82%');
+    expect(cells[2]?.textContent).toBe('200,000');
+    expect(cells[3]?.textContent).toBe('2');
+    expect(cells[4]?.getAttribute('title')).toBe('200,000 tokens ÷ 2 percentage points');
     expect(root.textContent).toContain('8.2M tokens left');
     const before = root.textContent; choose('filter-provider', 'Claude'); expect(root.textContent).toBe(before);
+  });
+  it('shows legacy API deltas without inventing a 100% starting point', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
+    const sample: QuotaObservation = { provider: 'Codex', accountId: usageAccount('Codex', identity)!.id, plan: 'plus', label: '5h', source: 'API',
+      from: now - 60000, to: now, resetsAt: now + 3600000, observedTokens: 200000, usedPercent: 2 };
+    render({ ...value, data: undefined, accounts: { Codex: { status: 'ready', account: identity } }, quotaHistory: [sample] });
+    const cells = document.querySelectorAll('.quota-trend-history tbody tr:first-child td');
+    expect(cells[1]?.textContent).toBe('Start unknown'); expect(cells[2]?.textContent).toBe('200,000');
+    expect(cells[3]?.textContent).toBe('2');
   });
   it('filters restore history, selects visible conversations, previews impact and sends only the delete token', () => {
     const group = (id: string, projectId: string, kind: 'checkpoints' | 'undo' = 'checkpoints') => ({ id, projectId, project: `L:/Code/${projectId}`, label: kind === 'undo' ? 'Last restore backup' : `Codex:${id}`, kind, count: 2, bytes: 1024, reclaimable: 512, createdAt: 1000, updatedAt: 2000 });
@@ -723,9 +742,9 @@ describe('Settings usage dashboard', () => {
     expect(root.textContent).toContain('Local · 2 cycles');
     expect(root.querySelectorAll('.quota-trend-history tbody tr')).toHaveLength(2);
     const cells = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
-    expect(cells[1]?.getAttribute('title')).toBe('2,000,000');
-    expect(cells[2]?.getAttribute('title')).toBe('8,000,000');
-    expect(cells[3]?.textContent).toBe('+100%');
+    expect(cells[2]?.getAttribute('title')).toBe('2,000,000');
+    expect(cells[5]?.getAttribute('title')).toBe('8,000,000');
+    expect(cells[6]?.textContent).toBe('+100%');
     const before = root.textContent;
     choose('filter-provider', 'Claude'); choose('filter-range', 'all');
     expect(root.textContent).toBe(before);

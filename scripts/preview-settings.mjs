@@ -31,7 +31,7 @@ if (demo) state.quotaHistory = ['Codex', 'Claude'].flatMap(provider => {
     const resetsAt = window.resetsAt - index * duration;
     return { provider, accountId: JSON.stringify([provider, account.account.method, account.account.email, '']),
       plan: account.account.plan, label: window.label === '5h' ? '5h' : 'Weekly', from: resetsAt - duration,
-      resetsAt, to: index ? resetsAt - 60000 : now, usedPercent: index ? 84 - index * 7 : window.usedPercent,
+      resetsAt, to: index ? resetsAt - 60000 : now, usedPercent: index ? 84 - index * 7 : window.usedPercent, startUsedPercent: 0,
       observedTokens: (804531 + index * 76037) * (window.label === '7d' ? 12 : 1), source: provider === 'Codex' ? 'API' : 'Local' };
   }));
 });

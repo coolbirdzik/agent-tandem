@@ -259,7 +259,7 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .quota-estimate-provider h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin: 0 0 6px; }
 .quota-estimate-account { margin: 0 0 12px; }
 .quota-estimate-provider { min-width: 0; }
-.quota-estimate-row { border-top: 1px solid var(--line); padding: 14px 0; }
+.quota-estimate-row { min-width: 0; border-top: 1px solid var(--line); padding: 14px 0; }
 .quota-estimate-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .quota-estimate-label strong { font-size: 12px; font-weight: 500; }
 .quota-estimate-value { display: block; font-size: 19px; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 8px; }
@@ -275,6 +275,29 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .quota-trend-history table { font-size: 11px; font-variant-numeric: tabular-nums; }
 .quota-trend-history th, .quota-trend-history td { padding: 7px 6px; white-space: nowrap; }
 .quota-trend-history button { margin-top: 8px; font-size: 11px; }
+.quota-trend-history .quota-recorded-period { display: block; max-width: 170px; margin-top: 4px; font-size: 10px; white-space: normal; }
+.quota-cycle-charts { --quota-chart-color: var(--codex); margin-top: 16px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.quota-estimate-provider:has(.provider-icon[data-provider=Claude]) .quota-cycle-charts { --quota-chart-color: var(--claude); }
+.quota-cycle-charts figure { margin: 0; }
+.quota-interval-facts { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin: 4px 0 10px; }
+.quota-interval-facts strong { font-weight: 500; }
+.quota-interval-track { position: relative; height: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.quota-interval-track span { position: absolute; top: 0; bottom: 0; background: var(--quota-chart-color); }
+.quota-chart-axis { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 10px; margin-top: 5px; }
+.quota-cycle-charts .quota-history-chart { margin-top: 18px; }
+.quota-chart-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; color: var(--muted); }
+.quota-chart-control { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+.quota-chart-control select { min-width: 0; max-width: 100%; padding: 3px 5px; font-size: 11px; }
+.quota-cycle-plot { position: relative; padding-left: 35px; margin-top: 10px; }
+.quota-cycle-plot svg { display: block; width: 100%; height: 130px; overflow: visible; }
+.quota-chart-scale { position: absolute; inset: 8px auto 0 0; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 8px; font-size: 10px; color: var(--muted); }
+.quota-chart-grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.quota-chart-average { stroke: var(--muted); stroke-dasharray: 4 4; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.quota-chart-line { fill: none; stroke: var(--quota-chart-color); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.quota-chart-mark { fill: var(--quota-chart-color); stroke: var(--vscode-editor-background); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.quota-chart-mark:hover, .quota-chart-mark:focus { stroke: var(--vscode-foreground); stroke-width: 2; outline: none; }
+.quota-chart-detail { display: block; min-height: 3em; margin-top: 10px; overflow-wrap: anywhere; }
+.quota-chart-caption { display: block; margin-top: 4px; }
 .usage-details { color: var(--muted); font-size: 12px; margin-top: 12px; }
 .usage-details summary { cursor: pointer; width: fit-content; }
 .usage-details p { max-width: 80ch; }

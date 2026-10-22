@@ -14,7 +14,7 @@ interface Dependencies {
   executable(provider: AccountProvider): Promise<string>; changed(provider: AccountProvider): Promise<void>; update(): void;
   openDesktop?(provider: 'Cursor' | 'Antigravity'): Promise<void>;
   observed?(statuses: ProviderAccountStatus[]): Promise<void>;
-  // Native IDE extensions only read the CLI sign-in at startup, so offer a window reload.
+  // Native IDE extensions read the CLI sign-in at startup, so offer an extension host restart.
   switched?(provider: 'Codex' | 'Claude'): Promise<void> | void;
 }
 export class AccountManager {

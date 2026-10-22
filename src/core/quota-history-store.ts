@@ -9,12 +9,14 @@ function observation(value: unknown): value is QuotaObservation {
   const row = value as QuotaObservation;
   return ['Codex', 'Claude'].includes(row.provider) && typeof row.accountId === 'string' && !!row.accountId && typeof row.plan === 'string' &&
     ['5h', 'Weekly'].includes(row.label) && (row.source === undefined || ['API', 'Local', 'Device'].includes(row.source)) && [row.from, row.resetsAt, row.to, row.observedTokens, row.usedPercent].every(Number.isFinite) &&
-    row.from > 0 && row.from < row.to && row.to < row.resetsAt && Number.isSafeInteger(row.observedTokens) && row.observedTokens > 0 && row.usedPercent > 0 && row.usedPercent <= 100;
+    row.from > 0 && row.from < row.to && row.to < row.resetsAt && Number.isSafeInteger(row.observedTokens) && row.observedTokens > 0 && row.usedPercent > 0 && row.usedPercent <= 100 &&
+    (row.startUsedPercent === undefined || (Number.isFinite(row.startUsedPercent) && row.startUsedPercent >= 0 && row.startUsedPercent + row.usedPercent <= 100));
 }
 const clean = (row: QuotaObservation): QuotaObservation => ({
   provider: row.provider, accountId: row.accountId, plan: row.plan, label: row.label,
   from: row.from, resetsAt: row.resetsAt, to: row.to, observedTokens: row.observedTokens, usedPercent: row.usedPercent,
   ...(row.source ? { source: row.source } : {}),
+  ...(row.startUsedPercent === undefined ? {} : { startUsedPercent: row.startUsedPercent }),
 });
 function meter(value: unknown): value is QuotaMeter {
   if (!value || typeof value !== 'object') return false;

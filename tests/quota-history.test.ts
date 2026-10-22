@@ -35,7 +35,9 @@ describe('Quota history and capacity trends', () => {
     expect(first.baselines).toHaveLength(1);
     const reopened = new QuotaHistoryStore(directory), time = now + 60000;
     const rows = await reopened.record([], quotaMeters('Codex', apiStatus(time, 10200000, 18), time));
-    expect(rows).toMatchObject([{ source: 'API', label: 'Weekly', observedTokens: 200000, usedPercent: 2, from: now }]);
+    expect(rows).toMatchObject([{ source: 'API', label: 'Weekly', observedTokens: 200000, usedPercent: 2, startUsedPercent: 16, from: now }]);
+    expect(await new QuotaHistoryStore(directory).read()).toEqual(rows);
+    expect(quotaCycles(rows, time)[0]).toMatchObject({ remainingFrom: 84, remainingTo: 82, tokensPerPercent: 100000 });
     expect(quotaTrends('Codex', account, rows)[1]).toMatchObject({ source: 'API', tokensPerPercent: 100000 });
     const updated = await reopened.record([], quotaMeters('Codex', apiStatus(time + 60000, 10600000, 20), time + 60000));
     expect(updated).toHaveLength(1); expect(updated[0]).toMatchObject({ observedTokens: 600000, usedPercent: 4 });
@@ -115,6 +117,15 @@ describe('Quota history and capacity trends', () => {
     expect(cycles.filter(row => row.accountId === 'other' || row.source === 'API').every(row => row.changePercent === undefined)).toBe(true);
     expect(quotaCycles([sample(0, 1000, 100)], now + 7 * hour)[0]?.partial).toBe(false);
   });
+  it('distinguishes observations starting at full quota, partial API intervals and legacy unknown endpoints', () => {
+    const base = { ...sample(0, 200000, 2), source: 'API' as const };
+    expect(quotaCycles([{ ...base, startUsedPercent: 0 }])[0]).toMatchObject({ remainingFrom: 100, remainingTo: 98, tokensPerPercent: 100000 });
+    expect(quotaCycles([{ ...base, startUsedPercent: 16 }])[0]).toMatchObject({ remainingFrom: 84, remainingTo: 82, tokensPerPercent: 100000 });
+    expect(quotaCycles([base])[0]?.remainingFrom).toBeUndefined();
+    expect(quotaCycles([sample(0, 1000, 25)])[0]).toMatchObject({ remainingFrom: 100, remainingTo: 75 });
+    expect(mergeQuotaObservations([base], [{ ...base, startUsedPercent: 16 }])[0]?.startUsedPercent).toBe(16);
+    expect(mergeQuotaObservations([{ ...base, startUsedPercent: 16 }], [base])[0]?.startUsedPercent).toBe(16);
+  });
   it('persists Device estimates independently and prefers valid API samples within the latest cycle', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-device-'));
     const device = { ...sample(1, 2000, 25), source: 'Device' as const };
@@ -138,6 +149,7 @@ describe('Quota history and capacity trends', () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-history-'));
     await writeFile(path.join(directory, 'quota-history.json'), JSON.stringify({ version: 1, observations: [
       { ...sample(0), accessToken: 'secret' }, { ...sample(1), usedPercent: 0 }, { ...sample(2), observedTokens: -1 },
+      { ...sample(4), startUsedPercent: -1 }, { ...sample(5), startUsedPercent: 95 }, { ...sample(6), startUsedPercent: '0' },
     ] }));
     expect(await new QuotaHistoryStore(directory).record()).toEqual([sample(0)]);
     const extra = { ...sample(3), accessToken: 'secret' };

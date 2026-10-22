@@ -13,6 +13,8 @@ export interface QuotaObservation {
   provider: ConversationProvider; accountId: string; plan: string; label: QuotaEstimate['label'];
   from: number; resetsAt: number; to: number; observedTokens: number; usedPercent: number;
   source?: QuotaSource;
+  /** Quota already used when recording began. Missing on older API observations. */
+  startUsedPercent?: number;
 }
 export interface QuotaMeter {
   provider: ConversationProvider; accountId: string; plan: string; label: QuotaEstimate['label'];
@@ -48,7 +50,7 @@ export function observeQuotaMeters(previous: QuotaBaseline[], meters: QuotaMeter
   const observations: QuotaObservation[] = [...baselines.values()].flatMap(({ start, latest }) => {
     const observedTokens = latest.totalTokens - start.totalTokens, usedPercent = latest.usedPercent - start.usedPercent;
     return observedTokens > 0 && usedPercent > 0 ? [{ provider: latest.provider, accountId: latest.accountId, plan: latest.plan, label: latest.label,
-      from: start.to, resetsAt: latest.resetsAt, to: latest.to, observedTokens, usedPercent, source: 'API' as const }] : [];
+      from: start.to, resetsAt: latest.resetsAt, to: latest.to, observedTokens, usedPercent, startUsedPercent: start.usedPercent, source: 'API' as const }] : [];
   });
   // Completed observations are retained separately; obsolete baseline meters are unnecessary.
   const latest = new Map<string, QuotaBaseline>();
@@ -64,7 +66,9 @@ export function mergeQuotaObservations(previous: QuotaObservation[], incoming: Q
   for (const row of [...previous, ...incoming]) {
     const key = JSON.stringify([quotaMeterKey(row), row.source ?? 'Local']);
     const existing = rows.get(key);
-    if (!existing || row.to > existing.to) rows.set(key, row);
+    if (!existing || row.to > existing.to || (row.to === existing.to && row.from === existing.from &&
+      row.observedTokens === existing.observedTokens && row.usedPercent === existing.usedPercent &&
+      existing.startUsedPercent === undefined && row.startUsedPercent !== undefined)) rows.set(key, row);
   }
   return [...rows.values()].sort((a, b) => a.to - b.to);
 }
@@ -105,6 +109,7 @@ export function quotaTrends(provider: ConversationProvider, account: ProviderAcc
 }
 export interface QuotaCycle extends QuotaObservation {
   capacityTokens: number; tokensPerPercent: number; changePercent?: number; active: boolean; partial: boolean;
+  remainingFrom?: number; remainingTo?: number;
 }
 /** Reset dates identify cycles; observed tokens remain distinct from extrapolated capacity. */
 export function quotaCycles(observations: QuotaObservation[], now = Date.now()): QuotaCycle[] {
@@ -114,8 +119,11 @@ export function quotaCycles(observations: QuotaObservation[], now = Date.now()):
     const key = JSON.stringify([row.provider, row.accountId, row.plan, row.label, row.source ?? 'Local']);
     const prior = previous.get(key); previous.set(key, capacityTokens);
     const cycleStart = row.resetsAt - (row.label === '5h' ? 5 * 3600000 : 7 * 86400000);
+    // Local history is summed from the cycle start. An old API delta has no known endpoints.
+    const startUsedPercent = row.startUsedPercent ?? (row.source === 'API' ? undefined : 0);
     return { ...row, tokensPerPercent, capacityTokens, active: row.resetsAt > now,
       partial: row.from > cycleStart || row.usedPercent < 100,
+      ...(startUsedPercent === undefined ? {} : { remainingFrom: 100 - startUsedPercent, remainingTo: Math.max(0, 100 - startUsedPercent - row.usedPercent) }),
       ...(prior ? { changePercent: (capacityTokens / prior - 1) * 100 } : {}) };
   });
 }
