@@ -264,6 +264,9 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .quota-estimate-label strong { font-size: 12px; font-weight: 500; }
 .quota-estimate-value { display: block; font-size: 19px; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 8px; }
 .quota-estimate-row p { margin: 5px 0 0; }
+.quota-cycle-capacity { display: grid; gap: 3px; margin-top: 12px; font-variant-numeric: tabular-nums; }
+.quota-cycle-capacity > span, .quota-cycle-capacity > small { font-size: 11px; }
+.quota-cycle-capacity > strong { font-size: 17px; font-weight: 500; }
 .quota-estimate-note { margin: 12px 0 0; max-width: 95ch; }
 .quota-trend-latest, .quota-trend-change { font-size: 12px; font-variant-numeric: tabular-nums; }
 .quota-trend-change[data-direction=up] { color: var(--vscode-charts-green, #27865c); }

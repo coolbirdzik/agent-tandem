@@ -428,6 +428,8 @@ describe('Settings usage dashboard', () => {
     expect(root.textContent).toContain('Device estimate · 2 cycles');
     expect(root.textContent).toContain('Includes history without native turn identity');
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('37,500 tokens per percentage point');
+    expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
+    expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('title')).toContain('5,000,000 estimated tokens for 100% quota');
     const latest = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
     expect(latest[0]?.textContent).toContain('current'); expect(latest[0]?.getAttribute('title')).toContain('Partial observation');
     expect(latest[1]?.textContent).toBe('100% → 80%');
@@ -476,6 +478,8 @@ describe('Settings usage dashboard', () => {
     expect(cells[3]?.textContent).toBe('2');
     expect(cells[4]?.getAttribute('title')).toBe('200,000 tokens ÷ 2 percentage points');
     expect(root.textContent).toContain('8.2M tokens left');
+    expect(root.querySelector('.quota-cycle-capacity')?.textContent).toContain('≈ 10M tokens / cycle');
+    expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
     const before = root.textContent; choose('filter-provider', 'Claude'); expect(root.textContent).toBe(before);
   });
   it('shows legacy API deltas without inventing a 100% starting point', () => {
@@ -487,6 +491,8 @@ describe('Settings usage dashboard', () => {
     const cells = document.querySelectorAll('.quota-trend-history tbody tr:first-child td');
     expect(cells[1]?.textContent).toBe('Start unknown'); expect(cells[2]?.textContent).toBe('200,000');
     expect(cells[3]?.textContent).toBe('2');
+    expect(document.querySelector('.quota-cycle-capacity')?.getAttribute('title')).toContain('10,000,000 estimated tokens for 100% quota');
+    expect(document.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('history');
   });
   it('filters restore history, selects visible conversations, previews impact and sends only the delete token', () => {
     const group = (id: string, projectId: string, kind: 'checkpoints' | 'undo' = 'checkpoints') => ({ id, projectId, project: `L:/Code/${projectId}`, label: kind === 'undo' ? 'Last restore backup' : `Codex:${id}`, kind, count: 2, bytes: 1024, reclaimable: 512, createdAt: 1000, updatedAt: 2000 });

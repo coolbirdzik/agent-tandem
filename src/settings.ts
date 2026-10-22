@@ -738,6 +738,15 @@ function renderQuotaEstimates() {
         source.title = trend.source === 'API' ? 'API counters · token increase ÷ quota percentage-point increase' : trend.source === 'Device'
           ? 'Local history includes unknown, inferred and user-confirmed sessions. Other accounts with native turn evidence are excluded; usage on other devices is not recorded.' : 'Local · account-matched native turn history';
         row.append(amount, source);
+        const latestApi = trend.source === 'API' && meter ? trend.observations.find(sample => sample.resetsAt === meter.resetsAt && (!baseline || sample.from >= baseline.start.to)) : undefined;
+        const current = trend.source === 'API' ? latestApi : trend.observations.find(sample => sample.resetsAt > Date.now());
+        const cycleRate = current ? current.observedTokens / current.usedPercent : trend.tokensPerPercent;
+        const capacity = node('div', undefined, 'quota-cycle-capacity');
+        capacity.dataset.basis = current ? 'current' : 'history';
+        capacity.append(node('span', 'Estimated full cycle', 'muted'), node('strong', `≈ ${compact(cycleRate * 100)} tokens / cycle`),
+          node('small', current ? 'Based on this cycle’s recorded usage' : 'Based on the weighted average of recorded cycles', 'muted'));
+        capacity.title = `${number(Math.round(cycleRate * 100))} estimated tokens for 100% quota · ${number(cycleRate)} tokens / 1% × 100`;
+        row.append(capacity);
         if (trend.source === 'Device') row.append(node('small', 'Includes history without native turn identity', 'muted'));
         if (trend.changePercent !== undefined) {
           const change = Math.round(trend.changePercent * 10) / 10;
@@ -747,14 +756,12 @@ function renderQuotaEstimates() {
           comparison.title = `Earlier cycles: ${number(Math.round(trend.baselineTokensPerPercent!))} tokens / 1%`;
           row.append(comparison);
         }
-        const latestApi = trend.source === 'API' && meter ? trend.observations.find(sample => sample.resetsAt === meter.resetsAt && (!baseline || sample.from >= baseline.start.to)) : undefined;
         if (trend.source === 'API') {
           if (latestApi) {
             const rate = latestApi.observedTokens / latestApi.usedPercent;
             row.append(node('p', `≈ ${compact(rate * (100 - meter!.usedPercent))} tokens left`, 'muted'));
           } else row.append(node('p', waiting, 'muted'));
         } else {
-          const current = trend.observations.find(sample => sample.resetsAt > Date.now());
           const detail = node('p', current ? `≈ ${compact(current.observedTokens / current.usedPercent * (100 - current.usedPercent))} tokens left` : 'Waiting for current cycle usage', 'muted');
           if (current) detail.title = `${number(current.observedTokens)} tokens from ${new Date(current.from).toLocaleString()} to ${new Date(current.to).toLocaleString()}`;
           row.append(detail);

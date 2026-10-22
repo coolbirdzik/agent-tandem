@@ -2,13 +2,15 @@ import { spawn } from 'node:child_process';
 import { mkdir, stat, copyFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-// Run `npm run build` and `node scripts/test-review-webview.mjs
-// --marketplace-only --readme` first for the real VS Code editor captures.
+// Run `npm run build` first. Use --usage-only to refresh dashboard screenshots.
+// Full capture also needs `node scripts/test-review-webview.mjs --marketplace-only --readme`
+// for the real VS Code editor captures.
 const root = process.cwd(), output = path.join(root, 'media/screenshots');
 const runtime = path.join(root, '.test-runtime', `readme-screenshots-${Date.now()}`);
 const chrome = process.env.CHROME_EXECUTABLE_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 await mkdir(output, { recursive: true }); await mkdir(runtime, { recursive: true });
 const servers = [];
+const usageOnly = process.argv.includes('--usage-only');
 function preview(script, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -40,7 +42,7 @@ async function capture(name, url, width, height) {
 }
 // Crops one dashboard section (or the union of several) through the DevTools
 // protocol; `setup` runs in the page first, e.g. to open a conversation.
-async function captureSection(name, url, width, selectors, setup = '', view = 'all') {
+async function captureSection(name, url, width, selectors, setup = '', view = 'all', exactTargets = false) {
   const profile = path.join(runtime, name), file = path.join(output, `${name}.png`);
   const child = spawn(chrome, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--remote-debugging-port=0',
     `--user-data-dir=${profile}`, `--window-size=${width},1200`, '--force-device-scale-factor=1', 'about:blank'], { cwd: root, windowsHide: true, stdio: 'ignore' });
@@ -55,7 +57,7 @@ async function captureSection(name, url, width, selectors, setup = '', view = 'a
     const call = (method, params = {}) => new Promise((resolve, reject) => { const next = ++id; pending.set(next, { resolve, reject }); ws.send(JSON.stringify({ id: next, method, params })); });
     const evaluate = async expression => { const result = await call('Runtime.evaluate', { expression, returnByValue: true }); if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails)); return result.result.value; };
     await call('Page.navigate', { url });
-    const targets = `${JSON.stringify(selectors)}.map(s=>{const e=document.querySelector(s);return e?.closest('section:not(#dashboard-detail):not(#dashboard)')??e})`;
+    const targets = `${JSON.stringify(selectors)}.map(s=>{const e=document.querySelector(s);return ${exactTargets ? 'e' : "e?.closest('section:not(#dashboard-detail):not(#dashboard)')??e"}})`;
     await until(() => evaluate(`document.getElementById('dashboard-view').value===${JSON.stringify(view)}&&!!document.querySelector('#account-groups .account-group')`), 'dashboard');
     await pause(800); if (setup) await evaluate(setup);
     await until(() => evaluate(`${targets}.every(e=>e&&e.getBoundingClientRect().height>40)`), 'dashboard sections');
@@ -69,26 +71,31 @@ async function captureSection(name, url, width, selectors, setup = '', view = 'a
   console.log(`README_SCREENSHOT ${name}.png (${size} bytes)`);
 }
 try {
-  const panel = await preview('scripts/preview-panel.mjs');
+  const panel = usageOnly ? undefined : await preview('scripts/preview-panel.mjs');
   const settings = await preview('scripts/preview-settings.mjs', ['--demo']);
-  await capture('review', `${panel}/?groups=1`, 1100, 900);
-  await capture('chat', `${panel}/`, 900, 1100);
-  await capture('history', `${panel}/?history=1`, 900, 760);
+  if (!usageOnly) {
+    await capture('review', `${panel}/?groups=1`, 1100, 900);
+    await capture('chat', `${panel}/`, 900, 1100);
+    await capture('history', `${panel}/?history=1`, 900, 760);
+  }
   await capture('dashboard', `${settings}/?accounts=1`, 1440, 1400);
   const all = `${settings}/?accounts=1&view=all&range=month`;
   await capture('token-dashboard', all, 1440, 1696);
   await captureSection('account-detail', `${settings}/?accounts=1`, 1440, ['#account-detail-bar', '.dashboard-grid'], `document.querySelector('.account-group-open').click()`, 'accounts');
   await captureSection('quota-burn-down', all, 1440, ['#quota-pace']);
-  await captureSection('tokens-per-quota', all, 1440, ['#quota-estimates']);
+  await captureSection('tokens-per-quota', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], '', 'all', true);
+  await captureSection('quota-cycle-tokens', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], `document.querySelectorAll('#quota-estimates > .quota-estimate-provider:first-child .quota-chart-control select').forEach((select, index) => { select.value = index ? 'capacityTokens' : 'observedTokens'; select.dispatchEvent(new Event('change')); })`, 'all', true);
   await captureSection('conversations', all, 1440, ['#conversation-breakdown'], `document.querySelector('#conversation-breakdown button').click()`);
   await captureSection('usage-breakdown', all, 1440, ['#period-breakdown', '#account-breakdown'], `document.getElementById('period-toggle-all').click()`);
-  await capture('accounts', `${settings}/?accounts=1&page=accounts`, 1440, 1080);
-  await capture('account-switch', `${settings}/?accounts=1&switch=1`, 1440, 1080);
-  await capture('preferences', `${settings}/?page=preferences`, 1200, 900);
-  await capture('storage', `${settings}/?storage=1`, 1440, 1260);
-  await capture('storage-cleanup', `${settings}/?storage=1&nativeMatching=1&age=30`, 1440, 1000);
-  await copyFile(path.join(root, 'artifacts/review-webview-marketplace.png'), path.join(output, 'editor-diff.png'));
-  await copyFile(path.join(root, 'artifacts/readme-image-diff-marketplace.png'), path.join(output, 'image-diff.png'));
-  await copyFile(path.join(root, 'artifacts/review-agent-changes-marketplace.png'), path.join(output, 'agent-changes.png'));
+  if (!usageOnly) {
+    await capture('accounts', `${settings}/?accounts=1&page=accounts`, 1440, 1080);
+    await capture('account-switch', `${settings}/?accounts=1&switch=1`, 1440, 1080);
+    await capture('preferences', `${settings}/?page=preferences`, 1200, 900);
+    await capture('storage', `${settings}/?storage=1`, 1440, 1260);
+    await capture('storage-cleanup', `${settings}/?storage=1&nativeMatching=1&age=30`, 1440, 1000);
+    await copyFile(path.join(root, 'artifacts/review-webview-marketplace.png'), path.join(output, 'editor-diff.png'));
+    await copyFile(path.join(root, 'artifacts/readme-image-diff-marketplace.png'), path.join(output, 'image-diff.png'));
+    await copyFile(path.join(root, 'artifacts/review-agent-changes-marketplace.png'), path.join(output, 'agent-changes.png'));
+  }
   console.log('README_SCREENSHOTS_DONE');
 } finally { for (const server of servers) server.kill(); }

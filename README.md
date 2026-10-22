@@ -47,6 +47,8 @@ Run **AgentTandem: Manage Accounts**, or open **Settings → Accounts**. Filter 
 2. Select **Switch account** to update the default CLI or IDE sign-in. Finish active agent turns first; close Cursor/Antigravity windows before switching and reopen the app afterward.
 3. Follow the progress dialog and timestamped log. **Hide** keeps the operation running; **View switch log** reopens the latest result. The switch saves the outgoing sign-in, verifies the selected identity and attempts rollback if verification fails.
 
+After a Codex or Claude Code switch, select **Restart Extension Host** to let the native VS Code extension pick up the new sign-in, or **Later** to defer it.
+
 ![Account manager with app filters, search and fictional Codex, Claude Code, Cursor and Antigravity profiles](media/screenshots/accounts.png)
 
 Click a provider's quota in the VS Code status bar for **quick account switching**, remaining quota and reset details. **Open dashboard** and **Manage accounts** are separate shortcuts. In the dashboard, **View usage** selects an account's statistics without switching its sign-in.
@@ -96,9 +98,28 @@ Each quota window (Codex/Claude Code × 5h/7d) gets a card plotting **remaining 
 
 ### Tokens per 1% quota
 
-Each provider takes a full-width row with its 5h and Weekly windows side by side. Estimates show how many tokens one percent of each quota window buys, the tokens left in the current cycle and the change against earlier cycles. **Tokens per reset cycle** lists recorded tokens, the full-cycle estimate at 100% and the change from the previous cycle. API, Local and Device estimates are kept separate. Other devices, model mix and incomplete history can affect these estimates. Local totals cover recorded history on this machine; they cannot include deleted or unlogged usage elsewhere.
+Each provider has separate **5h** and **Weekly** windows. **Estimated full cycle** shows approximately how many tokens a full reset cycle represents: recorded tokens ÷ quota percentage points used × 100. It uses the current cycle's recorded ratio when available, or the weighted average of recorded cycles, with the basis shown below the estimate. Estimated tokens left appear alongside it.
 
-![Tokens per 1% quota estimates per account and window with per-reset-cycle tables](media/screenshots/tokens-per-quota.png)
+The interval bar shows the quota readings and their recorded tokens, such as **100% → 75% remaining: 804,531 tokens**. Recording that starts partway through a cycle shows that actual interval, such as **84% → 82%**. Older API records without a saved starting reading show **Start unknown**.
+
+![Codex 5h and Weekly full-cycle token estimates, quota intervals, token-per-percent line charts and detailed cycle tables](media/screenshots/tokens-per-quota.png)
+
+Use **Chart metric** to switch between:
+
+- **Tokens / 1%** — a line chart of cycle ratios, with the weighted average as a dashed line.
+- **Recorded tokens** — bars showing the tokens actually recorded in each cycle.
+- **Full quota estimate** — bars extrapolating each observed ratio to a full cycle.
+
+Hover or focus a chart point to inspect its reset date, quota interval, recorded tokens and token/1% ratio. Charts show the latest 12 cycles. **Tokens per reset cycle** lists exact recorded counts, quota used, observation times and estimated capacity; **Calculation details** explains the formula. The overall average divides total recorded tokens by total quota percentage points across all recorded cycles.
+
+<details>
+<summary>Recorded tokens and full-cycle estimate charts</summary>
+
+![Codex recorded-token bars for 5h cycles and estimated full-cycle token bars for Weekly cycles](media/screenshots/quota-cycle-tokens.png)
+
+</details>
+
+API, Local and Device estimates stay separate. A full-cycle estimate is an extrapolation, not a fixed token allowance. Model mix, cache usage, usage on other devices and incomplete local history can change the ratio. Local recorded counts may cover only part of the account's usage.
 
 ### Conversations and breakdowns
 
