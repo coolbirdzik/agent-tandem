@@ -21,7 +21,7 @@ it('uses the status item quota snapshot for its hover even when dashboard data i
   const current = { ...state, accounts: { Codex: { status: 'ready' as const, account: { signedIn: true, email: 'current@test', method: 'ChatGPT' }, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 46 }] } } } };
   bar.update(current, { status: 'ready', preferences: { showQuotaInStatusBar: true, grouping: 'day' }, accounts: { Codex: { status: 'ready', account: { signedIn: true, email: 'previous@test', method: 'ChatGPT' }, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }] } } } });
   const codex = host.items.find(item => item.id.endsWith('codex'));
-  expect(codex.text).toContain('5h 54%'); expect(codex.tooltip.value).toContain('54% remaining');
+  expect(codex.text).toContain('5h 54%'); expect(codex.tooltip.value).toContain('<strong>54%</strong>');
   expect(codex.tooltip.value).toContain('current@test'); expect(codex.tooltip.value).not.toContain('previous@test');
   bar.dispose();
 });
@@ -30,7 +30,7 @@ it('does not duplicate a window or retain its obsolete exhausted tone', () => {
   bar.update({ ...state, accounts: { Codex: { status: 'ready', quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }, { id: '5h', label: '5h', usedPercent: 46 }] } } } });
   const codex = host.items.find(item => item.id.endsWith('codex'));
   expect(codex.text).toBe('$(agent-tandem-codex) 5h 54%'); expect(codex.backgroundColor).toBeUndefined();
-  expect(codex.tooltip.value.match(/\*\*5h\*\*/g)).toHaveLength(1); bar.dispose();
+  expect(codex.tooltip.value.match(/<strong>5h<\/strong>/g)).toHaveLength(1); bar.dispose();
 });
 it('keeps cached quota visible and identifies its timestamp and refresh error in the tooltip', () => {
   const bar = new QuotaStatusBar();
@@ -71,7 +71,7 @@ it('switches to icons only while retaining accessible agent names and full hover
   host.settings.statusBarStyle = 'icons'; bar.update(state);
   expect(host.items.map(item => item.text)).toEqual(['$(agent-tandem-codex)', '$(agent-tandem-claude)']);
   expect(host.items[0].accessibilityInformation.label).toContain('Codex'); expect(host.items[1].accessibilityInformation.label).toContain('Claude Code');
-  expect(host.items[0].tooltip.value).toContain('0% remaining'); expect(host.items).toHaveLength(2); bar.dispose();
+  expect(host.items[0].tooltip.value).toContain('<strong>0%</strong>'); expect(host.items).toHaveLength(2); bar.dispose();
 });
 it('switches existing items to progress bars while keeping quota alerts and accessible percentages', () => {
   const bar = new QuotaStatusBar(); bar.update(state);

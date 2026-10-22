@@ -27,16 +27,16 @@ describe('Account status hover menu', () => {
     state.managedAccounts![1]!.status = { status: 'error', account: identity, quotaCached: true, updatedAt: 1, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }] } };
     state.managedAccounts!.push({ ...state.managedAccounts![1]!, id: 'two-current', label: 'Work updated', status: { status: 'ready', account: identity, updatedAt: 2, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 20 }] } } });
     const menu = quotaAccountHover('Codex', state);
-    expect(menu.value.match(/\*\*5h\*\*/g)).toHaveLength(1); expect(menu.value).toContain('54% remaining'); expect(menu.value).not.toContain('10% remaining');
+    expect(menu.value.match(/<strong>5h<\/strong>/g)).toHaveLength(1); expect(menu.value).toContain('<strong>54%</strong>'); expect(menu.value).not.toContain('<strong>10%</strong>');
     expect(menu.value.match(/command:agentTandem.quickSwitchAccount/g)).toHaveLength(1);
     expect(menu.value).toContain('Work updated'); expect(menu.value).toContain('5h 80%'); expect(menu.value).not.toContain('5h 0%');
   });
   it('exposes dashboard, switch and earned-reset links without a click on the status item', () => {
     const menu = quotaAccountHover('Codex', fixture());
-    expect(menu.value).toContain('10% remaining'); expect(menu.value).toContain('pass-filled) Active');
+    expect(menu.value).toContain('<strong>10%</strong>'); expect(menu.value).toContain('pass-filled) Active');
     expect(menu.value).toContain('command:agentTandem.quickSwitchAccount?%5B%22two%22%5D');
     expect(menu.value).not.toContain('quickSwitchAccount?%5B%22one%22');
-    expect(menu.value).toContain('[Reset usage](command:agentTandem.resetCodexUsage');
+    expect(menu.value).toContain('command:agentTandem.resetCodexUsage'); expect(menu.value).toContain('>Reset usage</a>');
     expect(menu.value).toContain('uses 1 of 2'); expect(menu.value).toContain('Open dashboard');
     expect(menu.isTrusted).toEqual({ enabledCommands: expect.arrayContaining(['agentTandem.openSettings', 'agentTandem.resetCodexUsage']) });
     expect(menu.supportHtml).toBe(true);
@@ -47,9 +47,9 @@ describe('Account status hover menu', () => {
     const menu = quotaAccountHover('Codex', state);
     expect(menu.value).not.toContain('[bad](command:evil)');
     expect((menu.isTrusted as any).enabledCommands).not.toContain('evil');
-    expect(menu.value).toContain('\\[bad\\]\\(command:evil\\)');
+    expect(menu.value).toContain('&#91;bad&#93;&#40;command:evil&#41; &#36;&#40;zap&#41;'); expect(menu.value).not.toContain('$(zap)');
     state.managedAccounts![1]!.label = '<span style="color:red">bad</span>';
-    expect(quotaAccountHover('Codex', state).value).toContain('&lt;span');
+    expect(quotaAccountHover('Codex', state).value).toContain('&#60;span');
   });
   it('does not repeat an email used as the saved profile name and labels cached quota', () => {
     const state = fixture(), profile = state.managedAccounts![1]!;
@@ -57,14 +57,14 @@ describe('Account status hover menu', () => {
     profile.status = { status: 'error', account: profile.identity, quotaCached: true, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 40 }] } };
     const menu = quotaAccountHover('Codex', state);
     expect(menu.value.match(/two@example.test/g)).toHaveLength(1);
-    expect(menu.value).toContain('5h 60% remaining'); expect(menu.value).toContain('Cached quota');
+    expect(menu.value).toContain('5h 60% left'); expect(menu.value).toContain('$(history) cached');
   });
   it('brings storage warnings and review cleanup previews into the hover, without direct deletion', () => {
     const state = fixture(); state.extensionStorage = { status: 'ready', total: 2 * 1024 ** 3, files: 1500, warningBytes: 1024 ** 3,
       categories: [{ label: 'Review snapshots & tracking', bytes: 1.8 * 1024 ** 3, files: 1400 }] };
     const menu = quotaAccountHover('Codex', state);
     expect(menu.value).toContain('2 GB'); expect(menu.value).toContain('Above 1 GB alert threshold');
-    expect(menu.value).toContain('Review snapshots &amp; tracking');
+    expect(menu.value).toContain('Review snapshots &#38; tracking');
     expect(menu.value).toContain('command:agentTandem.openExtensionStorage');
     for (const scope of ['accepted', 'all']) expect(menu.value).toContain(`command:agentTandem.previewReviewCleanup?${encodeURIComponent(JSON.stringify([{ scope }]))}`);
     expect((menu.isTrusted as any).enabledCommands).toContain('agentTandem.previewReviewCleanup');

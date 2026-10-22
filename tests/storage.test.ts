@@ -27,6 +27,52 @@ async function fixture() {
   return { folder, root, project, reviews, checkpoints, manager, orphan, age };
 }
 describe('Snapshot storage management', () => {
+  it('previews and clears retained comparisons and revert Undo without changing workspace files', async () => {
+    const f = await fixture();
+    await f.reviews.begin(f.project, 'pending');
+    await writeFile(path.join(f.project, 'source.ts'), 'changed content\n');
+    const pending = await f.reviews.finish(f.project, 'pending');
+    const reverted = await f.reviews.revert({ project: f.project, revision: pending.revision });
+    const before = await readFile(path.join(f.project, 'source.ts'));
+    const inspected = await f.manager.inspect();
+    expect(inspected.retainedReviews).toEqual([expect.objectContaining({ project: f.project, undo: 1, bytes: expect.any(Number) })]);
+    await f.age();
+    const plan = await f.manager.previewReviewCleanup('discard');
+    expect(plan.discardedReviews).toEqual([{ project: f.project, files: 0, undo: 1 }]);
+    expect((await f.reviews.read(f.project)).undo?.id).toBe(reverted.undo!.id);
+    expect(plan.bytes).toBeGreaterThan(0);
+    expect(await f.manager.deleteHistory(plan)).toMatchObject({ failures: [], skipped: 0, bytes: plan.bytes });
+    const review = await f.reviews.read(f.project);
+    expect(review.files).toEqual([]); expect(review.undo).toBeUndefined();
+    expect(review.revision).not.toBe(reverted.revision);
+    expect(await readFile(path.join(f.project, 'source.ts'))).toEqual(before);
+    expect((await f.manager.inspect()).retainedReviews).toEqual([]);
+  });
+  it('rejects changed review metadata and active captures after a discard preview', async () => {
+    const f = await fixture(); await f.reviews.begin(f.project, 'pending');
+    await writeFile(path.join(f.project, 'source.ts'), 'pending edits\n');
+    const pending = await f.reviews.finish(f.project, 'pending');
+    const plan = await f.manager.previewReviewCleanup('discard');
+    expect(plan.discardedReviews).toEqual([{ project: f.project, files: 1, undo: 0 }]);
+    await f.reviews.begin(f.project, 'new capture');
+    await expect(f.manager.deleteHistory(plan)).rejects.toThrow('Saved history changed');
+    await expect(f.manager.previewReviewCleanup('discard')).rejects.toThrow('Wait for');
+    expect((await f.reviews.read(f.project)).files).toEqual(pending.files);
+    expect(await f.reviews.history.readBlob(pending.files[0]!.before!)).toBeTruthy();
+  });
+  it('clears saved comparisons only after approval and keeps new shared checkpoint references', async () => {
+    const f = await fixture(); await f.reviews.begin(f.project, 'pending');
+    await writeFile(path.join(f.project, 'source.ts'), 'pending edits\n');
+    const pending = await f.reviews.finish(f.project, 'pending');
+    const snapshot = await f.reviews.history.capture(f.project);
+    const plan = await f.manager.previewReviewCleanup('discard');
+    expect((await f.reviews.read(f.project)).files).toEqual(pending.files);
+    await f.checkpoints.record(f.project, 'Codex:new', ['message'], snapshot.id);
+    expect((await f.manager.deleteHistory(plan)).failures).toEqual([]);
+    expect((await f.reviews.read(f.project)).files).toEqual([]);
+    expect(await f.reviews.history.readBlob(pending.files[0]!.after!)).toBeTruthy();
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('pending edits\n');
+  });
   it('cleans accepted review leftovers while keeping tracking, restore points, recent captures and demos', async () => {
     const f = await fixture(); await f.reviews.initializeExternalTracking(f.project);
     await f.reviews.begin(f.project, 'accepted');

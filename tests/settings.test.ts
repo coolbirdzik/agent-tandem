@@ -26,9 +26,12 @@ beforeEach(async () => {
 afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
   it('offers review cleanup presets next to the category and explains their different impact', () => {
-    const storage = { status: 'ready' as const, root: 'root', categories: [{ label: 'Review snapshots & tracking', bytes: 4096, files: 3 }] };
+    const storage = { status: 'ready' as const, root: 'root', categories: [{ label: 'Review snapshots & tracking', bytes: 4096, files: 3 }], retainedReviews: [{ project: 'D:/project', files: 7, undo: 1, bytes: 4096 }] };
     render({ ...value, storage });
-    for (const scope of ['accepted', 'all']) {
+    expect(document.querySelector('#storage-categories')!.textContent).toContain('D:/project');
+    expect(document.querySelector('#storage-categories')!.textContent).toContain('7 saved comparisons');
+    expect(document.querySelector('#storage-totals')!.textContent).toContain('Unused snapshots');
+    for (const scope of ['accepted', 'all', 'discard']) {
       document.querySelector<HTMLButtonElement>(`button[data-review-cleanup="${scope}"]`)!.click();
       expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReviewCleanup', value: { scope } });
     }
@@ -46,6 +49,10 @@ describe('Settings usage dashboard', () => {
     document.querySelector<HTMLButtonElement>('#storage-history-delete')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'deleteHistory', value: { token: 'all' } });
     expect(document.querySelector<HTMLButtonElement>('[data-review-cleanup="all"]')!.disabled).toBe(true);
+    render({ ...value, storage: { ...storage, historyPlan: { ...historyPlan, token: 'discard', reviewScope: 'discard', discardedReviews: [{ project: 'D:/project', files: 7, undo: 1 }] } } });
+    expect(document.querySelector('#storage-history-plan-heading')!.textContent).toBe('Clear saved review data');
+    expect(document.querySelector('#storage-history-impact')!.textContent).toContain('These changes can no longer be reverted from Review');
+    expect(document.querySelector('#storage-history-plan-groups')!.textContent).toContain('D:/project · 7 saved comparisons');
   });
   it('shows extension data warnings and opens extension cleanup without scanning native chats', () => {
     render({ ...value, extensionStorage: { status: 'ready', total: 2 * 1024 ** 3, warningBytes: 1024 ** 3, files: 400 } });

@@ -23,11 +23,12 @@ export interface StoredHistory {
 export interface HistoryDeletionPlan extends CleanupPlan {
   histories: StoredHistory[];
   /** Checkpoint files lose `ids`; a Review file (no ids) stops change tracking. */
-  records: { relative: string; digest: string; ids: string[] }[];
+  records: { relative: string; digest: string; ids: string[]; discardReview?: boolean }[];
   /** Categories chosen in "Clean up…"; absent for restore history picked row by row. */
   kinds?: CleanupKind[];
   /** One-click presets limited to Review history; demo snapshots are never included. */
-  reviewScope?: 'accepted' | 'all';
+  reviewScope?: 'accepted' | 'all' | 'discard';
+  discardedReviews?: { project: string; files: number; undo: number }[];
 }
 export const CLEANUP_KINDS = ['checkpoints', 'undo', 'tracking', 'unused'] as const;
 export type CleanupKind = typeof CLEANUP_KINDS[number];
@@ -40,6 +41,7 @@ const digest = (value: string) => createHash('sha256').update(value).digest('hex
 const reviewFile = /^reviews\/[a-f0-9]{64}\.json$/, checkpointFile = /^checkpoints\/[a-f0-9]{64}\.json$/;
 /** Review state with change tracking stopped. Pending changes and revert Undo stay; the preference keeps auto-tracking from recapturing the baseline. */
 const untracked = (value: Record<string, unknown>) => ({ ...value, external: undefined, externalCapturedAt: undefined, externalDecidedAt: undefined, externalPreference: false, notice: 'Change tracking stopped by Storage cleanup to free space. Turn it on again to capture a new baseline.' });
+const discardedReview = (value: Record<string, unknown>) => ({ ...untracked(value), revision: randomUUID(), files: [], revertUndo: undefined, notice: 'Saved review comparisons and Undo were cleared by Storage cleanup. Workspace files were kept. Change tracking is off.' });
 const add = (set: Set<string>, id: unknown, pattern: RegExp) => {
   if (id === undefined) return;
   if (typeof id !== 'string' || !pattern.test(id)) throw new Error('Invalid storage reference. Cleanup was blocked.');
@@ -51,6 +53,7 @@ export interface StorageState {
   cleanable?: { bytes: number; files: number }; cleanupBlocked?: string; error?: string;
   plan?: CleanupPlan; result?: CleanupResult; progress?: StorageProgress;
   histories?: StoredHistory[]; historyPlan?: HistoryDeletionPlan; historyResult?: HistoryDeletionResult;
+  retainedReviews?: { project: string; files: number; undo: number; bytes: number }[];
 }
 const category = (name: string) => name.startsWith('reviews/') ? 'Review snapshots & tracking' : /^(blobs|snapshots|sessions)\//.test(name) ? 'Recorded demo history' : name.startsWith('checkpoints/') ? 'Message checkpoints & Undo' : name.startsWith('attachments/') ? 'Chat attachments' : name.startsWith('usage/') ? 'Usage & account evidence' : 'Preferences & other data';
 
@@ -231,10 +234,32 @@ export class StorageManager {
   }
   /** Accepted edits leave unreferenced snapshots. Keep live references and the capture grace period. */
   async previewReviewCleanup(scope: unknown): Promise<HistoryDeletionPlan> {
-    if (scope !== 'accepted' && scope !== 'all') throw new Error('Choose accepted snapshots or all review history.');
+    if (scope !== 'accepted' && scope !== 'all' && scope !== 'discard') throw new Error('Choose accepted snapshots or all review history.');
     return withStorageLock(this.root, async () => {
       const inventory = await this.inventory(), groups = await this.historyInventory(inventory);
-      const plan = await this.planDeletion(inventory, groups, scope === 'all' ? [...groups.keys()] : [], true);
+      const plan = await this.planDeletion(inventory, groups, scope !== 'accepted' ? [...groups.keys()] : [], true);
+      if (scope === 'discard') {
+        const overrides = new Map<string, unknown>(), released = new Set(plan.files.map(file => file.relative));
+        plan.discardedReviews = [];
+        for (const edit of plan.records) {
+          const value = await this.json(inventory.find(file => file.relative === edit.relative)!);
+          overrides.set(edit.relative, reviewFile.test(edit.relative) ? untracked(value) : value.filter((record: CheckpointRecord) => !edit.ids.includes(record.id)));
+        }
+        for (const file of inventory.filter(file => reviewFile.test(file.relative))) {
+          const blobs = new Set<string>(), value = await this.reviewReferences(file, new Set(), blobs);
+          const saved = await this.json(file);
+          if (!saved.files.length && !saved.revertUndo) continue;
+          if (saved.active || saved.revertUndo?.phase) throw new Error('Wait for capture or review to finish before clearing saved review.');
+          plan.discardedReviews.push({ project: value.project, files: saved.files.length, undo: saved.revertUndo?.files.length ?? 0 });
+          const text = await readFile(path.join(this.root, file.relative), 'utf8');
+          const edit = plan.records.find(record => record.relative === file.relative);
+          if (edit) edit.discardReview = true;
+          else plan.records.push({ relative: file.relative, digest: digest(text), ids: [], discardReview: true });
+          overrides.set(file.relative, discardedReview(saved));
+          for (const blob of blobs) released.add(`reviews/history/blobs/${blob}`);
+        }
+        plan.files = await this.candidates(inventory, Date.now(), overrides, released);
+      }
       const files = plan.files.filter(file => file.relative.startsWith('reviews/history/'));
       return { ...plan, files, bytes: files.reduce((sum, file) => sum + file.bytes, 0), reviewScope: scope };
     });
@@ -279,7 +304,8 @@ export class StorageManager {
         if (digest(text) !== edit.digest) throw new Error('Saved history changed. Preview deletion again.');
         const state = byPath.get(edit.relative.replace('checkpoints/', 'reviews/')), current = review ? JSON.parse(text) : state && await this.json(state);
         if (current?.active) throw new Error('Wait for the agent and change capture to finish before deleting history.');
-        if (review) { updates.push({ relative: edit.relative, value: untracked(current), removed: 0, untracked: true }); continue; }
+        if (edit.discardReview && (plan.reviewScope !== 'discard' || !review || current?.revertUndo?.phase)) throw new Error('Preview saved review cleanup again.');
+        if (review) { updates.push({ relative: edit.relative, value: edit.discardReview ? discardedReview(current) : untracked(current), removed: 0, untracked: true }); continue; }
         const saved: CheckpointRecord[] = JSON.parse(text), ids = new Set(edit.ids), records = saved.filter(record => !ids.has(record.id));
         updates.push({ relative: edit.relative, value: records, removed: saved.length - records.length, untracked: false });
       }
@@ -318,6 +344,15 @@ export class StorageManager {
       try {
         state.histories = [...(await this.historyInventory(files)).values()].map(group => group.history).sort((a, b) => b.reclaimable - a.reclaimable || b.bytes - a.bytes || a.id.localeCompare(b.id));
         const unused = await this.candidates(files, Date.now()); state.cleanable = { files: unused.length, bytes: unused.reduce((n, file) => n + file.bytes, 0) };
+        const byPath = new Map(files.map(file => [file.relative, file]));
+        state.retainedReviews = [];
+        for (const file of files.filter(file => reviewFile.test(file.relative))) {
+          const blobs = new Set<string>();
+          await this.reviewReferences(file, new Set(), blobs, undefined, false);
+          const value = await this.json(file);
+          if (value.files.length || value.revertUndo) state.retainedReviews.push({ project: value.project, files: value.files.length, undo: value.revertUndo?.files.length ?? 0, bytes: [...blobs].reduce((sum, blob) => sum + (byPath.get(`reviews/history/blobs/${blob}`)?.bytes ?? 0), 0) });
+        }
+        state.retainedReviews.sort((first, second) => second.bytes - first.bytes);
       }
       catch (error) { state.cleanupBlocked = error instanceof Error ? error.message : String(error); }
       return state;

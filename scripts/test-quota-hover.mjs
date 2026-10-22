@@ -42,12 +42,17 @@ try {
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point }); await call('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
   };
   await hover();
-  const text = await evaluate(`document.querySelector('.monaco-hover').innerText`); assert.match(text, /Reset usage/); assert.match(text, /Work/); assert.match(text, /24% remaining/);
-  assert.equal(text.match(/24% remaining/g)?.length, 1, 'Current quota appears once');
-  assert.doesNotMatch(text, /Work old copy|0% remaining/, 'Stale duplicate quota and saved profile are omitted');
-  assert.match(text, /Extension storage/); assert.match(text, /1.4 GB/); assert.match(text, /Above 1 GB/);
+  const text = await evaluate(`document.querySelector('.monaco-hover').innerText`); assert.match(text, /Reset usage/); assert.match(text, /Work/); assert.match(text, /24% left/);
+  assert.equal(text.match(/24% left/g)?.length, 1, 'Current quota appears once');
+  assert.doesNotMatch(text, /Work old copy|0% left/, 'Stale duplicate quota and saved profile are omitted');
+  assert.match(text, /Extension storage/i); assert.match(text, /1.4 GB/); assert.match(text, /Above 1 GB/);
   const palette = await evaluate(`([...document.querySelectorAll('.monaco-hover span[style*="color"]')].map(e=>({text:e.textContent,color:getComputedStyle(e).color})))`);
   assert.ok(new Set(palette.map(row=>row.color)).size >= 3, 'Native hover renders theme colors');
+  const layout = await evaluate(`(()=>{const hover=document.querySelector('.monaco-hover');return {bars:[...hover.querySelectorAll('td img')].map(e=>({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,loaded:e.complete&&e.naturalWidth>0})),sections:[...hover.querySelectorAll('h5')].map(e=>e.textContent),overflow:[...hover.querySelectorAll('table')].some(e=>e.scrollWidth>e.clientWidth+1)}})()`);
+  assert.equal(layout.bars.length, 2, 'Both quota meters survive native HTML sanitization');
+  assert.ok(layout.bars.every(bar => bar.loaded && bar.width === 132 && bar.height === 6), 'Quota meters render as thin SVG bars');
+  assert.equal(layout.overflow, false, 'Hover tables fit without horizontal overflow');
+  assert.deepEqual(layout.sections, ['SWITCH ACCOUNT', 'EXTENSION STORAGE'], 'Switching and storage have section labels');
   const anchor = await evaluate(`(()=>{const r=document.querySelector('.monaco-hover').getBoundingClientRect();return{x:r.x+20,y:r.y+20}})()`);
   await call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...anchor });
   const shot = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(path.join(root, 'artifacts', `quota-hover-native${suffix}.png`), Buffer.from(shot.data, 'base64'));
@@ -60,10 +65,10 @@ try {
     await hover(); await clickLink(label);
     await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes(`review-preview:${scope}`), `${label} preview link`);
   }
-  await hover(); await clickLink('Work'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('switch:two'), 'switch link');
+  await hover(); await clickLink('Switch'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('switch:two'), 'switch link');
   await hover(); await clickLink('Reset usage'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('reset'), 'reset link');
   await hover(); assert.match(await evaluate(`document.querySelector('.monaco-hover').innerText`), /1 earned reset/);
-  await clickLink('Search / switch accounts');
+  await clickLink('Search');
   await until(() => evaluate(`document.querySelector('.quick-input-widget')?.innerText.includes('Open dashboard')`), 'search popup with dashboard action');
   assert.doesNotMatch(await evaluate(`document.querySelector('.quick-input-widget').innerText`), /Work old copy/, 'Search popup also deduplicates saved identities');
   const popup = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(path.join(root, 'artifacts', `quick-accounts-native${suffix}.png`), Buffer.from(popup.data, 'base64'));

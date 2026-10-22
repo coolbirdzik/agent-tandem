@@ -869,7 +869,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }));
   register('agentTandem.previewReviewCleanup', async value => {
     const scope = (value as { scope?: unknown } | undefined)?.scope;
-    if (scope !== 'accepted' && scope !== 'all') throw new Error('Choose accepted snapshots or all review history.');
+    if (scope !== 'accepted' && scope !== 'all' && scope !== 'discard') throw new Error('Choose accepted snapshots or all review history.');
     await settings.open('storage', 'restore');
     return storageAction(async () => {
       cleanupPlan = undefined; historyDeletionPlan = undefined;

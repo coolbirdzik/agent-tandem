@@ -1070,9 +1070,15 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
       el('storage-history-impact').textContent = all
         ? `All message checkpoints and restore backups will be permanently unavailable. ${stops}Unreferenced review snapshots are removed. Pending review and its revert Undo stay protected. Your code, chat messages and recorded demos are kept.`
         : 'Removes review snapshots no longer referenced after Accept or other review actions. Tracking baselines, pending review, checkpoints and Undo stay protected. Captures made in the last 10 minutes are kept. Your code, chat messages and recorded demos are kept.';
+      if (preview.reviewScope === 'discard') {
+        el('storage-history-plan-heading').textContent = 'Clear saved review data';
+        el('storage-history-delete-label').textContent = 'Clear saved review data';
+        el('storage-history-impact').textContent = 'Permanently removes saved comparisons and revert Undo for the projects below, plus all message checkpoints and restore backups. These changes can no longer be reverted from Review. Change tracking stops. Workspace files, chat messages and recorded demos are kept. Recent captures and data still referenced elsewhere are kept.';
+      }
     }
     const owners = el('storage-history-plan-groups'); owners.replaceChildren();
     for (const group of preview.histories) owners.append(node('li', `${group.project} · ${group.label} · ${group.kind === 'tracking' ? 'stops tracking' : `${group.count} restore points`}`));
+    for (const review of preview.discardedReviews ?? []) owners.append(node('li', `${review.project} · ${plural(review.files, 'saved comparison')} · ${plural(review.undo, 'revert Undo file')}`));
     const files = el('storage-history-plan-files'); files.replaceChildren();
     for (const file of preview.files) files.append(node('li', `${file.relative} · ${fileSize(file.bytes)}`));
     if (!preview.files.length) files.append(node('li', preview.reviewScope && !preview.records.length
@@ -1314,7 +1320,7 @@ function renderStorage(storage: UsageDashboardState['storage']) {
   el<HTMLButtonElement>('storage-clean').disabled = busy || !storage?.plan?.files.length;
   el<HTMLButtonElement>('storage-cancel').disabled = busy;
   const totals = el('storage-totals'); totals.replaceChildren();
-  for (const [label, bytes, detail] of [['Total stored', storage?.total, 'AgentTandem extension data only'], ['Safe to clean', storage?.cleanable?.bytes, `${storage?.cleanable?.files ?? 0} unused files · older than 10 min`]] as const) {
+  for (const [label, bytes, detail] of [['Total stored', storage?.total, 'AgentTandem extension data only'], ['Unused snapshots', storage?.cleanable?.bytes, `${storage?.cleanable?.files ?? 0} unused files · older than 10 min · saved review is kept`]] as const) {
     const item = node('div', undefined, 'usage-total'); item.append(node('span', label), node('strong', bytes === undefined ? '—' : fileSize(bytes)), node('small', detail)); totals.append(item);
   }
   if (storage?.categories) {
@@ -1323,12 +1329,14 @@ function renderStorage(storage: UsageDashboardState['storage']) {
     storage.categories.forEach((category, index) => {
       if (category.label !== 'Review snapshots & tracking') return;
       const cell = root.querySelectorAll('tbody tr')[index]?.firstElementChild; if (!cell) return;
+      for (const review of storage.retainedReviews ?? []) cell.append(node('p', `${review.project} · ${fileSize(review.bytes)} kept by ${plural(review.files, 'saved comparison')}${review.undo ? ` and ${plural(review.undo, 'revert Undo file')}` : ''}`));
       const actions = node('div', undefined, 'storage-review-actions');
-      for (const scope of ['accepted', 'all'] as const) {
+      for (const scope of ['accepted', 'all', 'discard'] as const) {
         const button = node('button', undefined, 'quiet'); button.type = 'button'; button.dataset.reviewCleanup = scope;
-        button.append(node('span', undefined, `codicon codicon-${scope === 'accepted' ? 'clear-all' : 'trash'}`), document.createTextNode(scope === 'accepted' ? 'Clean accepted' : 'Clean all'));
+        button.append(node('span', undefined, `codicon codicon-${scope === 'accepted' ? 'clear-all' : 'trash'}`), document.createTextNode(scope === 'accepted' ? 'Clean accepted' : scope === 'all' ? 'Clean history (keep pending)' : 'Clear saved review data…'));
         button.firstElementChild!.setAttribute('aria-hidden', 'true');
         button.title = scope === 'accepted' ? 'Preview unused review snapshots; keep tracking, checkpoints and Undo.' : 'Preview all review history; removes checkpoints and restore backups, and stops tracking. Pending review stays protected.';
+        if (scope === 'discard') button.title = 'Preview removal of saved comparisons, revert Undo, checkpoints and tracking. Workspace files stay unchanged.';
         button.disabled = busy || !!error || !!storage.historyPlan || !category.files;
         button.onclick = () => send('previewReviewCleanup', { scope }); actions.append(button);
       }
