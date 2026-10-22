@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -54,16 +54,25 @@ describe('account and quota data', () => {
     expect(claudeQuota({ rate_limits_available: false, rate_limits: { five_hour: { utilization: 0 } } }).status).toBe('unavailable');
     expect(claudeQuota({}).windows).toEqual([]);
   });
+  it('uses the native bucket id to merge a summary with aliased map entries', () => {
+    const quota = codexQuota({ rateLimits: { limitId: 'codex', primary: { usedPercent: 100, windowDurationMins: 300 } }, rateLimitsByLimitId: {
+      legacyAlias: { limitId: 'codex', primary: { usedPercent: 46, windowDurationMins: 300 }, secondary: { usedPercent: 40, windowDurationMins: 10080 } },
+      model: { limitId: 'model', limitName: 'Model', primary: { usedPercent: 46, windowDurationMins: 300 } },
+    } });
+    expect(quota.windows.map(window => [window.id, window.usedPercent])).toEqual([['codex:primary', 46], ['codex:secondary', 40], ['model:primary', 46]]);
+  });
 });
 
 describe('read-only provider queries', () => {
-  async function codex(mode: string, signal?: AbortSignal) {
+  async function codex(mode: string, signal?: AbortSignal, refreshToken = false) {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-account-')), log = path.join(directory, 'rpc.jsonl');
+    const auth = path.join(directory, 'auth.json');
+    await writeFile(auth, JSON.stringify({ tokens: { access_token: 'expired-private-access', refresh_token: 'original-private-refresh' } }));
     let child!: ChildProcessWithoutNullStreams;
     const job = readCodexAccount(directory, process.execPath, signal, () => child = spawn(process.execPath, [path.resolve('tests/fixtures/account-server.mjs')], {
-      env: { ...process.env, ACCOUNT_CASE: mode, ACCOUNT_RPC_LOG: log }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-    }));
-    return { job, log, child: () => child };
+      env: { ...process.env, CODEX_HOME: directory, ACCOUNT_CASE: mode, ACCOUNT_RPC_LOG: log }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    }), undefined, { refreshToken });
+    return { job, log, auth, directory, child: () => child };
   }
   it.each(['chatgpt', 'api', 'signed-out', 'quota-error', 'quota-exit'])('reads Codex %s without creating a thread or inference', async mode => {
     const run = await codex(mode), result = await run.job;
@@ -98,6 +107,30 @@ describe('read-only provider queries', () => {
     const requests = (await readFile(run.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     expect(requests.find(request => request.method === 'account/read')?.params).toEqual({ refreshToken: false });
     expect(requests.some(request => request.method === 'account/rateLimits/read')).toBe(true);
+  });
+  it('renews an expired saved Codex sign-in through the CLI and persists its rotated grant', async () => {
+    const run = await codex('expired', undefined, true);
+    try {
+      const result = await run.job;
+      expect(result.account).toMatchObject({ signedIn: true, email: 'account@example.test' });
+      expect(result.quota?.status).toBe('available');
+      expect(JSON.parse(await readFile(run.auth, 'utf8')).tokens).toEqual({ access_token: 'rotated-private-access', refresh_token: 'rotated-private-refresh' });
+      const requests = (await readFile(run.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(requests.find(request => request.method === 'account/read')?.params).toEqual({ refreshToken: true });
+      expect(requests.map(request => request.method)).toEqual(['initialize', 'initialized', 'account/read', 'account/rateLimits/read', 'account/usage/read']);
+      expect(JSON.stringify(result)).not.toContain('private');
+      expect(run.child().exitCode !== null || run.child().signalCode !== null).toBe(true);
+    } finally { await rm(run.directory, { recursive: true, force: true }); }
+  });
+  it.each(['refresh-error', 'refresh-sensitive'])('reports an actionable safe error when token renewal fails: %s', async mode => {
+    const run = await codex(mode, undefined, true);
+    try {
+      await expect(run.job).rejects.toThrow(/sign in again/i);
+      expect(JSON.parse(await readFile(run.auth, 'utf8')).tokens.refresh_token).toBe('original-private-refresh');
+      const requests = (await readFile(run.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(requests.map(request => request.method)).toEqual(['initialize', 'initialized', 'account/read']);
+      expect(run.child().exitCode !== null || run.child().signalCode !== null).toBe(true);
+    } finally { await rm(run.directory, { recursive: true, force: true }); }
   });
   it('cancels and reaps a Codex initialization that never responds', async () => {
     const abort = new AbortController(), run = await codex('hang', abort.signal);

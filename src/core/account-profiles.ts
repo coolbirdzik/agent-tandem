@@ -8,6 +8,7 @@ import type { AccountIdentity } from '../providers/account-status';
 import { usageAccount } from './usage-account';
 import { withStorageLock } from './storage-lock';
 import type { RollbackProgress } from './account-switch';
+import { assertAccountIdentity, codexAuthIdentity, sameAccountIdentity } from './account-identity';
 
 export interface AccountProfile { id: string; provider: AccountProvider; label: string; identity?: AccountIdentity; createdAt: number }
 export interface ProfileRegistry { version: 1; profiles: AccountProfile[] }
@@ -49,12 +50,25 @@ export class AccountProfiles {
     if (!content) return { version: 1, profiles: [] };
     const value = json(content);
     if (value.version !== 1 || !Array.isArray(value.profiles)) throw new Error('Account registry is unreadable.');
-    return { version: 1, profiles: value.profiles.map((row: any) => {
+    const profiles: AccountProfile[] = value.profiles.map((row: any) => {
       if (!row || !validId(row.id) || !isAccountProvider(row.provider) || typeof row.label !== 'string' || !Number.isFinite(row.createdAt)) throw new Error('Invalid account registry.');
       const a = row.identity;
       return { id: row.id, provider: row.provider, label: row.label, createdAt: row.createdAt,
         ...(a && typeof a.method === 'string' ? { identity: { signedIn: a.signedIn === true, method: a.method, ...Object.fromEntries(['id', 'email', 'plan', 'organization'].filter(k => typeof a[k] === 'string').map(k => [k, a[k]])) } } : {}) };
-    }) };
+    });
+    // Older refreshes replaced expired identities with "Not signed in". Recover display
+    // metadata from the profile's own credentials, without changing the native sign-in.
+    return { version: 1, profiles: await Promise.all(profiles.map(async row => {
+      if (row.provider !== 'Codex' || row.identity?.signedIn) return row;
+      try {
+        const content = await optional(path.join(this.home(row.id), 'auth.json'));
+        const actual = content && codexAuthIdentity(json(content));
+        if (!actual) return row;
+        const labelEmail = /^[^\s@]+@[^\s@]+$/.test(row.label) ? row.label : undefined;
+        assertAccountIdentity({ ...row.identity, signedIn: true, method: 'ChatGPT', email: row.identity?.email || labelEmail }, actual);
+        return { ...row, identity: actual };
+      } catch { return row; }
+    })) };
   }
   private save(value: ProfileRegistry) { return atomic(path.join(this.root, 'accounts.json'), JSON.stringify(value)); }
   async get(id: string) { const profile = (await this.read()).profiles.find(row => row.id === id); if (!profile) throw new Error('Account no longer exists.'); return profile; }
@@ -71,6 +85,7 @@ export class AccountProfiles {
     return withStorageLock(this.root, async () => {
       const data = await this.read(), profile = data.profiles.find(row => row.id === id);
       if (!profile) throw new Error('Account no longer exists.');
+      assertAccountIdentity(profile.identity, identity);
       profile.identity = { signedIn: identity.signedIn, method: identity.method, ...Object.fromEntries(['id', 'email', 'plan', 'organization'].filter(k => typeof identity[k as keyof AccountIdentity] === 'string').map(k => [k, identity[k as keyof AccountIdentity]])) };
       if (profile.label === 'New account') profile.label = identity.email || identity.method;
       await this.save(data);
@@ -84,15 +99,23 @@ export class AccountProfiles {
     }
     const content = await optional(path.join(home, authFile(provider)));
     if (!content) throw new Error('No native sign-in file found. Use Add account to sign in.');
+    if (provider === 'Codex') {
+      const actual = codexAuthIdentity(json(content));
+      if (actual) { assertAccountIdentity(identity, actual); identity = actual; }
+    }
     return this.import(provider, content, identity, provider === 'Claude' ? await optional(claudeMetadata(home)) : undefined);
   }
   async import(provider: AccountProvider, content: string, identity?: AccountIdentity, metadata?: string) {
     if (!isAccountProvider(provider)) throw new Error('Invalid provider.');
     const auth = isChatAccount(provider) ? json(content) : validateDesktopSignIn(json(content), provider);
+    if (provider === 'Codex') {
+      const actual = codexAuthIdentity(auth as Record<string, unknown>);
+      if (actual) { assertAccountIdentity(identity, actual); identity = actual; }
+    }
     if (isChatAccount(provider) && (provider === 'Codex' ? !(auth as Record<string, unknown>).tokens && !(auth as Record<string, unknown>).OPENAI_API_KEY : !(auth as Record<string, unknown>).claudeAiOauth)) throw new Error('Use the native CLI account JSON file.');
     if (!isChatAccount(provider)) identity = await this.desktop.identity(auth as import('./desktop-accounts').DesktopSignIn);
     const identityKey = profileIdentityKey(provider, identity);
-    const existing = identityKey && (await this.read()).profiles.find(row => row.provider === provider && profileIdentityKey(provider, row.identity) === identityKey);
+    const existing = identityKey && (await this.read()).profiles.find(row => row.provider === provider && sameAccountIdentity(row.identity, identity));
     const profile = existing || await this.create(provider, identity?.email || 'New account');
     await withStorageLock(this.home(profile.id), async () => {
       await atomic(path.join(this.home(profile.id), authFile(provider)), JSON.stringify(auth));

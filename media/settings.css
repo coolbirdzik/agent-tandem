@@ -29,6 +29,14 @@ button.quiet { background: transparent; color: var(--vscode-foreground); border-
 button.quiet:hover { background: var(--vscode-list-hoverBackground); }
 :focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 3px; }
 .storage-location { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 10px; margin: 12px 0 24px; }
+.extension-storage-health { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 16px; margin: 18px 0; background: var(--surface); border-left: 3px solid var(--vscode-charts-blue, #3794ff); }
+.extension-storage-health > .codicon { font-size: 20px; color: var(--vscode-charts-blue, #3794ff); }
+.extension-storage-health > div { flex: 1; min-width: 180px; }
+.extension-storage-health p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.extension-storage-health[data-level=warning] { border-color: var(--vscode-editorWarning-foreground, #cca700); }
+.extension-storage-health[data-level=warning] > .codicon { color: var(--vscode-editorWarning-foreground, #cca700); }
+.extension-storage-health[data-level=critical] { border-color: var(--vscode-errorForeground, #f48771); }
+.extension-storage-health[data-level=critical] > .codicon { color: var(--vscode-errorForeground, #f48771); }
 .storage-location code { overflow-wrap: anywhere; flex: 1; min-width: 200px; color: var(--vscode-textLink-foreground); }
 .storage-location button.quiet, .storage-cleanup button.quiet { border: 0; }
 .storage-files { max-height: 300px; overflow: auto; padding: 12px 24px; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family); font-size: 11px; }
@@ -95,6 +103,10 @@ button.danger:hover { filter: brightness(.9); }
 @media (max-width: 720px) { .storage-overview { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .storage-overview-bar span { transition: none; } }
 .storage-extension-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 20px; }
+.storage-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.storage-review-actions button { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.storage-review-actions .codicon-clear-all { color: var(--vscode-charts-blue, #75beff); }
+.storage-review-actions .codicon-trash { color: var(--vscode-editorWarning-foreground, #cca700); }
 .native-cleanup { max-width: 1120px; margin-inline: auto; }
 .native-heading { align-items: center; margin-bottom: 22px; }
 .native-heading h2 { font-size: 20px; letter-spacing: -.4px; }
@@ -268,6 +280,9 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .quota-cycle-capacity > span, .quota-cycle-capacity > small { font-size: 11px; }
 .quota-cycle-capacity > strong { font-size: 17px; font-weight: 500; }
 .quota-estimate-note { margin: 12px 0 0; max-width: 95ch; }
+.quota-reset-controls { margin-top: 12px; font-size: 11px; }
+.quota-reset-controls button { font-size: 11px; }
+.quota-reset-controls p { margin: 6px 0; }
 .quota-trend-latest, .quota-trend-change { font-size: 12px; font-variant-numeric: tabular-nums; }
 .quota-trend-change[data-direction=up] { color: var(--vscode-charts-green, #27865c); }
 .quota-trend-change[data-direction=down] { color: var(--vscode-charts-orange, #b96a1c); }

@@ -14,6 +14,11 @@ async function fixture(run: (root: string, cache: AccountQuotaCache) => Promise<
   try { await run(root, new AccountQuotaCache(root)); } finally { await rm(root, { recursive: true, force: true }); }
 }
 describe('Account quota snapshots', () => {
+  it('normalizes duplicate cached windows before they can display an obsolete quota after restart', async () => fixture(async (root, cache) => {
+    await cache.remember('Codex', { ...status, quota: { ...status.quota!, windows: [{ id: '5h', label: '5h', usedPercent: 100 }, { id: '5h', label: '5h', usedPercent: 46 }] } });
+    const reopened = new AccountQuotaCache(root); await reopened.load();
+    expect(reopened.restore('Codex', { status: 'loading', account }).quota!.windows).toEqual([{ id: '5h', label: '5h', usedPercent: 46 }]);
+  }));
   it('restores display meters after restart without persisting credentials or raw payloads', async () => fixture(async (root, cache) => {
     await cache.remember('Codex', { ...status, access_token: 'private-auth', quota: { ...status.quota!, access_token: 'private-quota', windows: [{ ...status.quota!.windows[0]!, refresh_token: 'private-window' }] } } as unknown as ProviderAccountStatus);
     const reopened = new AccountQuotaCache(root); await reopened.load();

@@ -1,6 +1,7 @@
 import type { ViewState } from './types';
 import { bankedResetCountdown, bankedResetDetails } from './banked-resets';
 import { statusBarPreferences, type StatusBarPreferences } from './status-bar-preferences';
+import { uniqueQuotaWindows } from './quota-windows';
 type QuotaState = Pick<ViewState, 'conversation' | 'composeProvider' | 'accounts'>;
 /** Five cells (fits narrow laptop status bars) with eighth-block precision; reserve empty/full bars for the exact endpoints. */
 function quotaProgress(remaining: number) {
@@ -30,7 +31,7 @@ export function quotaStatus(state: QuotaState, options: Partial<StatusBarPrefere
   const preferences = statusBarPreferences(options);
   const provider = state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex';
   const status = state.accounts?.[provider], account = status?.account;
-  const windows = status?.quota?.windows ?? [];
+  const windows = uniqueQuotaWindows(status?.quota?.windows);
   const remaining = windows.length ? Math.min(...windows.map(window => Math.max(0, 100 - window.usedPercent))) : undefined;
   const tone = remaining !== undefined ? remaining === 0 ? 'exhausted' : remaining <= 10 ? 'warning' : 'healthy' : status?.status === 'loading' ? 'loading' : 'unavailable';
   const visibleWindows = preferences.quotaWindows === 'main' ? windows.slice(0, 2) : windows;

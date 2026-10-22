@@ -42,12 +42,22 @@ describe('Settings host updates', () => {
     view.open('storage'); expect(host.post).toHaveBeenCalledWith({ type: 'page', page: 'storage' });
     view.open(); expect(host.post).toHaveBeenCalledWith({ type: 'dashboard' }); view.dispose();
   });
+  it('opens extension storage on Unused files even before the webview is ready', async () => {
+    const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } };
+    const view = new SettingsView({} as any, () => state, vi.fn(), vi.fn()); view.open('storage', 'unused');
+    await host.receive({ type: 'ready' });
+    expect(host.post).toHaveBeenLastCalledWith({ type: 'page', page: 'storage', storagePage: 'unused' });
+    view.open('storage', 'restore'); expect(host.post).toHaveBeenCalledWith({ type: 'page', page: 'storage', storagePage: 'restore' }); view.dispose();
+  });
   it('routes history preview and deletion through the extension command allowlist', async () => {
     const invoke = vi.fn(), report = vi.fn(), state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } };
     const view = new SettingsView({} as any, () => state, invoke, report); view.open();
     await host.receive({ type: 'previewHistoryDeletion', value: { ids: ['selected'] } });
     expect(invoke).toHaveBeenLastCalledWith('agentTandem.previewHistoryDeletion', { ids: ['selected'] });
     await host.receive({ type: 'previewCleanAll', value: { kinds: ['unused'] } }); expect(invoke.mock.lastCall).toEqual(['agentTandem.previewCleanAll', { kinds: ['unused'] }]);
+    await host.receive({ type: 'deleteHistory', value: { token: 'approved' } });
+    await host.receive({ type: 'previewReviewCleanup', value: { scope: 'all' } });
+    expect(invoke).toHaveBeenLastCalledWith('agentTandem.previewReviewCleanup', { scope: 'all' });
     await host.receive({ type: 'deleteHistory', value: { token: 'approved' } });
     expect(invoke).toHaveBeenLastCalledWith('agentTandem.deleteHistory', { token: 'approved' });
     await host.receive({ type: 'deleteArbitraryPath', value: { path: 'outside' } });

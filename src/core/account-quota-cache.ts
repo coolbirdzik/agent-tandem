@@ -5,6 +5,7 @@ import type { AccountProvider } from './account-providers';
 import { profileIdentityKey } from './account-profiles';
 import type { AccountIdentity, AccountQuota, ProviderAccountStatus } from '../providers/account-status';
 import { withStorageLock } from './storage-lock';
+import { uniqueQuotaWindows } from './quota-windows';
 
 interface Snapshot { key: string; at: number; quota: AccountQuota }
 const keyFor = (provider: AccountProvider, identity?: AccountIdentity) => {
@@ -17,7 +18,7 @@ function cleanQuota(value: any): AccountQuota | undefined {
   const windows = value.windows.flatMap((row: any) => row && typeof row.id === 'string' && typeof row.label === 'string' && Number.isFinite(row.usedPercent) && row.usedPercent >= 0 && row.usedPercent <= 100
     ? [{ id: row.id, label: row.label, usedPercent: row.usedPercent, ...(Number.isFinite(row.resetsAt) ? { resetsAt: row.resetsAt } : {}) }] : []);
   const banked = value.bankedResets;
-  return { status: 'available', windows, ...(typeof value.credits === 'string' ? { credits: value.credits } : {}),
+  return { status: 'available', windows: uniqueQuotaWindows(windows), ...(typeof value.credits === 'string' ? { credits: value.credits } : {}),
     ...(banked && Number.isSafeInteger(banked.availableCount) && banked.availableCount >= 0 ? { bankedResets: { availableCount: banked.availableCount,
       ...(Array.isArray(banked.credits) ? { credits: banked.credits.filter((row: any) => row && typeof row === 'object').map((row: any) => ({ ...(typeof row.title === 'string' ? { title: row.title } : {}), ...(Number.isFinite(row.expiresAt) ? { expiresAt: row.expiresAt } : {}) })) } : {}) } } : {}) };
 }

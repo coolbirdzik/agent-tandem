@@ -17,6 +17,7 @@ import type { CleanupKind } from './core/storage';
 import { CheckboxRangeSelection } from './ui/checkbox-range';
 import { conversationTime, matchesConversation, type ConversationFilter } from './core/conversation-filter';
 import { quotaCycleCharts } from './ui/quota-cycle-charts';
+import { storageUsageLevel, storageSize } from './core/storage-usage';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 autoHideScrollbars();
@@ -400,6 +401,18 @@ function table(root: HTMLElement, headers: string[], rows: Array<Array<string | 
   }
   table.append(head, body); root.append(table);
 }
+function codexResetControls(provider: string, status?: ProviderAccountStatus) {
+  const identity = usageAccount('Codex', status?.account), current = usageAccount('Codex', state?.accounts?.Codex?.account);
+  if (provider !== 'Codex' || !identity || identity.id !== current?.id) return undefined;
+  const count = status?.quota?.bankedResets?.availableCount, root = node('div', undefined, 'quota-reset-controls');
+  const button = node('button', 'Reset usage · uses 1 reset', 'quiet'); button.dataset.resetUsage = 'Codex';
+  button.disabled = !!state?.accountsBusy || !!state?.accountSwitchBlocked || status?.status !== 'ready' || !!status?.quotaCached || !count;
+  button.title = state?.accountSwitchBlocked || (count ? `${count} earned resets available. Uses one to restore eligible Codex quota.` : 'No earned resets available. Refresh quota to check.');
+  button.onclick = () => { button.disabled = true; send('accountAction', { action: 'resetUsage', provider: 'Codex' }); }; root.append(button);
+  const message = state?.accountsError || state?.accountsNotice;
+  if (message) { const notice = node('p', message, state?.accountsError ? 'quota-history-error' : 'muted'); notice.setAttribute('role', state?.accountsError ? 'alert' : 'status'); root.append(notice); }
+  return root;
+}
 function renderAccounts() {
   const root = el('accounts'); root.replaceChildren();
   for (const provider of ['Codex', 'Claude'] as const) {
@@ -423,7 +436,7 @@ function renderAccounts() {
     for (const line of bankedResetDetails(status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
     if (!windows.children.length) windows.append(node('span', status?.quota?.detail || status?.error || 'Quota unavailable', 'muted'));
     if (status?.status === 'loading') windows.append(node('span', 'Updating…', 'muted'));
-    item.append(windows); root.append(item);
+    item.append(windows); const reset = codexResetControls(provider, status); if (reset) item.append(reset); root.append(item);
   }
 }
 function dashboardStatuses() {
@@ -493,6 +506,7 @@ function renderAccountGroups(filters: UsageFilters) {
     for (const line of bankedResetDetails(group.status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
     if (!windows.children.length) windows.append(node('small', group.account ? group.status?.quota?.detail || 'No quota snapshot' : 'Quota cannot be assigned to unknown history', 'muted'));
     item.append(windows);
+    const reset = group.active && codexResetControls(group.provider, group.status); if (reset) item.append(reset);
     const open = node('button', selected ? 'Viewing usage' : 'View usage', 'quiet'); open.disabled = selected;
     open.onclick = () => {
       el<HTMLSelectElement>('filter-provider').value = group.provider; el<HTMLSelectElement>('filter-model').value = '';
@@ -561,6 +575,7 @@ function renderManagedAccounts() {
       windows.append(row);
     }
     for (const line of bankedResetDetails(profile.status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
+    const reset = profile.active && codexResetControls(profile.provider, profile.status); if (reset) windows.append(reset);
     if (!windows.children.length) windows.append(node('p', profile.status?.error || (isChatAccount(profile.provider) ? profile.status?.quota?.detail || 'Refresh to check sign-in and quota' : 'Sign-in saved locally · quota in app'), 'muted'));
     item.append(windows);
     const actions = node('div', undefined, 'actions');
@@ -1036,7 +1051,7 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
     row.append(checkbox, copy, bytes); list.append(row);
   }
   const preview = storage?.historyPlan; el('storage-history-plan').hidden = !preview;
-  el<HTMLButtonElement>('storage-history-delete').disabled = blocked || !preview;
+  el<HTMLButtonElement>('storage-history-delete').disabled = blocked || !preview || (!!preview.reviewScope && !preview.files.length && !preview.records.length);
   el<HTMLButtonElement>('storage-history-cancel').disabled = busy;
   if (preview) {
     const kinds = preview.kinds, lost = kinds ? [kinds.includes('checkpoints') && 'every message checkpoint', kinds.includes('undo') && 'every restore backup'].filter((item): item is string => !!item) : [];
@@ -1048,11 +1063,21 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
     el('storage-history-impact').textContent = kinds
       ? `${lost.length ? `${capitalize(joinWords(lost))} will be permanently unavailable. ` : ''}${stops}${kinds.includes('unused') ? 'Unused snapshots are removed. ' : ''}Your code, chat messages${tracking ? ' and pending review stay' : ', pending review and tracking baselines stay'} as they are.`
       : `${preview.histories.some(group => group.kind !== 'tracking') ? 'The selected checkpoints and restore backups will be permanently unavailable. ' : ''}${stops}Your code, chat messages and pending review stay as they are. Shared data still needed by Review or other checkpoints is kept.`;
+    if (preview.reviewScope) {
+      const all = preview.reviewScope === 'all';
+      el('storage-history-plan-heading').textContent = all ? 'Clean all review snapshots & tracking' : 'Clean accepted / unused review snapshots';
+      el('storage-history-delete-label').textContent = all ? 'Clean all' : 'Clean accepted';
+      el('storage-history-impact').textContent = all
+        ? `All message checkpoints and restore backups will be permanently unavailable. ${stops}Unreferenced review snapshots are removed. Pending review and its revert Undo stay protected. Your code, chat messages and recorded demos are kept.`
+        : 'Removes review snapshots no longer referenced after Accept or other review actions. Tracking baselines, pending review, checkpoints and Undo stay protected. Captures made in the last 10 minutes are kept. Your code, chat messages and recorded demos are kept.';
+    }
     const owners = el('storage-history-plan-groups'); owners.replaceChildren();
     for (const group of preview.histories) owners.append(node('li', `${group.project} · ${group.label} · ${group.kind === 'tracking' ? 'stops tracking' : `${group.count} restore points`}`));
     const files = el('storage-history-plan-files'); files.replaceChildren();
     for (const file of preview.files) files.append(node('li', `${file.relative} · ${fileSize(file.bytes)}`));
-    if (!preview.files.length) files.append(node('li', 'These snapshots are shared with retained history or Review. Only the selected restore points will be removed.'));
+    if (!preview.files.length) files.append(node('li', preview.reviewScope && !preview.records.length
+      ? 'Nothing to clean yet. Remaining snapshots are protected or less than 10 minutes old.'
+      : 'These snapshots are shared with retained history or Review. Only the selected restore points will be removed.'));
   }
   if (preview && preview.token !== historyPreviewToken) {
     el('storage-history-plan').scrollIntoView?.({ block: 'nearest' });
@@ -1292,7 +1317,24 @@ function renderStorage(storage: UsageDashboardState['storage']) {
   for (const [label, bytes, detail] of [['Total stored', storage?.total, 'AgentTandem extension data only'], ['Safe to clean', storage?.cleanable?.bytes, `${storage?.cleanable?.files ?? 0} unused files · older than 10 min`]] as const) {
     const item = node('div', undefined, 'usage-total'); item.append(node('span', label), node('strong', bytes === undefined ? '—' : fileSize(bytes)), node('small', detail)); totals.append(item);
   }
-  if (storage?.categories) table(el('storage-categories'), ['Data', 'Size', 'Files'], storage.categories.map(row => [row.label, fileSize(row.bytes), row.files]));
+  if (storage?.categories) {
+    const root = el('storage-categories');
+    table(root, ['Data', 'Size', 'Files'], storage.categories.map(row => [row.label, fileSize(row.bytes), row.files]));
+    storage.categories.forEach((category, index) => {
+      if (category.label !== 'Review snapshots & tracking') return;
+      const cell = root.querySelectorAll('tbody tr')[index]?.firstElementChild; if (!cell) return;
+      const actions = node('div', undefined, 'storage-review-actions');
+      for (const scope of ['accepted', 'all'] as const) {
+        const button = node('button', undefined, 'quiet'); button.type = 'button'; button.dataset.reviewCleanup = scope;
+        button.append(node('span', undefined, `codicon codicon-${scope === 'accepted' ? 'clear-all' : 'trash'}`), document.createTextNode(scope === 'accepted' ? 'Clean accepted' : 'Clean all'));
+        button.firstElementChild!.setAttribute('aria-hidden', 'true');
+        button.title = scope === 'accepted' ? 'Preview unused review snapshots; keep tracking, checkpoints and Undo.' : 'Preview all review history; removes checkpoints and restore backups, and stops tracking. Pending review stays protected.';
+        button.disabled = busy || !!error || !!storage.historyPlan || !category.files;
+        button.onclick = () => send('previewReviewCleanup', { scope }); actions.append(button);
+      }
+      cell.append(actions);
+    });
+  }
   else loadingRows(el('storage-categories'), 3);
   el('storage-plan').hidden = !storage?.plan;
   if (storage?.plan) {
@@ -1333,6 +1375,16 @@ function renderStorageOverview(value: UsageDashboardState) {
     : 'Nothing cleaned up yet. Deleted conversations and restore history add to this total.';
   const last = el('storage-freed-last'); last.hidden = !freed?.lastAt;
   if (freed?.lastAt) last.textContent = `+${fileSize(freed.lastBytes ?? 0)} last cleanup · ${sinceLabel(freed.lastAt)}`;
+  const health = el('extension-storage-health'), usage = value.extensionStorage;
+  health.hidden = !usage;
+  if (usage) {
+    const level = storageUsageLevel(usage); health.dataset.level = level;
+    const icon = node('span', undefined, `codicon codicon-${level === 'critical' ? 'error' : level === 'warning' ? 'warning' : 'database'}`); icon.setAttribute('aria-hidden', 'true');
+    const text = node('div'); text.append(node('strong', usage.total === undefined ? 'Measuring extension data…' : `AgentTandem data · ${storageSize(usage.total)}`),
+      node('p', usage.error || (level === 'warning' || level === 'critical' ? `Above your ${storageSize(usage.warningBytes)} alert threshold. Review unused files and restore history to free space.` : 'Snapshots, restore history, attachments and usage data stored by this extension.')));
+    const manage = node('button', 'Manage extension data', 'quiet'); manage.onclick = () => { storagePage('unused'); send('storage'); };
+    health.replaceChildren(icon, text, manage);
+  }
 }
 let usageRenderSignature = '';
 function render(value: UsageDashboardState) {
@@ -1385,7 +1437,10 @@ function render(value: UsageDashboardState) {
 window.addEventListener('message', event => {
   if (event.data?.type === 'state') render(event.data.state);
   if (event.data?.type === 'dashboard') page('dashboard');
-  if (event.data?.type === 'page' && ['storage', 'accounts'].includes(event.data.page)) page(event.data.page);
+  if (event.data?.type === 'page' && ['storage', 'accounts'].includes(event.data.page)) {
+    if (event.data.page === 'storage' && ['unused', 'restore'].includes(event.data.storagePage)) currentStoragePage = event.data.storagePage;
+    page(event.data.page);
+  }
 });
 el('dashboard').setAttribute('aria-busy', 'true'); el('dashboard').dataset.loading = 'true';
 el('dashboard-status').textContent = 'Reading local CLI history…'; el<HTMLButtonElement>('refresh').disabled = true;

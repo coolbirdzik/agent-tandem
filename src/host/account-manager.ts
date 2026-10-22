@@ -1,19 +1,21 @@
 import * as vscode from 'vscode';
 import { AccountProfiles, profileIdentityKey, type AccountProfile } from '../core/account-profiles';
 import { isAccountProvider, isChatAccount, type AccountProvider } from '../core/account-providers';
-import type { ProviderAccountStatus } from '../providers/account-status';
+import type { AccountIdentity, AccountReadOptions, ProviderAccountStatus } from '../providers/account-status';
 import type { UsageDashboardState } from '../core/usage-dashboard';
 import { withStorageLock } from '../core/storage-lock';
 import { randomUUID } from 'node:crypto';
 import type { AccountSwitchLog } from '../core/account-switch';
 import { AccountQuotaCache } from '../core/account-quota-cache';
+import { assertAccountIdentity, accountIdentityMatches, sameAccountIdentity, AccountIdentityMismatchError } from '../core/account-identity';
 
 interface Dependencies {
   busy(): boolean; project(): string | undefined; current(provider: AccountProvider): ProviderAccountStatus | undefined;
-  read(profile: AccountProfile | AccountProvider, signal?: AbortSignal): Promise<ProviderAccountStatus>;
+  read(profile: AccountProfile | AccountProvider, signal?: AbortSignal, options?: AccountReadOptions): Promise<ProviderAccountStatus>;
   executable(provider: AccountProvider): Promise<string>; changed(provider: AccountProvider): Promise<void>; update(): void;
   openDesktop?(provider: 'Cursor' | 'Antigravity'): Promise<void>;
   observed?(statuses: ProviderAccountStatus[]): Promise<void>;
+  resetUsage?(account: AccountIdentity): Promise<string>;
   // Native IDE extensions read the CLI sign-in at startup, so offer an extension host restart.
   switched?(provider: 'Codex' | 'Claude'): Promise<void> | void;
 }
@@ -56,9 +58,11 @@ export class AccountManager {
           // The default CLI owns token rotation while this account is active.
           // Mirror its latest auth instead of independently refreshing the same grant in a copy.
           if (active && status.status === 'ready' && status.account) await this.store.importCurrent(row.provider, status.account);
-          this.statuses.set(row.id, await this.rememberQuota(row.provider, status)); if (status.status === 'ready' && status.account) await this.store.identify(row.id, status.account);
+          assertAccountIdentity(row.identity, status.account);
+          if (status.status === 'ready' && status.account) await this.store.identify(row.id, status.account);
+          this.statuses.set(row.id, await this.rememberQuota(row.provider, status));
         }
-        catch { if (!abort.signal.aborted) this.statuses.set(row.id, this.quotaCache.restore(row.provider, { status: 'error', account: row.identity, error: 'Could not refresh this sign-in.' })); }
+        catch (error) { if (!abort.signal.aborted) this.statuses.set(row.id, this.quotaCache.restore(row.provider, { status: 'error', account: row.identity, error: error instanceof AccountIdentityMismatchError ? error.message : 'Could not refresh this sign-in.' })); }
         if (!abort.signal.aborted) await this.publish();
       }));
       if (abort.signal.aborted) return;
@@ -71,8 +75,11 @@ export class AccountManager {
     await this.quotaCache.load();
     try { this.state.managedAccounts = (await this.store.read()).profiles.map(row => {
       const current = profileIdentityKey(row.provider, this.current(row.provider)?.account);
-      const active = !!current && current === profileIdentityKey(row.provider, row.identity);
-      const status = active ? this.current(row.provider) : this.statuses.get(row.id);
+      let active = !!current && current === profileIdentityKey(row.provider, row.identity);
+      let status = active ? this.current(row.provider) : this.statuses.get(row.id);
+      if (status && !accountIdentityMatches(row.identity, status.account)) {
+        active = false; status = { status: 'error', account: row.identity, error: 'Saved sign-in belongs to a different account. Sign in again.' };
+      }
       const restored = this.quotaCache.restore(row.provider, status || { status: 'ready', account: row.identity });
       return { ...row, status: status || restored.quota ? restored : undefined, active };
     }); } catch (error) { this.state.accountsError = error instanceof Error ? error.message : 'Could not load accounts.'; }
@@ -81,7 +88,7 @@ export class AccountManager {
   async action(value: unknown) {
     if (!value || typeof value !== 'object') throw new Error('Invalid account action.');
     const request = value as { action?: string; provider?: AccountProvider; id?: string; label?: string };
-    if (!['refresh', 'importCurrent', 'importFile', 'add', 'login', 'open', 'switch', 'rename', 'remove'].includes(request.action || '')) throw new Error('Unsupported account action.');
+    if (!['refresh', 'importCurrent', 'importFile', 'add', 'login', 'open', 'switch', 'rename', 'remove', 'resetUsage'].includes(request.action || '')) throw new Error('Unsupported account action.');
     if (this.state.accountsBusy) throw new Error('Account operation is still running.');
     if (request.action === 'refresh') { this.state.accountsError = undefined; await this.refresh(); return; }
     this.state.accountsBusy = true; this.state.accountsError = undefined; this.state.accountsNotice = undefined; this.deps.update();
@@ -92,13 +99,21 @@ export class AccountManager {
       this.switchLog('Preparing account switch.');
     }
     try {
-      if (request.action === 'switch' && this.job) { this.switchLog('Stopping background account refresh.'); this.refreshAbort?.abort(); }
+      if ((request.action === 'switch' || request.action === 'resetUsage') && this.job) { if (request.action === 'switch') this.switchLog('Stopping background account refresh.'); this.refreshAbort?.abort(); }
       await this.job;
       const provider = request.id ? (await this.store.get(request.id)).provider : request.provider;
       if (!isAccountProvider(provider)) throw new Error('Choose a supported app.');
       if (request.action === 'switch') { this.state.accountSwitch!.provider = provider; this.switchLog('Checking active agent work.'); }
       if (request.action === 'switch' && this.deps.busy()) throw new Error('Finish the active agent turn before switching accounts.');
-      if (request.action === 'importCurrent') {
+      if (request.action === 'resetUsage') {
+        if (provider !== 'Codex' || request.id || !this.deps.resetUsage) throw new Error('Usage resets are available only for the active Codex account.');
+        if (this.deps.busy()) throw new Error('Finish the active agent turn before resetting usage.');
+        const account = this.deps.current('Codex')?.account;
+        if (!account?.signedIn || account.method !== 'ChatGPT') throw new Error('Sign in to Codex with ChatGPT before resetting usage.');
+        this.state.accountsNotice = await withStorageLock(this.store.root, () => this.deps.resetUsage!(account));
+        // Cache writes use the same lock, so persist only after redemption releases it.
+        const current = this.deps.current('Codex'); if (current) await this.rememberQuota('Codex', current);
+      } else if (request.action === 'importCurrent') {
         const current = await this.deps.read(provider);
         const row = await this.store.importCurrent(provider, current.account); this.statuses.set(row.id, await this.rememberQuota(provider, current));
         if (!isChatAccount(provider)) this.desktopCurrent.set(provider, current);
@@ -127,7 +142,13 @@ export class AccountManager {
           if (current.account?.signedIn) { this.switchLog('Backing up the current sign-in.'); const outgoing = await this.store.importCurrent(provider, current.account); this.statuses.set(outgoing.id, await this.rememberQuota(provider, current)); }
           else this.switchLog('No outgoing sign-in to back up.');
           this.switchLog('Checking the selected sign-in.');
-          const expected = await this.deps.read(row);
+          // The outgoing backup just copied the native grant. Never rotate that
+          // same active grant independently in the profile copy.
+          const activeCodex = provider === 'Codex' && sameAccountIdentity(row.identity, current.account);
+          if (provider === 'Codex' && !activeCodex) this.switchLog('Refreshing the selected Codex sign-in.');
+          const expected = activeCodex ? current : provider === 'Codex'
+            ? await this.deps.read(row, undefined, { refreshToken: true }) : await this.deps.read(row);
+          assertAccountIdentity(row.identity, expected.account);
           if (!expected.account?.signedIn) throw new Error('Sign in to this account before switching.');
           this.switchLog(isChatAccount(provider) ? 'Updating the default CLI sign-in.' : 'Checking IDE windows and updating native sign-in.');
           this.state.accountSwitch!.outcome = 'unknown';
@@ -140,6 +161,9 @@ export class AccountManager {
             this.switchLog('Verifying the new native sign-in.');
             const actual = await this.deps.read(provider), target = profileIdentityKey(provider, expected.account);
             if (!actual.account?.signedIn || (target && profileIdentityKey(provider, actual.account) !== target)) throw new Error('Native CLI did not verify the selected sign-in.');
+            // Native verification/quota queries can rotate tokens too. Keep the
+            // saved copy current so a later switch never reuses a spent grant.
+            if (provider === 'Codex') await this.store.importCurrent(provider, actual.account);
             await this.store.identify(row.id, actual.account); this.statuses.set(row.id, await this.rememberQuota(provider, actual));
             if (!isChatAccount(provider)) this.desktopCurrent.set(provider, actual);
             this.state.accountSwitch!.outcome = 'switched'; this.switchLog('Selected sign-in verified.', 'success');

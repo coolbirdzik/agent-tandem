@@ -1,4 +1,5 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { createInterface } from 'node:readline';
 createInterface({ input: process.stdin }).on('line', line => {
   const message = JSON.parse(line);
@@ -7,7 +8,15 @@ createInterface({ input: process.stdin }).on('line', line => {
   if (mode === 'hang') return;
   let result;
   if (message.method === 'initialize') result = {};
-  if (message.method === 'account/read') result = { account: mode === 'signed-out' || (mode === 'refresh-sensitive' && message.params.refreshToken) ? null : mode === 'api' ? { type: 'apiKey' } : { type: 'chatgpt', email: 'account@example.test', planType: 'plus', accessToken: 'never-expose-this' }, workspaceRouting: { chatgptAccountId: 'workspace-fixture', backendOrigin: 'https://example.test', secret: 'never-expose-this' } };
+  if (message.method === 'account/read') {
+    if (mode === 'refresh-error' && message.params.refreshToken) { process.stdout.write(JSON.stringify({ id: message.id, error: { message: 'secret-refresh-token-reused' } }) + '\n'); return; }
+    if (mode === 'expired' && message.params.refreshToken) {
+      const file = path.join(process.env.CODEX_HOME, 'auth.json'), auth = JSON.parse(readFileSync(file, 'utf8'));
+      auth.tokens = { ...auth.tokens, access_token: 'rotated-private-access', refresh_token: 'rotated-private-refresh' };
+      writeFileSync(file, JSON.stringify(auth));
+    }
+    result = { account: mode === 'signed-out' || (mode === 'expired' && !message.params.refreshToken) || (mode === 'refresh-sensitive' && message.params.refreshToken) ? null : mode === 'api' ? { type: 'apiKey' } : { type: 'chatgpt', email: 'account@example.test', planType: 'plus', accessToken: 'never-expose-this' }, workspaceRouting: { chatgptAccountId: 'workspace-fixture', backendOrigin: 'https://example.test', secret: 'never-expose-this' } };
+  }
   if (message.method === 'account/rateLimits/read') {
     if (mode === 'quota-exit') { process.exit(1); return; }
     if (mode === 'quota-error') { process.stdout.write(JSON.stringify({ id: message.id, error: { message: 'secret-token-from-provider' } }) + '\n'); return; }

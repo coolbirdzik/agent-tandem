@@ -75,6 +75,13 @@ export async function run() {
   } finally { quotaBar.dispose(); }
   await vscode.commands.executeCommand('agentTandem.refreshStorage');
   const storage = api.usageDashboard().storage!; assert.equal(storage.status, 'ready'); assert.ok(path.isAbsolute(storage.root));
+  const usageDeadline = Date.now() + 10000;
+  while (api.usageDashboard().extensionStorage?.status !== 'ready' && Date.now() < usageDeadline) await new Promise(resolve => setTimeout(resolve, 100));
+  const measuredStorage = api.usageDashboard().extensionStorage!;
+  assert.equal(measuredStorage.status, 'ready', 'Background extension storage measurement runs without opening cleanup');
+  assert.equal(typeof measuredStorage.total, 'number'); assert.ok(measuredStorage.checkedAt);
+  assert.equal(measuredStorage.warningBytes, 1024 ** 3, 'Default storage alert starts at 1 GB');
+  assert.ok(commands.includes('agentTandem.openExtensionStorage'), 'Quota hover can open extension storage directly');
   const profiles = new AccountProfiles(path.join(storage.root, 'accounts'));
   const firstProfile = await profiles.create('Codex'), secondProfile = await profiles.create('Codex');
   const firstIdentity = { signedIn: true, email: 'creator@test.invalid', id: 'fixture-account', method: 'ChatGPT' };
@@ -125,6 +132,18 @@ export async function run() {
   await assert.rejects(restoreStore.get(project, checkpointId), /no longer available/);
   await assert.rejects(readFile(restoreManifest), { code: 'ENOENT' });
   assert.equal(api.viewState().review?.externalTracking, true, 'History deletion retains automatic tracking');
+  await vscode.commands.executeCommand('agentTandem.previewReviewCleanup', { scope: 'accepted' });
+  const acceptedPreview = api.usageDashboard().storage!.historyPlan!;
+  assert.equal(acceptedPreview.reviewScope, 'accepted'); assert.deepEqual(acceptedPreview.records, []);
+  assert.equal(api.viewState().review?.externalTracking, true, 'Accepted cleanup preview preserves tracking');
+  await vscode.commands.executeCommand('agentTandem.previewReviewCleanup', { scope: 'all' });
+  const allReview = api.usageDashboard().storage!.historyPlan!;
+  assert.equal(allReview.reviewScope, 'all'); assert.ok(allReview.histories.some(group => group.kind === 'tracking'));
+  assert.ok(allReview.files.every(file => file.relative.startsWith('reviews/history/')));
+  await vscode.commands.executeCommand('agentTandem.deleteHistory', { token: allReview.token });
+  assert.ok(api.usageDashboard().storage!.historyResult!.trackingStopped);
+  assert.deepEqual(api.usageDashboard().storage!.historyResult!.failures, []);
+  assert.equal(api.viewState().review?.externalTracking, undefined, 'All review cleanup stops automatic tracking');
   const nativeHome = process.env.CLAUDE_CONFIG_DIR!;
   assert.ok(nativeHome && path.resolve(nativeHome).startsWith(path.resolve(extension.extensionPath, '.test-runtime') + path.sep), 'Native deletion test must use an isolated fixture home');
   const nativeId = randomUUID(), nativeKey = `Claude:${nativeId}`, nativeDir = path.join(nativeHome, 'projects', 'cleanup-fixture');
@@ -159,6 +178,8 @@ export async function run() {
   report.checks.push('Creator IDs restore inferred account history from saved profiles', 'User assignment changes one session without changing totals, shows invalid-account errors and restores inference on removal');
   report.checks.push('Status bar quick account popup opens without creating a Dashboard tab or importing sign-ins');
   report.checks.push('Storage shows the runtime data path and exact old-unused snapshot preview', 'Cleanup rejects unknown preview tokens and retains tracking baselines');
+  report.checks.push('Background extension storage inventory reports measured bytes and a 1 GB alert threshold without opening cleanup');
+  report.checks.push('Review cleanup presets preview accepted leftovers or all review history; confirmed all cleanup stops tracking and only deletes review snapshot files');
   report.checks.push('Manage Storage reuses the settings editor', 'History deletion previews exact checkpoints, rejects unapproved tokens and deletes the approved restore point', 'Deleting history keeps workspace tracking active');
   report.checks.push('Native conversation cleanup scans isolated homes, previews exact transcript paths and deletes a Claude fixture through the bundled SDK in the extension host');
   report.checks.push('Compressed Codex archives scan and preview in the extension host using their exact compressed path and on-disk size');

@@ -26,6 +26,8 @@ export interface HistoryDeletionPlan extends CleanupPlan {
   records: { relative: string; digest: string; ids: string[] }[];
   /** Categories chosen in "Clean up…"; absent for restore history picked row by row. */
   kinds?: CleanupKind[];
+  /** One-click presets limited to Review history; demo snapshots are never included. */
+  reviewScope?: 'accepted' | 'all';
 }
 export const CLEANUP_KINDS = ['checkpoints', 'undo', 'tracking', 'unused'] as const;
 export type CleanupKind = typeof CLEANUP_KINDS[number];
@@ -227,6 +229,16 @@ export class StorageManager {
       return { ...plan, kinds: chosen };
     });
   }
+  /** Accepted edits leave unreferenced snapshots. Keep live references and the capture grace period. */
+  async previewReviewCleanup(scope: unknown): Promise<HistoryDeletionPlan> {
+    if (scope !== 'accepted' && scope !== 'all') throw new Error('Choose accepted snapshots or all review history.');
+    return withStorageLock(this.root, async () => {
+      const inventory = await this.inventory(), groups = await this.historyInventory(inventory);
+      const plan = await this.planDeletion(inventory, groups, scope === 'all' ? [...groups.keys()] : [], true);
+      const files = plan.files.filter(file => file.relative.startsWith('reviews/history/'));
+      return { ...plan, files, bytes: files.reduce((sum, file) => sum + file.bytes, 0), reviewScope: scope };
+    });
+  }
   private async planDeletion(inventory: StoredFile[], groups: Awaited<ReturnType<StorageManager['historyInventory']>>, selected: string[], unused: boolean): Promise<HistoryDeletionPlan> {
     const histories: StoredHistory[] = [], removals = new Map<string, Set<string>>(), untrack = new Set<string>(), released = new Set<string>();
     for (const id of new Set(selected)) {
@@ -310,6 +322,15 @@ export class StorageManager {
       catch (error) { state.cleanupBlocked = error instanceof Error ? error.message : String(error); }
       return state;
     });
+  }
+  /** Size-only background inventory: no snapshot parsing or cleanup planning. */
+  async usage(): Promise<{ total: number; files: number; categories: NonNullable<StorageState['categories']> }> {
+    const files = await this.inventory(), groups = new Map<string, { label: string; bytes: number; files: number }>();
+    for (const file of files) {
+      const label = category(file.relative), row = groups.get(label) ?? { label, bytes: 0, files: 0 };
+      row.bytes += file.bytes; row.files++; groups.set(label, row);
+    }
+    return { total: files.reduce((sum, file) => sum + file.bytes, 0), files: files.length, categories: [...groups.values()].sort((a, b) => b.bytes - a.bytes) };
   }
   async preview(): Promise<CleanupPlan> {
     return withStorageLock(this.root, async () => {

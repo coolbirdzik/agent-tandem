@@ -25,6 +25,39 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
+  it('offers review cleanup presets next to the category and explains their different impact', () => {
+    const storage = { status: 'ready' as const, root: 'root', categories: [{ label: 'Review snapshots & tracking', bytes: 4096, files: 3 }] };
+    render({ ...value, storage });
+    for (const scope of ['accepted', 'all']) {
+      document.querySelector<HTMLButtonElement>(`button[data-review-cleanup="${scope}"]`)!.click();
+      expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReviewCleanup', value: { scope } });
+    }
+    const historyPlan = { token: 'review-only', createdAt: Date.now(), reviewScope: 'accepted' as const, histories: [], records: [], files: [], bytes: 0 };
+    render({ ...value, storage: { ...storage, historyPlan } });
+    expect(document.querySelector('#storage-history-plan-heading')!.textContent).toContain('Clean accepted');
+    expect(document.querySelector('#storage-history-impact')!.textContent).toContain('Tracking baselines, pending review, checkpoints and Undo stay protected');
+    expect(document.querySelector('#storage-history-plan-files')!.textContent).toContain('Nothing to clean');
+    expect(document.querySelector<HTMLButtonElement>('#storage-history-delete')!.disabled).toBe(true);
+    const histories = [{ id: 'track', projectId: 'one', project: 'project', label: 'Baseline', kind: 'tracking' as const, count: 0, bytes: 1024, reclaimable: 1024, createdAt: 1, updatedAt: 2 }];
+    render({ ...value, storage: { ...storage, historyPlan: { ...historyPlan, token: 'all', reviewScope: 'all', histories, records: [{ relative: 'reviews/one.json', digest: 'one', ids: [] }] } } });
+    expect(document.querySelector('#storage-history-plan-heading')!.textContent).toBe('Clean all review snapshots & tracking');
+    expect(document.querySelector('#storage-history-impact')!.textContent).toContain('Change tracking stops in 1 project');
+    expect(document.querySelector('#storage-history-impact')!.textContent).toContain('Pending review and its revert Undo stay protected');
+    document.querySelector<HTMLButtonElement>('#storage-history-delete')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'deleteHistory', value: { token: 'all' } });
+    expect(document.querySelector<HTMLButtonElement>('[data-review-cleanup="all"]')!.disabled).toBe(true);
+  });
+  it('shows extension data warnings and opens extension cleanup without scanning native chats', () => {
+    render({ ...value, extensionStorage: { status: 'ready', total: 2 * 1024 ** 3, warningBytes: 1024 ** 3, files: 400 } });
+    const health = document.querySelector<HTMLElement>('#extension-storage-health')!;
+    expect(health.hidden).toBe(false); expect(health.dataset.level).toBe('warning'); expect(health.textContent).toContain('2 GB');
+    postMessage.mockClear();
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'page', page: 'storage', storagePage: 'unused' } }));
+    expect(document.querySelector<HTMLElement>('#storage-unused-page')!.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>('#storage-conversations-page')!.hidden).toBe(true);
+    expect(postMessage.mock.calls.some(([request]) => request.type === 'scanConversations')).toBe(false);
+    health.querySelector('button')!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'storage', value: undefined });
+  });
   it('sorts by last message, filters before local midnight and deletes all matches beyond the visible page once', () => {
     const before = new Date('2025-04-01T00:00:00').getTime();
     const conversations = Array.from({ length: 105 }, (_, index) => ({ key: `Codex:${index}`, id: String(index), provider: 'Codex' as const,
@@ -312,6 +345,14 @@ describe('Settings usage dashboard', () => {
       expect(root.textContent).toContain('Banked resets: 2 available');
       expect(root.textContent).toContain(`Expires ${new Date(expiresAt).toLocaleString()}`);
     }
+    const button = document.querySelector<HTMLButtonElement>('#accounts [data-reset-usage]')!;
+    expect(button.textContent).toBe('Reset usage · uses 1 reset'); expect(button.disabled).toBe(false);
+    button.click(); expect(button.disabled).toBe(true);
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'accountAction', value: { action: 'resetUsage', provider: 'Codex' } });
+    render({ ...value, accounts: { Codex: { ...status, quotaCached: true } } });
+    expect(document.querySelector<HTMLButtonElement>('#accounts [data-reset-usage]')!.disabled).toBe(true);
+    render({ ...value, accountsBusy: true, accounts: { Codex: status } });
+    expect(document.querySelector<HTMLButtonElement>('#accounts [data-reset-usage]')!.disabled).toBe(true);
   });
   it('shows live switch progress, lets users hide and reopen it, and retains rollback/error logs without reopening on every update', () => {
     const operation: NonNullable<UsageDashboardState['accountSwitch']> = { id: 'operation-one', profileId: 'selected', provider: 'Codex', label: 'Work', startedAt: Date.now(), status: 'running', outcome: 'notChanged', logs: [{ at: Date.now(), level: 'info', message: 'Backing up the current sign-in.' }] };

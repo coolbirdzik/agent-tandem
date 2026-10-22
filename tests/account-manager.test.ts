@@ -7,9 +7,124 @@ vi.mock('vscode', () => ({ window: { createTerminal: (options: unknown) => { ui.
 import { AccountManager } from '../src/host/account-manager';
 import { AccountProfiles, type AccountProfile } from '../src/core/account-profiles';
 import type { ConversationProvider } from '../src/providers/conversations';
-import type { ProviderAccountStatus } from '../src/providers/account-status';
+import type { AccountReadOptions, ProviderAccountStatus } from '../src/providers/account-status';
 
 describe('Account switching controller', () => {
+  it('refreshes the selected saved Codex grant before applying it and saves native rotation for the next switch', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-switch-rotation-')), home = path.join(root, 'native'); await mkdir(home);
+    try {
+      const store = new AccountProfiles(path.join(root, 'accounts'), () => home);
+      const identity = (email: string) => ({ signedIn: true, method: 'ChatGPT', email });
+      const auth = (email: string, token: string) => JSON.stringify({ tokens: { access_token: token, refresh_token: `${token}-refresh` }, email });
+      await writeFile(path.join(home, 'auth.json'), auth('old@test', 'native-original'));
+      const selected = await store.import('Codex', auth('new@test', 'expired-saved'), identity('new@test'));
+      const renewedFrom: string[] = [], applied: string[] = [];
+      let readingNative = 0, outgoingEmail = 'old@test';
+      const read = vi.fn(async (value: AccountProfile | ConversationProvider, _signal?: AbortSignal, options?: AccountReadOptions) => {
+        const file = path.join(typeof value === 'string' ? home : store.home(value.id), 'auth.json');
+        const data = JSON.parse(await readFile(file, 'utf8'));
+        if (options?.refreshToken) {
+          renewedFrom.push(data.tokens.refresh_token);
+          // Refreshing a saved profile must not replace the current native auth.
+          expect(JSON.parse(await readFile(path.join(home, 'auth.json'), 'utf8')).email).toBe(outgoingEmail);
+          await writeFile(file, auth(data.email, 'saved-renewed'));
+        } else if (typeof value === 'string' && ++readingNative % 2 === 0) {
+          applied.push(data.tokens.access_token);
+          await writeFile(file, auth(data.email, 'native-renewed'));
+        } else if (typeof value === 'string') outgoingEmail = data.email;
+        return { status: 'ready' as const, account: identity(data.email) };
+      });
+      const manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined, read, executable: vi.fn(), changed: vi.fn(), update: vi.fn() });
+      await manager.action({ action: 'switch', id: selected.id });
+      expect(manager.state.accountSwitch?.status).toBe('success');
+      expect(applied).toEqual(['saved-renewed']);
+      expect(JSON.parse(await readFile(path.join(store.home(selected.id), 'auth.json'), 'utf8')).tokens.refresh_token).toBe('native-renewed-refresh');
+      const outgoing = (await store.read()).profiles.find(row => row.identity?.email === 'old@test')!;
+      await manager.action({ action: 'switch', id: outgoing.id });
+      expect(manager.state.accountSwitch?.status).toBe('success');
+      await manager.action({ action: 'switch', id: selected.id });
+      expect(manager.state.accountSwitch?.status).toBe('success');
+      expect(renewedFrom).toEqual(['expired-saved-refresh', 'native-original-refresh', 'native-renewed-refresh']);
+      expect(JSON.stringify(manager.state)).not.toContain('saved-renewed');
+      expect(JSON.stringify(manager.state)).not.toContain('native-renewed');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('keeps native auth and config intact when refreshing the selected saved grant fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-switch-refresh-failure-')), home = path.join(root, 'native'); await mkdir(home);
+    try {
+      const store = new AccountProfiles(path.join(root, 'accounts'), () => home);
+      const original = JSON.stringify({ tokens: { access_token: 'original-native' } });
+      await writeFile(path.join(home, 'auth.json'), original); await writeFile(path.join(home, 'config.toml'), 'model = "original"\n');
+      const selected = await store.import('Codex', JSON.stringify({ tokens: { access_token: 'expired-saved' } }), { signedIn: true, method: 'ChatGPT', email: 'new@test' });
+      const changed = vi.fn(), apply = vi.spyOn(store, 'apply');
+      const manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined,
+        read: async (value, _signal, options) => {
+          if (typeof value !== 'string') { expect(options).toEqual({ refreshToken: true }); throw new Error('Could not refresh the saved Codex sign-in. Sign in again to this account.'); }
+          return { status: 'ready', account: { signedIn: true, method: 'ChatGPT', email: 'old@test' } };
+        }, executable: vi.fn(), changed, update: vi.fn() });
+      await manager.action({ action: 'switch', id: selected.id });
+      expect(manager.state.accountSwitch).toMatchObject({ status: 'error', outcome: 'notChanged', error: expect.stringContaining('Sign in again') });
+      expect(apply).not.toHaveBeenCalled(); expect(changed).not.toHaveBeenCalled();
+      expect(await readFile(path.join(home, 'auth.json'), 'utf8')).toBe(original);
+      expect(await readFile(path.join(home, 'config.toml'), 'utf8')).toBe('model = "original"\n');
+      expect((await store.get(selected.id)).identity?.email).toBe('new@test');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('uses the fresh native grant when selecting the already active Codex account', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-switch-active-')), home = path.join(root, 'native'); await mkdir(home);
+    try {
+      const store = new AccountProfiles(path.join(root, 'accounts'), () => home), identity = { signedIn: true, method: 'ChatGPT', email: 'same@test' };
+      const selected = await store.import('Codex', JSON.stringify({ tokens: { access_token: 'stale-copy' } }), identity);
+      await writeFile(path.join(home, 'auth.json'), JSON.stringify({ tokens: { access_token: 'latest-native' } }));
+      const read = vi.fn(async () => ({ status: 'ready' as const, account: identity }));
+      const manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined, read, executable: vi.fn(), changed: vi.fn(), update: vi.fn() });
+      await manager.action({ action: 'switch', id: selected.id });
+      expect(manager.state.accountSwitch?.status).toBe('success');
+      expect(read.mock.calls).toEqual([['Codex'], ['Codex']]);
+      for (const base of [home, store.home(selected.id)]) expect(JSON.parse(await readFile(path.join(base, 'auth.json'), 'utf8')).tokens.access_token).toBe('latest-native');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('rejects another account returned for a saved profile without relabeling it or caching its quota', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-account-mismatch-'));
+    try {
+      const home = path.join(root, 'native'); await mkdir(home);
+      await writeFile(path.join(home, 'auth.json'), JSON.stringify({ tokens: { access_token: 'personal-fixture' } }));
+      const store = new AccountProfiles(root, () => home), profile = await store.create('Codex', 'dev@example.test');
+      const dev = { signedIn: true, method: 'ChatGPT', email: 'dev@example.test', id: 'dev', plan: 'prolite' };
+      await store.identify(profile.id, dev);
+      const personal = { ...dev, id: 'personal', email: 'personal@example.test', plan: 'plus' };
+      const manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined,
+        read: async () => ({ status: 'ready', account: personal, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }] } }),
+        executable: vi.fn(), changed: vi.fn(), update: vi.fn() });
+      await manager.refresh();
+      expect((await store.get(profile.id)).identity).toEqual(dev);
+      expect(manager.state.managedAccounts![0]!.status).toMatchObject({ status: 'error', account: dev, error: expect.stringContaining('different account') });
+      expect(manager.state.managedAccounts![0]!.status?.quota).toBeUndefined();
+      await expect(readFile(path.join(root, 'quota-cache.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await manager.action({ action: 'switch', id: profile.id });
+      expect(manager.state.accountSwitch?.outcome).toBe('notChanged');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it('resets only the active Codex account and blocks parallel or busy mutations', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-reset-controller-'));
+    try {
+      const identity = { signedIn: true, method: 'ChatGPT', email: 'active@test' }, store = new AccountProfiles(root);
+      let busy = false, complete!: (notice: string) => void;
+      const resetUsage = vi.fn(() => new Promise<string>(resolve => { complete = resolve; }));
+      const current: ProviderAccountStatus = { status: 'ready', account: identity, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 0 }] } };
+      const manager = new AccountManager(store, { busy: () => busy, project: () => root, current: () => current, read: vi.fn(), executable: vi.fn(), changed: vi.fn(), update: vi.fn(), resetUsage });
+      const pending = manager.action({ action: 'resetUsage', provider: 'Codex' });
+      await vi.waitFor(() => expect(resetUsage).toHaveBeenCalledWith(identity));
+      await expect(manager.action({ action: 'resetUsage', provider: 'Codex' })).rejects.toThrow('still running');
+      complete('Codex usage reset. One earned reset was used.'); await pending;
+      expect(manager.state.accountsNotice).toContain('One earned reset'); expect(manager.state.accountsBusy).toBe(false);
+      expect(JSON.parse(await readFile(path.join(root, 'quota-cache.json'), 'utf8')).snapshots[0].quota.windows[0].usedPercent).toBe(0);
+      busy = true; await manager.action({ action: 'resetUsage', provider: 'Codex' });
+      expect(manager.state.accountsError).toContain('Finish the active'); expect(resetUsage).toHaveBeenCalledOnce();
+      busy = false; await manager.action({ action: 'resetUsage', provider: 'Claude' });
+      expect(manager.state.accountsError).toContain('active Codex'); expect(resetUsage).toHaveBeenCalledOnce();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('publishes saved quota before querying the CLI, keeps it after a failed refresh and updates it after success', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-managed-quota-'));
     try {

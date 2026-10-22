@@ -51,7 +51,17 @@ After a Codex or Claude Code switch, select **Restart Extension Host** to let th
 
 ![Account manager with app filters, search and fictional Codex, Claude Code, Cursor and Antigravity profiles](media/screenshots/accounts.png)
 
-Click a provider's quota in the VS Code status bar for **quick account switching**, remaining quota and reset details. **Open dashboard** and **Manage accounts** are separate shortcuts. In the dashboard, **View usage** selects an account's statistics without switching its sign-in.
+Hover a provider's quota in the VS Code status bar to open the account menu: remaining quota, reset countdowns, saved accounts and **Open dashboard** are available without clicking the status bar. Select a saved account to switch. **Manage accounts** and **Refresh quota** stay in the menu; clicking the status bar opens a searchable account picker with the same labeled shortcuts. In the dashboard, **View usage** selects an account's statistics without switching its sign-in.
+
+Quota rows use theme colors: green for healthy, amber at 25% remaining or less, red when exhausted. The active account, reset actions and extension storage have distinct icons.
+
+The hover and status bar use the same current quota snapshot. Repeated limit windows and saved copies of the same account appear once; hover percentages show quota **remaining**, and saved quota is marked **Cached quota**. A profile named after its email does not repeat that email on the next line.
+
+Saved profile identity is checked against credential metadata before native sign-in is mirrored. A different account cannot overwrite a saved profile or supply its plan/quota. Expired sign-ins keep their saved identity and require signing in again.
+
+![Native VS Code quota hover with active account, saved-account switch links, Reset usage and Open dashboard](media/screenshots/account-hover.png)
+
+For the active Codex ChatGPT account, **Reset usage** uses **one earned reset** to restore eligible quota. The available count is shown beside the action. After redemption, AgentTandem reads quota from Codex again and reports the result. The action is disabled when no earned resets are available or an agent turn is active; token history stays intact. The same action is available in the account picker and dashboard account cards. Requires a selected Codex CLI that supports earned resets. See [OpenAI Docs: earned rate-limit resets](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
 
 Saved credentials stay in local native-auth profile storage and are not sent to the webview or included in switch logs. Removing a saved profile keeps the default native sign-in and conversation history. Cursor/Antigravity quota stays in the native app; Antigravity 2 OS-vault switching currently supports Windows.
 
@@ -167,7 +177,13 @@ Open **Settings → Preferences** to show both agents, the selected chat agent, 
 
 ## Storage and restore history
 
-Open **Settings → Storage** to see what agent history takes up and how much cleanup has reclaimed. Two headline cards stay visible on every Storage tab:
+Open **Settings → Storage** to see what agent history takes up and how much cleanup has reclaimed.
+
+The status-bar hover also shows **Extension storage**, its measured size and the largest data categories. **Manage storage** opens the extension's **Unused files** tab directly, where you can inspect categories, choose what to clean and preview the exact files. AgentTandem checks its own data folder in the background every five minutes and refreshes after cleanup. Native Codex/Claude transcripts are managed separately in **Conversations**.
+
+At **1 GB** by default, the hover and Storage page show a warning and a notification offers **Manage storage**. Notifications appear at most once per day. Change **AgentTandem: Storage Warning MB** (`agentTandem.storageWarningMB`) in VS Code Settings; set it to `0` to disable size warnings. Monitoring does not delete anything.
+
+Two headline cards stay visible on every Storage tab:
 
 - **In use now** totals Codex chats, Claude Code chats and AgentTandem data, with a bar showing the share of each.
 - **Freed so far** keeps a running total of space reclaimed by deleting conversations, restore history and unused files. It also counts the conversations, files and cleanup runs, shows the size and time of the last cleanup, and survives VS Code restarts. Only data a run actually removed is counted.
@@ -175,6 +191,10 @@ Open **Settings → Storage** to see what agent history takes up and how much cl
 ![Storage overview with In use now and Freed so far cards above the conversation cleanup list](media/screenshots/storage.png)
 
 The **Restore history** and **Unused files** tabs inspect the extension data folder and storage categories. Filter saved restore history by project/type, select entries and **Review deletion** before removing them.
+
+**Review snapshots & tracking** has two shortcuts, also available in the status-bar hover: **Clean accepted** previews unreferenced review snapshots left after Accept or other review actions, while keeping tracking baselines, checkpoints and Undo. **Clean all** also removes every message checkpoint and restore backup and stops change tracking across projects. Pending review and its revert Undo remain protected, so some space can remain. Both actions show the exact files and bytes before the final cleanup button. Captures less than 10 minutes old stay protected unless their saved history is explicitly removed. Workspace files, chats and recorded demos are kept.
+
+![Clean accepted and Clean all shortcuts beside Review snapshots & tracking](media/screenshots/review-storage.png)
 
 **Preview cleanup** lists unused snapshots and blobs older than 10 minutes. **Clean up…** lets you choose what to clean — message checkpoints, restore backups and/or unused snapshots — previews exactly those, then deletes them from the same preview. Cleanup rechecks references before deleting; tracking baselines, pending review, active captures, retained checkpoints and Undo remain protected. Workspace files and native Codex/Claude conversation history stay intact. Deleting selected restore history removes the ability to restore those checkpoints.
 

@@ -3,6 +3,8 @@ import type { ViewState } from '../core/types';
 import { quotaStatuses } from '../core/quota-status';
 import { STATUS_BAR_CONFIGURATION, statusBarPreferences, type StatusBarPreferences } from '../core/status-bar-preferences';
 import type { ConversationProvider } from '../providers/conversations';
+import type { UsageDashboardState } from '../core/usage-dashboard';
+import { quotaAccountHover } from './quota-account-hover';
 
 export function readStatusBarPreferences(config: vscode.WorkspaceConfiguration): StatusBarPreferences {
   return statusBarPreferences(Object.fromEntries(Object.entries(STATUS_BAR_CONFIGURATION).map(([key, setting]) => [key, config.get(setting)])));
@@ -16,7 +18,7 @@ export class QuotaStatusBar implements vscode.Disposable {
     if (this.visible.delete(provider)) item.hide();
   }
   private alignment?: StatusBarPreferences['alignment'];
-  update(state: ViewState) {
+  update(state: ViewState, dashboard?: UsageDashboardState) {
     const config = vscode.workspace.getConfiguration('agentTandem'), preferences = readStatusBarPreferences(config);
     if (!config.get('showQuotaInStatusBar', true)) { for (const [provider, item] of this.items) this.hide(provider, item); return; }
     if (this.alignment !== preferences.alignment) {
@@ -31,7 +33,8 @@ export class QuotaStatusBar implements vscode.Disposable {
     for (const [provider, item] of this.items) if (!values.some(value => value.provider === provider)) this.hide(provider, item);
     for (const value of values) {
       const item = this.items.get(value.provider)!;
-      const signature = JSON.stringify([value, preferences.codexColor, preferences.claudeColor]);
+      const hover = quotaAccountHover(value.provider, { ...dashboard, accounts: state.accounts });
+      const signature = JSON.stringify([value, hover.value, preferences.codexColor, preferences.claudeColor]);
       const show = !this.visible.has(value.provider);
       if (this.rendered.get(value.provider) === signature) {
         if (show) { item.show(); this.visible.add(value.provider); }
@@ -39,7 +42,7 @@ export class QuotaStatusBar implements vscode.Disposable {
       }
       this.rendered.set(value.provider, signature);
       if (item.text !== value.text) item.text = value.text;
-      if (item.tooltip !== value.tooltip) item.tooltip = value.tooltip;
+      if ((item.tooltip as vscode.MarkdownString | undefined)?.value !== hover.value) item.tooltip = hover;
       const alert = value.tone === 'exhausted' ? 'error' : value.tone === 'warning' ? 'warning' : undefined;
       const background = alert ? `statusBarItem.${alert}Background` : undefined;
       if (item.backgroundColor?.id !== background) item.backgroundColor = background ? new vscode.ThemeColor(background) : undefined;

@@ -691,6 +691,12 @@
           "default": "day",
           "description": "Default calendar grouping for the AgentTandem usage dashboard. Weeks start on Monday."
         },
+        "agentTandem.storageWarningMB": {
+          "type": "number",
+          "default": 1024,
+          "minimum": 0,
+          "description": "Warn when AgentTandem extension data reaches this size in MB. Shown in the quota hover; a notification appears at most once per day. Set 0 to disable size warnings. Cleanup always requires selecting and previewing data."
+        },
         "agentTandem.reviewEditor": {
           "type": "string",
           "enum": [

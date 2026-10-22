@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, stat, copyFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-// Run `npm run build` first. Use --usage-only to refresh dashboard screenshots.
+// Run `npm run build` first. Use --usage-only for dashboards or --review-storage-only for review cleanup.
 // Full capture also needs `node scripts/test-review-webview.mjs --marketplace-only --readme`
 // for the real VS Code editor captures.
 const root = process.cwd(), output = path.join(root, 'media/screenshots');
@@ -11,6 +11,7 @@ const chrome = process.env.CHROME_EXECUTABLE_PATH || 'C:\\Program Files\\Google\
 await mkdir(output, { recursive: true }); await mkdir(runtime, { recursive: true });
 const servers = [];
 const usageOnly = process.argv.includes('--usage-only');
+const reviewStorageOnly = process.argv.includes('--review-storage-only');
 function preview(script, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -58,7 +59,7 @@ async function captureSection(name, url, width, selectors, setup = '', view = 'a
     const evaluate = async expression => { const result = await call('Runtime.evaluate', { expression, returnByValue: true }); if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails)); return result.result.value; };
     await call('Page.navigate', { url });
     const targets = `${JSON.stringify(selectors)}.map(s=>{const e=document.querySelector(s);return ${exactTargets ? 'e' : "e?.closest('section:not(#dashboard-detail):not(#dashboard)')??e"}})`;
-    await until(() => evaluate(`document.getElementById('dashboard-view').value===${JSON.stringify(view)}&&!!document.querySelector('#account-groups .account-group')`), 'dashboard');
+    await until(() => evaluate(view === 'storage' ? `!document.getElementById('storage').hidden && !!document.querySelector('[data-review-cleanup]')` : `document.getElementById('dashboard-view').value===${JSON.stringify(view)}&&!!document.querySelector('#account-groups .account-group')`), 'dashboard');
     await pause(800); if (setup) await evaluate(setup);
     await until(() => evaluate(`${targets}.every(e=>e&&e.getBoundingClientRect().height>40)`), 'dashboard sections');
     await evaluate('scrollTo(0,0)'); await pause(800);
@@ -71,31 +72,35 @@ async function captureSection(name, url, width, selectors, setup = '', view = 'a
   console.log(`README_SCREENSHOT ${name}.png (${size} bytes)`);
 }
 try {
-  const panel = usageOnly ? undefined : await preview('scripts/preview-panel.mjs');
+  const panel = usageOnly || reviewStorageOnly ? undefined : await preview('scripts/preview-panel.mjs');
   const settings = await preview('scripts/preview-settings.mjs', ['--demo']);
-  if (!usageOnly) {
-    await capture('review', `${panel}/?groups=1`, 1100, 900);
-    await capture('chat', `${panel}/`, 900, 1100);
-    await capture('history', `${panel}/?history=1`, 900, 760);
-  }
-  await capture('dashboard', `${settings}/?accounts=1`, 1440, 1400);
-  const all = `${settings}/?accounts=1&view=all&range=month`;
-  await capture('token-dashboard', all, 1440, 1696);
-  await captureSection('account-detail', `${settings}/?accounts=1`, 1440, ['#account-detail-bar', '.dashboard-grid'], `document.querySelector('.account-group-open').click()`, 'accounts');
-  await captureSection('quota-burn-down', all, 1440, ['#quota-pace']);
-  await captureSection('tokens-per-quota', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], '', 'all', true);
-  await captureSection('quota-cycle-tokens', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], `document.querySelectorAll('#quota-estimates > .quota-estimate-provider:first-child .quota-chart-control select').forEach((select, index) => { select.value = index ? 'capacityTokens' : 'observedTokens'; select.dispatchEvent(new Event('change')); })`, 'all', true);
-  await captureSection('conversations', all, 1440, ['#conversation-breakdown'], `document.querySelector('#conversation-breakdown button').click()`);
-  await captureSection('usage-breakdown', all, 1440, ['#period-breakdown', '#account-breakdown'], `document.getElementById('period-toggle-all').click()`);
-  if (!usageOnly) {
-    await capture('accounts', `${settings}/?accounts=1&page=accounts`, 1440, 1080);
-    await capture('account-switch', `${settings}/?accounts=1&switch=1`, 1440, 1080);
-    await capture('preferences', `${settings}/?page=preferences`, 1200, 900);
-    await capture('storage', `${settings}/?storage=1`, 1440, 1260);
-    await capture('storage-cleanup', `${settings}/?storage=1&nativeMatching=1&age=30`, 1440, 1000);
-    await copyFile(path.join(root, 'artifacts/review-webview-marketplace.png'), path.join(output, 'editor-diff.png'));
-    await copyFile(path.join(root, 'artifacts/readme-image-diff-marketplace.png'), path.join(output, 'image-diff.png'));
-    await copyFile(path.join(root, 'artifacts/review-agent-changes-marketplace.png'), path.join(output, 'agent-changes.png'));
+  if (reviewStorageOnly) {
+    await captureSection('review-storage', `${settings}/?storage=1`, 1200, ['#storage'], `document.querySelector('[data-storage-page="unused"]').click()`, 'storage', true);
+  } else {
+    if (!usageOnly) {
+      await capture('review', `${panel}/?groups=1`, 1100, 900);
+      await capture('chat', `${panel}/`, 900, 1100);
+      await capture('history', `${panel}/?history=1`, 900, 760);
+    }
+    await capture('dashboard', `${settings}/?accounts=1`, 1440, 1400);
+    const all = `${settings}/?accounts=1&view=all&range=month`;
+    await capture('token-dashboard', all, 1440, 1696);
+    await captureSection('account-detail', `${settings}/?accounts=1`, 1440, ['#account-detail-bar', '.dashboard-grid'], `document.querySelector('.account-group-open').click()`, 'accounts');
+    await captureSection('quota-burn-down', all, 1440, ['#quota-pace']);
+    await captureSection('tokens-per-quota', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], '', 'all', true);
+    await captureSection('quota-cycle-tokens', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], `document.querySelectorAll('#quota-estimates > .quota-estimate-provider:first-child .quota-chart-control select').forEach((select, index) => { select.value = index ? 'capacityTokens' : 'observedTokens'; select.dispatchEvent(new Event('change')); })`, 'all', true);
+    await captureSection('conversations', all, 1440, ['#conversation-breakdown'], `document.querySelector('#conversation-breakdown button').click()`);
+    await captureSection('usage-breakdown', all, 1440, ['#period-breakdown', '#account-breakdown'], `document.getElementById('period-toggle-all').click()`);
+    if (!usageOnly) {
+      await capture('accounts', `${settings}/?accounts=1&page=accounts`, 1440, 1080);
+      await capture('account-switch', `${settings}/?accounts=1&switch=1`, 1440, 1080);
+      await capture('preferences', `${settings}/?page=preferences`, 1200, 900);
+      await capture('storage', `${settings}/?storage=1`, 1440, 1260);
+      await capture('storage-cleanup', `${settings}/?storage=1&nativeMatching=1&age=30`, 1440, 1000);
+      await copyFile(path.join(root, 'artifacts/review-webview-marketplace.png'), path.join(output, 'editor-diff.png'));
+      await copyFile(path.join(root, 'artifacts/readme-image-diff-marketplace.png'), path.join(output, 'image-diff.png'));
+      await copyFile(path.join(root, 'artifacts/review-agent-changes-marketplace.png'), path.join(output, 'agent-changes.png'));
+    }
   }
   console.log('README_SCREENSHOTS_DONE');
 } finally { for (const server of servers) server.kill(); }

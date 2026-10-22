@@ -57,10 +57,11 @@ import { QuotaHistoryStore } from './core/quota-history-store';
 import { quotaMeters, quotaObservations, type QuotaObservation } from './core/quota-estimate';
 import { quotaTicks, type QuotaTick } from './core/quota-pace';
 import { QuotaPaceStore } from './core/quota-pace-store';
-import { AccountProfiles, nativeHome } from './core/account-profiles';
+import { AccountProfiles, nativeHome, profileIdentityKey } from './core/account-profiles';
 import { codexSessionMetadata } from './providers/conversations';
 import { AccountManager } from './host/account-manager';
 import { QuickAccounts } from './host/quick-accounts';
+import { resetCodexUsage } from './providers/codex-usage-reset';
 import { isAccountProvider, isChatAccount } from './core/account-providers';
 import { DesktopAccounts, desktopExecutable, windowsAntigravityCredential } from './core/desktop-accounts';
 import { spawn as launchDesktopProcess } from 'node:child_process';
@@ -69,6 +70,7 @@ import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeleti
 import { ConversationCleanup, type ConversationCleanupState, type DeletionProgress } from './core/conversation-cleanup';
 import { deleteCodexThread } from './providers/codex-history-mutation';
 import { addFreed, storageFreed } from './core/storage-freed';
+import { shouldWarnStorage, storageSize, storageWarningBytes, type ExtensionStorageUsage } from './core/storage-usage';
 
 export interface ExtensionAPI {
   changeNavigationState(): ChangeNavigationState | undefined;
@@ -215,6 +217,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts) });
   const storage = new StorageManager(context.globalStorageUri.fsPath);
   let storageState: StorageState = { status: 'idle', root: storage.root }, cleanupPlan: CleanupPlan | undefined;
+  let extensionStorage: ExtensionStorageUsage = { status: 'idle', warningBytes: storageWarningBytes(vscode.workspace.getConfiguration('agentTandem').get('storageWarningMB', 1024)) };
+  let storageUsageJob: Promise<void> | undefined;
   let historyDeletionPlan: HistoryDeletionPlan | undefined;
   let storageJob: Promise<void> | undefined;
   let conversationCleanupJob = false;
@@ -262,7 +266,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, extensionStorage, storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day', statusBar: readStatusBarPreferences(config) }, activeProvider: state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex' };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
@@ -288,7 +292,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         child.once('error', () => reject(new Error(`Could not open ${provider}.`))); child.once('spawn', () => { child.unref(); resolve(); });
       });
     },
-    read: async (profile, signal) => {
+    read: async (profile, signal, options) => {
       signal?.throwIfAborted();
       const provider = typeof profile === 'string' ? profile : profile.provider;
       if (!state.project || !vscode.workspace.isTrusted) throw new Error('Open a trusted local workspace to manage sign-ins.');
@@ -301,7 +305,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       const read = async () => {
         signal?.throwIfAborted();
         try {
-          if (provider === 'Codex') return await readCodexAccount(state.project!, cli.cli.executable, signal, undefined, env);
+          if (provider === 'Codex') return await readCodexAccount(state.project!, cli.cli.executable, signal, undefined, env, options);
           const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href) as typeof import('./providers/claude-history');
           return await readClaudeAccount(state.project!, sdk.query, cli.cli.executable, signal, env);
         } catch (error) { if (!signal?.aborted) cliResolver.invalidateOnFailure(provider, error); throw error; }
@@ -314,7 +318,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       state.modelCatalogs = { ...state.modelCatalogs, [provider]: undefined };
       await loadAccount(provider, true); await loadModels(provider, true); await recordQuotaHistory(); await refreshUsageDashboard();
     },
-    update: () => { settings.update(); quickAccounts.update(); },
+    resetUsage: async account => {
+      if (!state.project || !vscode.workspace.isTrusted) throw new Error('Open a trusted workspace before resetting usage.');
+      const project = state.project, cli = await managedCLI('Codex', project);
+      const accountKey = profileIdentityKey('Codex', account)!;
+      const key = 'agentTandem.pendingCodexResets', attempts = context.globalState.get<Record<string, string>>(key, {});
+      const idempotencyKey = attempts[accountKey] || randomUUID();
+      await context.globalState.update(key, { ...attempts, [accountKey]: idempotencyKey });
+      accountJobs.get('Codex')?.abort.abort();
+      const result = await resetCodexUsage(project, cli.cli.executable, account, idempotencyKey);
+      const remaining = { ...context.globalState.get<Record<string, string>>(key, {}) }; delete remaining[accountKey];
+      await context.globalState.update(key, remaining);
+      const status = { ...state.accounts?.Codex, status: 'ready' as const, account: result.account, quota: result.quota, quotaCached: false, error: undefined, updatedAt: result.updatedAt };
+      state.accounts = { ...state.accounts, Codex: status }; update();
+      await recordQuotaHistory();
+      const notice = { reset: 'Codex usage reset. One earned reset was used.', alreadyRedeemed: 'This reset was already applied. Quota refreshed.', nothingToReset: 'No eligible quota window needs a reset. No reset was used.', noCredit: 'No earned Codex resets are available.' }[result.outcome];
+      return result.quota.status === 'error' ? `${notice} ${result.quota.detail}` : notice;
+    },
+    update: () => { settings.update(); quickAccounts.update(); quotaBar.update(state, dashboardState()); },
     switched: async provider => {
       const restart = 'Restart Extension Host';
       const choice = await vscode.window.showInformationMessage(`${provider} account switched. Restart the extension host so the ${provider} extension uses the new sign-in?`, restart, 'Later');
@@ -338,9 +359,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (!signal.aborted) await recordQuotaHistory();
     },
     switch: id => accountManager.action({ action: 'switch', id }),
+    resetUsage: () => accountManager.action({ action: 'resetUsage', provider: 'Codex' }),
     open: async page => { await vscode.commands.executeCommand(page === 'dashboard' ? 'agentTandem.openSettings' : 'agentTandem.manageAccounts'); }, report });
   context.subscriptions.push(quickAccounts);
-  function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state); trackingBar.update(state); settings.update(); quickAccounts.update(); }
+  function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state, dashboardState()); trackingBar.update(state); settings.update(); quickAccounts.update(); }
   async function recordQuotaHistory(data = usageState.data) {
     try {
       const samples = (['Codex', 'Claude'] as const).flatMap(provider => quotaObservations(provider, state.accounts?.[provider], data));
@@ -748,11 +770,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const job = (async () => {
       try { storageState = await operation(); }
       catch (error) { cleanupPlan = undefined; historyDeletionPlan = undefined; storageState = { ...storageState, status: 'error', plan: undefined, historyPlan: undefined, progress: undefined, error: error instanceof Error ? error.message : String(error) }; throw error; }
-      finally { settings.update(); }
+      finally { settings.update(); void refreshStorageUsage(true); }
     })();
     storageJob = job;
     try { await job; } finally { if (storageJob === job) storageJob = undefined; }
   };
+  function refreshStorageUsage(force = false): Promise<void> {
+    if (disposed) return Promise.resolve();
+    extensionStorage = { ...extensionStorage, warningBytes: storageWarningBytes(vscode.workspace.getConfiguration('agentTandem').get('storageWarningMB', 1024)) };
+    if (storageUsageJob) return storageUsageJob;
+    if (!force && extensionStorage.checkedAt && Date.now() - extensionStorage.checkedAt < 5 * 60000) return Promise.resolve();
+    extensionStorage = { ...extensionStorage, status: 'loading', error: undefined };
+    quotaBar.update(state, dashboardState()); settings.update();
+    storageUsageJob = (async () => {
+      try {
+        const usage = await storage.usage(); if (disposed) return;
+        extensionStorage = { ...usage, status: 'ready', checkedAt: Date.now(), warningBytes: extensionStorage.warningBytes };
+        const warningKey = 'agentTandem.storageWarningShown';
+        if (shouldWarnStorage(extensionStorage, context.globalState.get(warningKey))) {
+          await context.globalState.update(warningKey, { at: Date.now(), warningBytes: extensionStorage.warningBytes });
+          void vscode.window.showWarningMessage(`AgentTandem data uses ${storageSize(usage.total)} (alert at ${storageSize(extensionStorage.warningBytes)}). Review restore history, attachments and unused snapshots in Storage.`, 'Manage storage').then(choice => {
+            if (choice === 'Manage storage' && !disposed) void vscode.commands.executeCommand('agentTandem.openExtensionStorage');
+          });
+        }
+      } catch { if (!disposed) extensionStorage = { ...extensionStorage, status: 'error', error: 'Could not measure extension data. Open Storage to inspect.', checkedAt: Date.now() }; }
+      finally { storageUsageJob = undefined; if (!disposed) { quotaBar.update(state, dashboardState()); settings.update(); } }
+    })();
+    return storageUsageJob;
+  }
   const conversationCleanupAction = async (operation: () => Promise<ConversationCleanupState>, cleaning = false) => {
     if (conversationCleanupJob) throw new Error('Wait for conversation cleanup to finish.');
     conversationCleanupJob = true;
@@ -822,6 +867,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     historyDeletionPlan = await storage.previewKindCleanup((value as { kinds?: unknown } | undefined)?.kinds);
     return { ...summary, historyPlan: historyDeletionPlan };
   }));
+  register('agentTandem.previewReviewCleanup', async value => {
+    const scope = (value as { scope?: unknown } | undefined)?.scope;
+    if (scope !== 'accepted' && scope !== 'all') throw new Error('Choose accepted snapshots or all review history.');
+    await settings.open('storage', 'restore');
+    return storageAction(async () => {
+      cleanupPlan = undefined; historyDeletionPlan = undefined;
+      const summary = await storage.inspect();
+      if (summary.cleanupBlocked) throw new Error(summary.cleanupBlocked);
+      historyDeletionPlan = await storage.previewReviewCleanup(scope);
+      return { ...summary, historyPlan: historyDeletionPlan };
+    });
+  });
   register('agentTandem.deleteHistory', value => storageAction(async () => {
     if (!historyDeletionPlan || !value || typeof value !== 'object' || (value as { token?: unknown }).token !== historyDeletionPlan.token) throw new Error('Preview history deletion before deleting data.');
     if (chatAbort || reviewing || externalSwitching || state.running || externalJob || activeReviewProjects.size) throw new Error('Wait for capture or review to finish before deleting history.');
@@ -899,6 +956,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
 
   register('agentTandem.openSettings', async () => { settings.open(); await refreshAccounts(); return dashboardState(); });
   register('agentTandem.quickAccounts', async provider => { await quickAccounts.show(isAccountProvider(provider) ? provider : undefined); });
+  register('agentTandem.quickSwitchAccount', async id => {
+    const profile = dashboardState().managedAccounts?.find(row => row.id === id);
+    if (!profile || profile.active) return;
+    await accountManager.action({ action: 'switch', id: profile.id });
+  });
+  register('agentTandem.resetCodexUsage', async () => { await accountManager.action({ action: 'resetUsage', provider: 'Codex' }); });
+  register('agentTandem.refreshQuotaAccounts', async () => { await Promise.all([refreshAccounts(), refreshStorageUsage(true)]); await accountManager.refresh(); });
+  register('agentTandem.openExtensionStorage', async () => { settings.open('storage', 'unused'); await vscode.commands.executeCommand('agentTandem.refreshStorage'); return dashboardState(); });
   register('agentTandem.manageAccounts', async () => { settings.open('accounts'); await accountManager.refresh(); return dashboardState(); });
   register('agentTandem.accountAction', async value => { await accountManager.action(value); return dashboardState(); });
   register('agentTandem.openStorage', async () => { settings.open('storage'); await vscode.commands.executeCommand('agentTandem.refreshStorage'); return dashboardState(); });
@@ -1534,6 +1599,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   });
   const timer = setInterval(() => { void syncConversations(true).catch(error => { state.syncErrors = [error instanceof Error ? error.message : 'Sync failed.']; update(); }); }, 5000);
   const accountTimer = setInterval(() => { void refreshAccounts(); }, 60000);
+  const storageUsageTimer = setInterval(() => { void refreshStorageUsage(); }, 5 * 60000);
+  const storageUsageStartup = setTimeout(() => { void refreshStorageUsage(); }, 3000);
   const followRoot = () => {
     if (!setCurrentRoot()) return;
     cliResolver.invalidate();
@@ -1545,7 +1612,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const previous = syncJob;
     void (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() => syncConversations()).catch(report);
   };
-  context.subscriptions.push({ dispose: () => { disposed = true; externalWatcher?.dispose(); clearTimeout(externalTimer); chatAbort?.abort(); usageAbort?.abort(); for (const job of modelJobs.values()) job.abort.abort(); for (const job of accountJobs.values()) job.abort.abort(); generation++; selectionGeneration++; clearInterval(timer); clearInterval(accountTimer); } },
+  context.subscriptions.push({ dispose: () => { disposed = true; externalWatcher?.dispose(); clearTimeout(externalTimer); chatAbort?.abort(); usageAbort?.abort(); for (const job of modelJobs.values()) job.abort.abort(); for (const job of accountJobs.values()) job.abort.abort(); generation++; selectionGeneration++; clearInterval(timer); clearInterval(accountTimer); clearInterval(storageUsageTimer); clearTimeout(storageUsageStartup); } },
     vscode.extensions.onDidChange(() => {
       const revision = codexExtensionIdentity();
       if (revision === codexExtensionRevision) return;
@@ -1556,6 +1623,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     }),
     vscode.workspace.onDidGrantWorkspaceTrust(() => { cliResolver.invalidate(); void refreshReview(state.project, true).catch(report); void refreshCLIManager(); refreshAccounts(); void loadModels(state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex'); }),
     vscode.workspace.onDidChangeConfiguration(event => {
+      if (event.affectsConfiguration('agentTandem.storageWarningMB')) void refreshStorageUsage(true);
       if (event.affectsConfiguration('agentTandem.showQuotaInStatusBar') || event.affectsConfiguration('agentTandem.usageDashboardDefaultGrouping') || Object.values(STATUS_BAR_CONFIGURATION).some(key => event.affectsConfiguration(`agentTandem.${key}`))) update();
       if (event.affectsConfiguration('agentTandem.autoTrackExternalChanges')) void refreshReview(state.project).catch(report);
       if (!['codexExecutable', 'claudeExecutable', 'codexCLISelection', 'claudeCLISelection', 'codexCLIId', 'claudeCLIId'].some(key => event.affectsConfiguration(`agentTandem.${key}`))) return;

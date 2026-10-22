@@ -13,6 +13,7 @@ export interface BankedResets { availableCount: number; credits?: BankedReset[] 
 export interface AccountQuota { status: 'available' | 'unavailable' | 'error'; windows: QuotaWindow[]; detail?: string; credits?: string; bankedResets?: BankedResets }
 /** Only display fields cross the host/webview boundary; never credentials or raw RPC payloads. */
 export interface ProviderAccountStatus { status: 'loading' | 'ready' | 'error'; account?: AccountIdentity; quota?: AccountQuota; usage?: ProviderTokenActivity; updatedAt?: number; quotaCached?: boolean; error?: string }
+export interface AccountReadOptions { refreshToken?: boolean }
 const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
 const percent = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
@@ -47,7 +48,10 @@ export function codexQuota(value: unknown): AccountQuota {
   const primaryId = text(primary.limitId) ?? 'codex';
   const rows = new Map<string, Record<string, any>>();
   if (Object.keys(primary).length) rows.set(primaryId, primary);
-  for (const [id, bucket] of Object.entries(buckets)) rows.set(id, object(bucket));
+  for (const [id, bucket] of Object.entries(buckets)) {
+    const value = object(bucket);
+    rows.set(text(value.limitId) ?? id, value);
+  }
   const windows: QuotaWindow[] = [];
   for (const [id, bucket] of rows) for (const name of ['primary', 'secondary'] as const) {
     const data = object(bucket[name]), usedPercent = percent(data.usedPercent);
@@ -88,9 +92,9 @@ export function claudeQuota(value: unknown): AccountQuota {
   return windows.length ? { status: 'available', windows } : unavailable('Claude Code did not return quota windows. Refresh to try again.');
 }
 
-/** Read-only RPCs: no thread, turn, or inference request. */
+/** Account RPCs only: no thread, turn, or inference request. Token renewal is opt-in. */
 export async function readCodexAccount(project: string, configured = '', signal?: AbortSignal,
-  launch = (executable: string) => spawn(executable, ['app-server'], { cwd: project, env: environment, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }), environment?: NodeJS.ProcessEnv) : Promise<ProviderAccountStatus> {
+  launch = (executable: string) => spawn(executable, ['app-server'], { cwd: project, env: environment, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }), environment?: NodeJS.ProcessEnv, options: AccountReadOptions = {}) : Promise<ProviderAccountStatus> {
   const executable = await findExecutable('codex', configured); signal?.throwIfAborted();
   const child = launch(executable), lines = createInterface({ input: child.stdout });
   child.stderr.on('data', () => undefined);
@@ -120,9 +124,17 @@ export async function readCodexAccount(project: string, configured = '', signal?
     if (signal?.aborted) abort();
     await call('initialize', { clientInfo: { name: 'agent_tandem', title: 'AgentTandem', version: '0.1.0' }, capabilities: { experimentalApi: true } });
     child.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
-    // Read the current sign-in. Forcing OAuth renewal on every quota poll can
-    // return a null account even when the existing session can read rate limits.
-    const result = await call('account/read', { refreshToken: false }), account = codexAccount(result?.account, result?.workspaceRouting);
+    // Normal quota polls reuse the current grant. Switching an inactive saved
+    // sign-in explicitly renews it in its private home before touching native auth.
+    let result;
+    try { result = await call('account/read', { refreshToken: options.refreshToken === true }); }
+    catch (error) {
+      signal?.throwIfAborted();
+      if (options.refreshToken) throw new Error('Could not refresh the saved Codex sign-in. Try again; if it persists, sign in again to this account.');
+      throw error;
+    }
+    const account = codexAccount(result?.account, result?.workspaceRouting);
+    if (options.refreshToken && !account.signedIn) throw new Error('The saved Codex sign-in could not be refreshed. Sign in again to this account.');
     let usage: ProviderTokenActivity = { source: 'API', status: 'unavailable', detail: 'Token activity requires a Codex-backed ChatGPT sign-in.' };
     let quota = unavailable(account.signedIn ? 'Subscription quota is not available for this authentication method.' : 'Sign in to view quota.');
     if (account.signedIn && account.method === 'ChatGPT') {

@@ -46,6 +46,7 @@ export interface UsageDashboardState {
   quotaHistory?: import('./quota-estimate').QuotaObservation[]; quotaHistoryError?: string;
   quotaBaselines?: import('./quota-estimate').QuotaBaseline[];
   storage?: import('./storage').StorageState;
+  extensionStorage?: import('./storage-usage').ExtensionStorageUsage;
   conversationCleanup?: import('./conversation-cleanup').ConversationCleanupState;
   storageFreed?: import('./storage-freed').StorageFreed;
   status: 'idle' | 'loading' | 'ready' | 'error'; data?: UsageHistoryData; error?: string;

@@ -27,6 +27,71 @@ async function fixture() {
   return { folder, root, project, reviews, checkpoints, manager, orphan, age };
 }
 describe('Snapshot storage management', () => {
+  it('cleans accepted review leftovers while keeping tracking, restore points, recent captures and demos', async () => {
+    const f = await fixture(); await f.reviews.initializeExternalTracking(f.project);
+    await f.reviews.begin(f.project, 'accepted');
+    await writeFile(path.join(f.project, 'source.ts'), 'accepted edits\n');
+    const pending = await f.reviews.finish(f.project, 'accepted');
+    const oldBlob = pending.files[0]!.before!;
+    await f.reviews.accept({ project: f.project, revision: pending.revision });
+    const restore = await f.orphan(f.reviews.history, 'restore kept');
+    const checkpoint = await f.checkpoints.record(f.project, 'Codex:kept', ['message'], restore.id);
+    await f.checkpoints.saveUndo(f.project, restore.id);
+    const demo = await f.orphan(new HistoryStore(f.root), 'demo kept'); await f.age();
+    const recent = await f.orphan(f.reviews.history, 'capture in flight');
+    const plan = await f.manager.previewReviewCleanup('accepted');
+    expect(plan).toMatchObject({ reviewScope: 'accepted', records: [], histories: [] });
+    expect(plan.files.every(file => file.relative.startsWith('reviews/history/'))).toBe(true);
+    expect(plan.files.some(file => file.relative.endsWith(oldBlob))).toBe(true);
+    expect(plan.files.some(file => file.relative.endsWith(`${recent.id}.json`))).toBe(false);
+    expect(await f.manager.deleteHistory(plan)).toMatchObject({ removed: plan.files.length, bytes: plan.bytes, skipped: 0, failures: [] });
+    expect((await f.reviews.read(f.project)).externalTracking).toBe(true);
+    expect((await f.reviews.read(f.project)).files).toEqual([]);
+    expect(await f.checkpoints.get(f.project, checkpoint)).toBeTruthy(); expect(await f.checkpoints.undo(f.project)).toBeTruthy();
+    expect(await f.reviews.history.snapshot(recent.id)).toBeTruthy(); expect(await readFile(demo.file, 'utf8')).toContain(demo.id);
+    await expect(f.reviews.history.readBlob(oldBlob)).rejects.toThrow();
+  });
+  it('cleans all review history and stops tracking without touching pending changes or demo leftovers', async () => {
+    const f = await fixture(); await writeFile(path.join(f.project, 'large.bin'), Buffer.alloc(5000, 42));
+    await f.reviews.initializeExternalTracking(f.project); await f.reviews.begin(f.project, 'pending');
+    const before = await f.reviews.checkpointBefore(f.project, 'pending');
+    const checkpoint = await f.checkpoints.record(f.project, 'Codex:pending', ['message'], before); await f.checkpoints.saveUndo(f.project, before);
+    await writeFile(path.join(f.project, 'source.ts'), 'pending edits\n'); const pending = await f.reviews.finish(f.project, 'pending');
+    const demo = await f.orphan(new HistoryStore(f.root), 'old demo'); await f.age();
+    const plan = await f.manager.previewReviewCleanup('all');
+    expect(new Set(plan.histories.map(group => group.kind))).toEqual(new Set(['tracking', 'checkpoints', 'undo']));
+    expect(plan.files.every(file => file.relative.startsWith('reviews/history/'))).toBe(true);
+    expect(plan.bytes).toBeGreaterThan(5000);
+    expect(await f.manager.deleteHistory(plan)).toMatchObject({ removed: plan.files.length, bytes: plan.bytes, checkpointsRemoved: 2, trackingStopped: 1, failures: [] });
+    expect((await f.reviews.initializeExternalTracking(f.project)).externalTracking).toBeUndefined();
+    expect((await f.reviews.read(f.project)).files).toEqual(pending.files);
+    await expect(f.checkpoints.get(f.project, checkpoint)).rejects.toThrow('no longer available'); expect(await f.checkpoints.undo(f.project)).toBeUndefined();
+    expect(await readFile(demo.file, 'utf8')).toContain(demo.id);
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('pending edits\n');
+    const reverted = await f.reviews.revert({ project: f.project, revision: pending.revision });
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('user baseline\n');
+    await f.age(); await f.manager.deleteHistory(await f.manager.previewReviewCleanup('all'));
+    await f.reviews.undoRevert(f.project, reverted.undo!.id);
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('pending edits\n');
+    expect((await f.manager.inspect()).cleanupBlocked).toBeUndefined();
+  });
+  it('keeps a review snapshot referenced after the accepted-cleanup preview and rejects invalid scopes', async () => {
+    const f = await fixture(), saved = await f.orphan(); await f.age();
+    const plan = await f.manager.previewReviewCleanup('accepted'); expect(plan.files).toHaveLength(2);
+    await f.checkpoints.record(f.project, 'Codex:new', ['message'], saved.id);
+    expect(await f.manager.deleteHistory(plan)).toMatchObject({ removed: 0, skipped: 2, failures: [] });
+    expect(await f.reviews.history.snapshot(saved.id)).toBeTruthy();
+    await expect(f.manager.previewReviewCleanup('../reviews')).rejects.toThrow('Choose accepted');
+  });
+  it('measures background usage without parsing metadata, planning cleanup or touching files', async () => {
+    const f = await fixture(); await mkdir(path.join(f.root, 'reviews'), { recursive: true });
+    const content = 'broken metadata kept intact'; await writeFile(path.join(f.root, 'reviews', 'not-a-snapshot.json'), content);
+    const measured = await f.manager.usage();
+    expect(measured.total).toBe(Buffer.byteLength(content)); expect(measured.files).toBe(1);
+    expect(measured.categories[0]?.label).toBe('Review snapshots & tracking');
+    expect(await readFile(path.join(f.root, 'reviews', 'not-a-snapshot.json'), 'utf8')).toBe(content);
+    expect(measured).not.toHaveProperty('cleanable');
+  });
   it('ignores native account runtime links while inspecting and cleaning snapshot storage', async () => {
     const f = await fixture(), unused = await f.orphan(); await f.age();
     const profile = path.join(f.root, 'accounts/profiles', randomUUID()), runtime = path.join(profile, 'tmp/arg0/codex-arg0YTLLOf');

@@ -13,8 +13,41 @@ async function setup() {
 afterEach(async () => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const identity = (email: string) => ({ signedIn: true, method: 'ChatGPT', email, plan: 'plus' });
 const codex = (secret: string) => JSON.stringify({ tokens: { access_token: secret, refresh_token: `${secret}-refresh` } });
+const credential = (email: string, id: string, plan = 'plus') => JSON.stringify({ tokens: { account_id: id,
+  id_token: `header.${Buffer.from(JSON.stringify({ email, 'https://api.openai.com/auth': { chatgpt_account_id: id, chatgpt_plan_type: plan } })).toString('base64url')}.signature`, access_token: 'private-access' } });
 
 describe('Native account profiles', () => {
+  it('recovers expired profile display metadata from its own credentials after an older refresh erased it', async () => {
+    const { store } = await setup(), dev = { ...identity('dev@example.test'), id: 'dev', plan: 'prolite' };
+    const profile = await store.import('Codex', credential(dev.email, dev.id, dev.plan), dev);
+    const saved = await store.read(); saved.profiles[0]!.identity = { signedIn: false, method: 'Not signed in' };
+    await writeFile(path.join(store.root, 'accounts.json'), JSON.stringify(saved));
+    expect((await store.get(profile.id)).identity).toEqual(dev);
+    await expect(store.identify(profile.id, { signedIn: false, method: 'Not signed in' })).rejects.toThrow('expired');
+    saved.profiles[0]!.label = 'other@example.test'; await writeFile(path.join(store.root, 'accounts.json'), JSON.stringify(saved));
+    expect((await store.get(profile.id)).identity?.signedIn).toBe(false);
+  });
+  it('rejects stale native identity before overwriting saved credentials after an external account switch', async () => {
+    const { home, store } = await setup();
+    const dev = { ...identity('dev@example.test'), id: 'dev', plan: 'prolite' };
+    const original = credential(dev.email, dev.id, dev.plan);
+    const profile = await store.import('Codex', original, dev);
+    await writeFile(path.join(home, 'auth.json'), credential('personal@example.test', 'personal'));
+    await expect(store.importCurrent('Codex', dev)).rejects.toThrow('different account');
+    expect(await readFile(path.join(store.home(profile.id), 'auth.json'), 'utf8')).toBe(original);
+    expect((await store.get(profile.id)).identity).toEqual(dev);
+    await expect(store.identify(profile.id, identity('personal@example.test'))).rejects.toThrow('different account');
+    await expect(store.identify(profile.id, { signedIn: false, method: 'Not signed in' })).rejects.toThrow('expired');
+    expect((await store.get(profile.id)).identity).toEqual(dev);
+  });
+  it('reads Pro Lite from credential metadata and fills a native id without duplicating the saved email identity', async () => {
+    const { store } = await setup(); const dev = { ...identity('dev@example.test'), plan: 'prolite' };
+    const profile = await store.import('Codex', codex('old'), dev);
+    const updated = await store.import('Codex', credential(dev.email, 'dev', 'prolite'));
+    expect(updated.id).toBe(profile.id); expect((await store.read()).profiles).toHaveLength(1);
+    expect((await store.get(profile.id)).identity).toMatchObject({ email: dev.email, id: 'dev', plan: 'prolite' });
+    await expect(store.import('Codex', credential('personal@example.test', 'personal'), dev)).rejects.toThrow('different account');
+  });
   it('imports without switching, refreshes an existing identity, and exposes no credentials in its registry', async () => {
     const { home, store } = await setup(); await writeFile(path.join(home, 'auth.json'), codex('first-secret'));
     const profile = await store.importCurrent('Codex', identity('one@example.test'));
