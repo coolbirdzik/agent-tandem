@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { UsageDashboardState } from '../core/usage-dashboard';
 import type { ConversationProvider } from '../providers/conversations';
 import { profileIdentityKey } from '../core/account-profiles';
-import { compactCountdown } from '../core/quota-status';
+import { compactCountdown, resetClock, resetSummary } from '../core/quota-status';
 import { storageSize, storageUsageLevel } from '../core/storage-usage';
 import { uniqueQuotaWindows } from '../core/quota-windows';
 import { uniqueAccountProfiles, accountProfileStatus } from '../core/account-display';
@@ -33,7 +33,7 @@ const meter = (remaining: number, tone: keyof typeof meterFill) => {
 };
 
 /** VS Code's native sticky hover supports keyboard-focusable command links. */
-export function quotaAccountHover(provider: ConversationProvider, state: Pick<UsageDashboardState, 'accounts' | 'managedAccounts' | 'accountsBusy' | 'accountsError' | 'accountsNotice' | 'accountSwitch' | 'accountSwitchBlocked' | 'extensionStorage'>): vscode.MarkdownString {
+export function quotaAccountHover(provider: ConversationProvider, state: Pick<UsageDashboardState, 'accounts' | 'managedAccounts' | 'accountsBusy' | 'accountsRefreshing' | 'accountsError' | 'accountsNotice' | 'accountSwitch' | 'accountSwitchBlocked' | 'extensionStorage'>): vscode.MarkdownString {
   const md = new vscode.MarkdownString('', true), status = state.accounts?.[provider], account = status?.account;
   md.isTrusted = { enabledCommands: commands }; md.supportHtml = true;
   const providerIcon = color(`$(${provider === 'Codex' ? 'agent-tandem-codex' : 'agent-tandem-claude'})`, provider === 'Codex' ? 'blue' : 'orange');
@@ -46,7 +46,7 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
     const remaining = remainingOf(window.usedPercent), tone = quotaTone(window.usedPercent);
     return row(`<td width="28"><strong>${escape(window.label)}</strong></td>`, `<td>${meter(remaining, tone)}</td>`,
       `<td align="right">${color(`<strong>${remaining}%</strong>`, tone)} ${color('left', 'muted')}</td>`,
-      `<td align="right">${window.resetsAt ? color(`$(clock) ${compactCountdown(window.resetsAt)}`, 'muted') : color('—', 'muted')}</td>`);
+      `<td align="right">${window.resetsAt ? color(`$(clock) ${window.resetsAt > Date.now() ? `${resetClock(window.resetsAt)} · ${compactCountdown(window.resetsAt)}` : 'reset'}`, 'muted') : color('—', 'muted')}</td>`);
   })));
   if (!status?.quota?.windows.length) md.appendMarkdown(block(`<div>${color(escape(status?.quota?.detail || status?.error || 'Quota unavailable'), 'muted')}</div>`));
   if (status?.quotaCached) md.appendMarkdown(block(`<div>${color(`$(history) Cached quota${status.updatedAt ? ` · ${escape(new Date(status.updatedAt).toLocaleString())}` : ''}${status.error ? ` · ${escape(status.error)}` : ''}`, 'muted')}</div>`));
@@ -68,11 +68,12 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
     md.appendMarkdown(table(...profiles.slice(0, 3).map(profile => {
       const saved = accountProfileStatus(profile), identity = saved?.account || profile.identity, quota = uniqueQuotaWindows(saved?.quota?.windows);
       const email = identity?.email && profile.label.trim().toLowerCase() !== identity.email.trim().toLowerCase() ? escape(identity.email) : '';
-      const quotaSummary = quota.slice(0, 2).map(window => color(`${escape(window.label)} ${remainingOf(window.usedPercent)}% left`, quotaTone(window.usedPercent))).join(color(' · ', 'muted')) || 'Quota unavailable';
-      // Identity and quota share one muted detail line; the action keeps its own right-aligned column.
-      const detail = [email, quotaSummary, saved?.quotaCached ? '$(history) cached' : '', saved?.error ? escape(saved.error) : ''].filter(Boolean).join(color(' · ', 'muted'));
+      // One line per window so each reset time stays readable; the action keeps its own right-aligned column.
+      const quotaLines = quota.slice(0, 2).map(window => `${color(`${escape(window.label)} ${remainingOf(window.usedPercent)}% left`, quotaTone(window.usedPercent))}${window.resetsAt ? color(` · $(clock) ${resetSummary(window.resetsAt)}`, 'muted') : ''}`);
+      const detail = [email, saved?.quotaCached ? '$(history) cached' : '', saved?.error ? escape(saved.error) : ''].filter(Boolean).join(color(' · ', 'muted'));
+      const lines = [...(quotaLines.length ? quotaLines : [color('Quota unavailable', 'muted')]), ...(detail ? [color(detail, 'muted')] : [])].join('<br>');
       const action = busy ? color('$(lock) Unavailable', 'muted') : link('<span style="color:var(--vscode-button-foreground);background-color:var(--vscode-button-background);border-radius:4px;">&nbsp;&nbsp;Switch&nbsp;&nbsp;</span>', 'agentTandem.quickSwitchAccount', [profile.id]);
-      return row(`<td>$(account) <strong>${escape(profile.label)}</strong>${identity?.plan ? ` &nbsp;${chip(escape(identity.plan))}` : ''}<br>${color(detail, 'muted')}</td>`, `<td align="right">${action}</td>`);
+      return row(`<td>$(account) <strong>${escape(profile.label)}</strong>${identity?.plan ? ` &nbsp;${chip(escape(identity.plan))}` : ''}<br>${lines}</td>`, `<td align="right">${action}</td>`);
     })));
     if (profiles.length > 3) md.appendMarkdown(block(`<div>${link(`Show ${profiles.length - 3} more accounts…`, 'agentTandem.quickAccounts', [provider])}</div>`));
   }
@@ -97,7 +98,7 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
   if (notes.length) md.appendMarkdown(block(`<div>${notes.join('<br>')}</div>`));
   md.appendMarkdown('<hr>\n\n');
   md.appendMarkdown(table(row(`<td>${link('$(dashboard) <strong>Open dashboard</strong>', 'agentTandem.openSettings')}</td>`, `<td align="right">${[
-    link('$(refresh) Refresh', 'agentTandem.refreshQuotaAccounts'), link('$(settings-gear) Accounts', 'agentTandem.manageAccounts', [], 'Manage accounts'),
+    state.accountsRefreshing ? color('$(loading~spin) Refreshing…', 'muted') : link('$(refresh) Refresh', 'agentTandem.refreshQuotaAccounts', [], 'Refresh quota for every saved account'), link('$(settings-gear) Accounts', 'agentTandem.manageAccounts', [], 'Manage accounts'),
     link('$(search) Search', 'agentTandem.quickAccounts', [provider], 'Search / switch accounts')].join(' &nbsp;&nbsp; ')}</td>`)).trimEnd());
   return md;
 }

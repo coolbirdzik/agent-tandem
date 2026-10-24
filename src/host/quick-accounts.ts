@@ -3,7 +3,7 @@ import { ACCOUNT_PROVIDERS, accountProviderName, isChatAccount, type AccountProv
 import { profileIdentityKey } from '../core/account-profiles';
 import type { UsageDashboardState } from '../core/usage-dashboard';
 import type { ProviderAccountStatus } from '../providers/account-status';
-import { compactCountdown } from '../core/quota-status';
+import { resetSummary } from '../core/quota-status';
 import { uniqueQuotaWindows } from '../core/quota-windows';
 import { uniqueAccountProfiles, accountProfileStatus } from '../core/account-display';
 
@@ -19,7 +19,7 @@ export function quickQuota(status?: ProviderAccountStatus) {
   return status?.quota?.credits || status?.quota?.detail || status?.error || (status?.status === 'loading' ? 'Loading quota…' : 'Quota unavailable');
 }
 function quotaDetail(status?: ProviderAccountStatus) {
-  const reset = uniqueQuotaWindows(status?.quota?.windows).filter(window => window.resetsAt).map(window => `${window.label} resets in ${compactCountdown(window.resetsAt!)}`).join(' · ');
+  const reset = uniqueQuotaWindows(status?.quota?.windows).filter(window => window.resetsAt).map(window => `${window.label} ${resetSummary(window.resetsAt!)}`).join(' · ');
   return [status?.quotaCached ? 'Cached quota' : undefined, status?.error, reset].filter(Boolean).join(' · ');
 }
 /** Native popup; remains open for quota refresh, switches and live host progress. */
@@ -90,7 +90,7 @@ export class QuickAccounts implements vscode.Disposable {
     const state = this.deps.state(), operation = state.accountSwitch, switching = operation?.status === 'running';
     picker.busy = this.working || !!state.accountsBusy || !!this.refreshAbort;
     picker.title = switching ? `Switching · ${operation.label || accountProviderName(operation.provider || 'Codex')}` : this.provider ? `${accountProviderName(this.provider)} · Accounts` : 'AgentTandem · Accounts';
-    picker.placeholder = switching ? operation.logs.at(-1)?.message || 'Switching account…' : state.accountSwitchBlocked || 'Search accounts · select to switch';
+    picker.placeholder = switching ? operation.logs.at(-1)?.message || 'Switching account…' : state.accountSwitchBlocked || (state.accountsRefreshing ? 'Refreshing quota for every account…' : 'Search accounts · select to switch');
     const items: Item[] = [];
     const providers = this.provider ? [this.provider] : ACCOUNT_PROVIDERS;
     for (const provider of providers) {

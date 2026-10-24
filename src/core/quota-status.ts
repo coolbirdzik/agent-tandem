@@ -27,6 +27,15 @@ export function compactCountdown(at: number, now = Date.now()) {
   const total = Math.floor(remaining / 60000), days = Math.floor(total / 1440), hours = Math.floor(total % 1440 / 60), minutes = total % 60;
   return days ? `${days}d${hours ? `${hours}h` : ''}` : hours ? `${hours}h${minutes ? `${minutes}m` : ''}` : `${minutes}m`;
 }
+/** Local wall-clock reset time: 14:30 today, Mon 14:30 this week, Nov 3 14:30 later. */
+export function resetClock(at: number, now = Date.now()) {
+  const date = new Date(at), today = date.toDateString() === new Date(now).toDateString();
+  return date.toLocaleString(undefined, { ...(today ? {} : at - now < 6 * 86_400_000 ? { weekday: 'short' } : { month: 'short', day: 'numeric' }), hour: '2-digit', minute: '2-digit' });
+}
+/** "resets 14:30 · in 2h10m"; a passed reset means the shown meter is stale until the next refresh. */
+export function resetSummary(at: number, now = Date.now()) {
+  return at <= now ? `reset since ${resetClock(at, now)}` : `resets ${resetClock(at, now)} · in ${compactCountdown(at, now)}`;
+}
 export function quotaStatus(state: QuotaState, options: Partial<StatusBarPreferences> = {}) {
   const preferences = statusBarPreferences(options);
   const provider = state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex';

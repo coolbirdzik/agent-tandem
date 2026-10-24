@@ -38,7 +38,7 @@ export interface UsageHistoryData {
 export interface UsageDashboardState {
   quotaTicks?: import('./quota-pace').QuotaTick[];
   managedAccounts?: Array<import('./account-profiles').AccountProfile & { status?: ProviderAccountStatus; active?: boolean }>;
-  accountsBusy?: boolean; accountsError?: string; accountsNotice?: string;
+  accountsBusy?: boolean; accountsRefreshing?: boolean; accountsError?: string; accountsNotice?: string;
   accountSwitch?: import('./account-switch').AccountSwitchOperation;
   accountSwitchBlocked?: string;
   attributionBusy?: boolean; attributionError?: string; attributionNotice?: string;

@@ -962,7 +962,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     await accountManager.action({ action: 'switch', id: profile.id });
   });
   register('agentTandem.resetCodexUsage', async () => { await accountManager.action({ action: 'resetUsage', provider: 'Codex' }); });
-  register('agentTandem.refreshQuotaAccounts', async () => { await Promise.all([refreshAccounts(), refreshStorageUsage(true)]); await accountManager.refresh(); });
+  // Saved accounts must not wait behind storage measurement or the usage-history scan.
+  register('agentTandem.refreshQuotaAccounts', async () => {
+    await Promise.all([refreshStorageUsage(true), refreshUsageDashboard(), (async () => {
+      await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]);
+      await accountManager.refresh(); await recordQuotaHistory();
+    })()]);
+  });
   register('agentTandem.openExtensionStorage', async () => { settings.open('storage', 'unused'); await vscode.commands.executeCommand('agentTandem.refreshStorage'); return dashboardState(); });
   register('agentTandem.manageAccounts', async () => { settings.open('accounts'); await accountManager.refresh(); return dashboardState(); });
   register('agentTandem.accountAction', async value => { await accountManager.action(value); return dashboardState(); });

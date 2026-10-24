@@ -59,6 +59,16 @@ describe('Account status hover menu', () => {
     expect(menu.value.match(/two@example.test/g)).toHaveLength(1);
     expect(menu.value).toContain('5h 60% left'); expect(menu.value).toContain('$(history) cached');
   });
+  it('shows when each saved account window resets and a refreshing state instead of the refresh link', () => {
+    const state = fixture(), resetsAt = Date.now() + 2 * 3600000 + 10 * 60000;
+    state.managedAccounts![1]!.status = { status: 'ready', account: state.managedAccounts![1]!.identity, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 40, resetsAt }, { id: '7d', label: '7d', usedPercent: 10, resetsAt: Date.now() - 60000 }] } };
+    const menu = quotaAccountHover('Codex', state).value;
+    expect(menu).toContain('5h 60% left'); expect(menu).toMatch(/resets [^<]+ · in 2h(9|10)m/); expect(menu).toContain('reset since');
+    expect(menu).toContain('command:agentTandem.refreshQuotaAccounts');
+    state.accountsRefreshing = true;
+    const busy = quotaAccountHover('Codex', state).value;
+    expect(busy).toContain('Refreshing…'); expect(busy).not.toContain('command:agentTandem.refreshQuotaAccounts');
+  });
   it('brings storage warnings and review cleanup previews into the hover, without direct deletion', () => {
     const state = fixture(); state.extensionStorage = { status: 'ready', total: 2 * 1024 ** 3, files: 1500, warningBytes: 1024 ** 3,
       categories: [{ label: 'Review snapshots & tracking', bytes: 1.8 * 1024 ** 3, files: 1400 }] };

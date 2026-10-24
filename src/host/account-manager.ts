@@ -20,7 +20,7 @@ interface Dependencies {
   switched?(provider: 'Codex' | 'Claude'): Promise<void> | void;
 }
 export class AccountManager {
-  state: Pick<UsageDashboardState, 'managedAccounts' | 'accountsBusy' | 'accountsError' | 'accountsNotice' | 'accountSwitch'> = { managedAccounts: [] };
+  state: Pick<UsageDashboardState, 'managedAccounts' | 'accountsBusy' | 'accountsRefreshing' | 'accountsError' | 'accountsNotice' | 'accountSwitch'> = { managedAccounts: [] };
   private switchLog(message: string, level: AccountSwitchLog['level'] = 'info') {
     this.state.accountSwitch?.logs.push({ at: Date.now(), level, message }); this.deps.update();
   }
@@ -41,6 +41,7 @@ export class AccountManager {
     if (signal?.aborted) return;
     const abort = new AbortController(); this.refreshAbort = abort;
     const stop = () => abort.abort(); signal?.addEventListener('abort', stop, { once: true });
+    this.state.accountsRefreshing = true; this.deps.update();
     this.job = (async () => {
       const profiles = (await this.store.read()).profiles;
       for (const provider of ['Cursor', 'Antigravity'] as const) if (profiles.some(row => row.provider === provider)) {
@@ -68,7 +69,7 @@ export class AccountManager {
       if (abort.signal.aborted) return;
       await this.deps.observed?.(profiles.filter(row => isChatAccount(row.provider)).flatMap(row => this.statuses.get(row.id) ? [this.statuses.get(row.id)!] : []));
       await this.publish();
-    })().catch(error => { if (!abort.signal.aborted) { this.state.accountsError = error instanceof Error ? error.message : 'Could not load accounts.'; this.deps.update(); } }).finally(() => { signal?.removeEventListener('abort', stop); this.refreshAbort = undefined; this.job = undefined; });
+    })().catch(error => { if (!abort.signal.aborted) { this.state.accountsError = error instanceof Error ? error.message : 'Could not load accounts.'; this.deps.update(); } }).finally(() => { signal?.removeEventListener('abort', stop); this.refreshAbort = undefined; this.job = undefined; this.state.accountsRefreshing = false; this.deps.update(); });
     return this.job;
   }
   async publish() {
