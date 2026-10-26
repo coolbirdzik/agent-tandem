@@ -32,6 +32,8 @@ function json(content: string) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid account file.');
   return value as Record<string, unknown>;
 }
+// Older builds labelled a profile from a signed-out read before sign-in finished.
+const placeholderLabel = (label: string) => label === 'New account' || label === 'Not signed in';
 const authFile = (provider: AccountProvider) => !isChatAccount(provider) ? 'sign-in.json' : provider === 'Codex' ? 'auth.json' : '.credentials.json';
 export const claudeMetadata = (home: string) => path.resolve(home) === path.resolve(path.join(os.homedir(), '.claude')) && !process.env.CLAUDE_CONFIG_DIR ? path.join(os.homedir(), '.claude.json') : path.join(home, '.claude.json');
 /** Only native auth files live in private profile homes. The registry/webview never contains tokens. */
@@ -52,8 +54,8 @@ export class AccountProfiles {
     if (value.version !== 1 || !Array.isArray(value.profiles)) throw new Error('Account registry is unreadable.');
     const profiles: AccountProfile[] = value.profiles.map((row: any) => {
       if (!row || !validId(row.id) || !isAccountProvider(row.provider) || typeof row.label !== 'string' || !Number.isFinite(row.createdAt)) throw new Error('Invalid account registry.');
-      const a = row.identity;
-      return { id: row.id, provider: row.provider, label: row.label, createdAt: row.createdAt,
+      const a = row.identity, email = a?.signedIn === true && typeof a.email === 'string' && a.email.trim() ? a.email.trim() : undefined;
+      return { id: row.id, provider: row.provider, label: placeholderLabel(row.label) && email ? email : row.label, createdAt: row.createdAt,
         ...(a && typeof a.method === 'string' ? { identity: { signedIn: a.signedIn === true, method: a.method, ...Object.fromEntries(['id', 'email', 'plan', 'organization'].filter(k => typeof a[k] === 'string').map(k => [k, a[k]])) } } : {}) };
     });
     // Older refreshes replaced expired identities with "Not signed in". Recover display
@@ -87,7 +89,7 @@ export class AccountProfiles {
       if (!profile) throw new Error('Account no longer exists.');
       assertAccountIdentity(profile.identity, identity);
       profile.identity = { signedIn: identity.signedIn, method: identity.method, ...Object.fromEntries(['id', 'email', 'plan', 'organization'].filter(k => typeof identity[k as keyof AccountIdentity] === 'string').map(k => [k, identity[k as keyof AccountIdentity]])) };
-      if (profile.label === 'New account') profile.label = identity.email || identity.method;
+      if (placeholderLabel(profile.label) && identity.signedIn) profile.label = identity.email || identity.method;
       await this.save(data);
     });
   }

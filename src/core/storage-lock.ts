@@ -10,14 +10,23 @@ const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'E
 // Windows reports a file or directory another process is deleting as EPERM/EACCES/EBUSY until the delete completes.
 const deleting = (error: unknown) => process.platform === 'win32' && ['EPERM', 'EACCES', 'EBUSY'].includes((error as NodeJS.ErrnoException).code!);
 const staleOwnerMs = 60000;
-/** Recover only empty, unpublished owner temp files left by an interrupted write. */
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; } };
+/** A crash between writing and publishing the owner leaves a complete temp owner; only its own dead PID makes it abandoned. */
+async function deadOwnerTemp(file: string, token: string) {
+  try {
+    const owner = JSON.parse(await readFile(file, 'utf8'));
+    return owner?.token === token && Number.isSafeInteger(owner.pid) && owner.pid > 0 && !alive(owner.pid);
+  } catch { return false; }
+}
+/** Recover only unpublished owner temp files left by an interrupted write: empty, or naming a dead owner. */
 async function recoverOwnerlessLock(directory: string, ownerFile: string): Promise<boolean> {
   const entries = await readdir(directory, { withFileTypes: true });
   const abandoned: string[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.tmp$/i.test(entry.name)) return false;
     const file = path.join(directory, entry.name), info = await lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.size !== 0 || Date.now() - info.mtimeMs <= staleOwnerMs) return false;
+    if (!info.isFile() || info.isSymbolicLink() || Date.now() - info.mtimeMs <= staleOwnerMs) return false;
+    if (info.size !== 0 && (info.size > 1024 || !await deadOwnerTemp(file, entry.name.slice(0, -4)))) return false;
     abandoned.push(file);
   }
   // A creator may have published its owner while we inspected the directory.
@@ -64,9 +73,7 @@ async function acquire<T>(root: string, key: string, operation: () => Promise<T>
         previous = { pid: process.pid, token: '' };
       }
       if (!Number.isSafeInteger(previous.pid) || previous.pid <= 0 || typeof previous.token !== 'string') throw new Error('Invalid snapshot lock owner.');
-      let alive = true;
-      try { process.kill(previous.pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') alive = false; }
-      if (!alive && (await readFile(ownerFile, 'utf8')) === JSON.stringify(previous)) {
+      if (!alive(previous.pid) && (await readFile(ownerFile, 'utf8')) === JSON.stringify(previous)) {
         await unlink(ownerFile); await rmdir(directory).catch(() => undefined); continue;
       }
     } catch (error) { if (!missing(error) && !deleting(error)) throw error; }

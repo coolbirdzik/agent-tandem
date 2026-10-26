@@ -27,6 +27,19 @@ describe('Native account profiles', () => {
     saved.profiles[0]!.label = 'other@example.test'; await writeFile(path.join(store.root, 'accounts.json'), JSON.stringify(saved));
     expect((await store.get(profile.id)).identity?.signedIn).toBe(false);
   });
+  it('never labels a profile from a signed-out read and repairs labels saved that way', async () => {
+    const { store } = await setup(), dev = { ...identity('dev@example.test'), id: 'dev' };
+    const profile = await store.create('Codex');
+    await store.identify(profile.id, { signedIn: false, method: 'Not signed in' });
+    expect((await store.get(profile.id)).label).toBe('New account');
+    await store.identify(profile.id, dev);
+    expect((await store.get(profile.id)).label).toBe(dev.email);
+    const saved = await store.read(); saved.profiles[0]!.label = 'Not signed in';
+    await writeFile(path.join(store.root, 'accounts.json'), JSON.stringify(saved));
+    expect((await store.get(profile.id)).label).toBe(dev.email);
+    await store.rename(profile.id, 'Work'); await store.identify(profile.id, dev);
+    expect((await store.get(profile.id)).label).toBe('Work');
+  });
   it('rejects stale native identity before overwriting saved credentials after an external account switch', async () => {
     const { home, store } = await setup();
     const dev = { ...identity('dev@example.test'), id: 'dev', plan: 'prolite' };

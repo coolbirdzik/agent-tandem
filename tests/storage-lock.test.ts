@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, afterEach, describe, it, expect, vi } from 'vitest';
 import { mkdtemp, readFile, rm, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { fork, type ChildProcess } from 'node:child_process';
+import { fork, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,6 +40,23 @@ describe('Snapshot storage coordination', () => {
     const past = new Date(Date.now() - 120000); await utimes(temp, past, past); await utimes(lock, past, past);
     await expect(withStorageLock(directory, async () => 'recovered')).resolves.toBe('recovered');
     await expect(readFile(temp)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('recovers an aged lock whose owner crashed after writing its temp owner but before publishing it', async () => {
+    const directory = root(), lock = path.join(directory, '.snapshot-lock'), token = randomUUID(), temp = path.join(lock, `${token}.tmp`);
+    const child = spawn(process.execPath, ['-e', '']); await once(child, 'exit');
+    await mkdir(lock, { recursive: true }); await writeFile(temp, JSON.stringify({ pid: child.pid, token }));
+    const past = new Date(Date.now() - 120000); await utimes(temp, past, past); await utimes(lock, past, past);
+    await expect(withStorageLock(directory, async () => 'recovered')).resolves.toBe('recovered');
+    await expect(readFile(temp)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('retains an aged temp owner whose process is still alive', async () => {
+    const directory = root(), lock = path.join(directory, '.snapshot-lock'), token = randomUUID(), temp = path.join(lock, `${token}.tmp`);
+    await mkdir(lock, { recursive: true }); await writeFile(temp, JSON.stringify({ pid: process.pid, token }));
+    const past = new Date(Date.now() - 120000); await utimes(temp, past, past); await utimes(lock, past, past);
+    const now = performance.now(), clock = vi.spyOn(performance, 'now').mockReturnValue(now);
+    const waiting = withStorageLock(directory, async () => { throw new Error('Must not enter'); }); waiting.catch(() => undefined);
+    await pause(); clock.mockReturnValue(now + 121000);
+    await expect(waiting).rejects.toThrow('after 2 minutes'); expect(JSON.parse(await readFile(temp, 'utf8')).token).toBe(token);
   });
   it('times out on an ownerless nonempty lock instead of retrying forever or deleting unknown files', async () => {
     const directory = root(), lock = path.join(directory, '.snapshot-lock'), file = path.join(lock, 'unknown.txt');
