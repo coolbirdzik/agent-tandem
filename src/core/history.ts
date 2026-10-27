@@ -26,6 +26,20 @@ export function decodeText(bytes: Uint8Array): string | undefined {
   if (bytes.includes(0)) return undefined;
   try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return undefined; }
 }
+/** Readable text of legacy Japanese files. EUC-JP first: Shift_JIS text rarely decodes as EUC-JP, while the reverse often succeeds as mojibake. */
+export function decodeLegacy(bytes: Uint8Array): { text: string; encoding: string } | undefined {
+  if (bytes.includes(0) || decodeText(bytes) !== undefined) return undefined;
+  for (const encoding of ['euc-jp', 'shift_jis']) {
+    let text: string;
+    // Runtimes built without full ICU lack these decoders; such files stay binary.
+    try { text = new TextDecoder(encoding, { fatal: true }).decode(bytes); } catch { continue; }
+    if (/[぀-ヿ一-鿿]/.test(text)) return { text, encoding };
+  }
+  return undefined;
+}
+export function decodeLegacyText(bytes: Uint8Array): string | undefined { return decodeLegacy(bytes)?.text; }
+/** Text for people to read; editing must still go through byte-preserving views. */
+export function displayText(bytes: Uint8Array): string | undefined { return decodeText(bytes) ?? decodeLegacyText(bytes); }
 
 export class HistoryStore {
   constructor(readonly directory: string, readonly maxBytes = 10 * 1024 * 1024, readonly lockDirectory = directory) {}
@@ -84,7 +98,7 @@ export class HistoryStore {
     } finally { await unlink(temporary).catch(() => undefined); }
   }
 
-  async inspectBlob(hash: string): Promise<{ size: number; binary: boolean; text?: string }> {
+  async inspectBlob(hash: string): Promise<{ size: number; binary: boolean; text?: string; legacy?: boolean }> {
     assertHash(hash);
     const chunks: Buffer[] = []; let length = 0, binary = false, utf16 = false;
     let decoder: TextDecoder | undefined;
@@ -101,6 +115,10 @@ export class HistoryStore {
       }
     } });
     if (!binary) try { decoder?.decode(); } catch { binary = true; }
+    if (binary && !utf16 && length <= 512 * 1024) {
+      const text = decodeLegacyText(Buffer.concat(chunks));
+      if (text !== undefined) return { size: result.size, binary: false, text, legacy: true };
+    }
     return { size: result.size, binary, text: !binary && length <= 512 * 1024 ? decodeText(Buffer.concat(chunks)) : undefined };
   }
 

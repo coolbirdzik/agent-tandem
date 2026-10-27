@@ -92,6 +92,36 @@ describe('Individual pending changes', () => {
     const bytes = await f.read(); expect(bytes.subarray(0, 2)).toEqual(Buffer.from([0xfe, 0xff]));
     expect(textSnapshot(bytes)).toBe('before\nkeep\nchanged');
   });
+  it('reverts and accepts single blocks in Shift_JIS and EUC-JP files byte for byte', async () => {
+    // Shift_JIS あ/い/う/え and EUC-JP あ/い/う/え, each followed by CRLF.
+    const sjis = (...chars: number[][]) => Buffer.from(chars.flatMap(char => [...char, 0x0d, 0x0a]));
+    for (const [a, i, u, e] of [[[0x82, 0xa0], [0x82, 0xa2], [0x82, 0xa4], [0x82, 0xa6]], [[0xa4, 0xa2], [0xa4, 0xa4], [0xa4, 0xa6], [0xa4, 0xa8]]]) {
+      const before = sjis(a!, i!, a!), after = sjis(u!, i!, e!);
+      const f = await fixture(before, after);
+      const file = await f.store.webviewFile({ project: f.project, revision: (await f.store.read(f.project)).revision, file: f.file });
+      expect([file.binary, file.beforeText, file.afterText, file.hunks.length]).toEqual([false, 'あ\r\nい\r\nあ\r\n', 'う\r\nい\r\nえ\r\n', 2]);
+      await f.store.decideHunk(await f.request(1), true);
+      expect(await f.read()).toEqual(sjis(u!, i!, a!));
+      // An accepted block joins the baseline in its original encoding.
+      const g = await fixture(before, after);
+      await g.store.decideHunk(await g.request(0), false);
+      await g.store.revert({ project: g.project, revision: (await g.store.read(g.project)).revision });
+      expect(await g.read()).toEqual(sjis(u!, i!, a!));
+    }
+  });
+  it('keeps file-level review only when one side is Shift_JIS and the other UTF-8', async () => {
+    const before = Buffer.from([0x82, 0xa0, 0x0a, 0x82, 0xa2, 0x0a]), after = Buffer.from('う\nい\n');
+    const f = await fixture(before, after), request = { project: f.project, revision: (await f.store.read(f.project)).revision, file: f.file };
+    await expect(f.store.hunks(request)).rejects.toThrow('Binary');
+    expect((await f.store.webviewFile(request)).notice).toContain('Binary file');
+    await f.store.revert(request);
+    expect(await f.read()).toEqual(before);
+  });
+  it('keeps Japanese UTF-8 content block edits exact', async () => {
+    const f = await fixture('こんにちは\n世界\n終わり\n', 'さようなら\n世界\n完了\n');
+    await f.store.decideHunk(await f.request(1), true);
+    expect((await f.read()).toString()).toBe('さようなら\n世界\n終わり\n');
+  });
   it('rejects binary data and identifies repeated-line changes without ambiguous patch application', async () => {
     const f = await fixture(Buffer.from([0, 1]), Buffer.from([0, 2]));
     await expect(f.request(0)).rejects.toThrow('Binary');

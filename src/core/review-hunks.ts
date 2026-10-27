@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { diffLines } from 'diff';
-import { decodeText } from './history';
+import { decodeText, decodeLegacy } from './history';
 
 export interface ReviewHunk {
   id: string; oldLine: number; oldLines: number; newLine: number; newLines: number;
@@ -38,7 +38,27 @@ export function textSnapshot(bytes: Buffer): string {
   return text;
 }
 
-export function encodeSnapshot(text: string, original: Buffer): Buffer {
+export interface TextSnapshots { before: string; after: string; beforeText: string; afterText: string; bytes: boolean }
+/**
+ * Editable views of both sides plus their readable text. Legacy Japanese text
+ * is edited as 1:1 byte strings: Shift_JIS and EUC-JP never use CR/LF bytes
+ * inside a character, so line edits stay exact. The other side must be ASCII
+ * or the same encoding; a splice must never mix encodings within one file.
+ */
+export function textSnapshots(left: Buffer, right: Buffer): TextSnapshots {
+  const before = decodeText(left), after = decodeText(right);
+  if (before !== undefined && after !== undefined) return { before, after, beforeText: before, afterText: after, bytes: false };
+  const sides = [left, right].map(bytes => {
+    if (!bytes.some(byte => byte >= 0x80)) return { text: bytes.toString('latin1'), encoding: undefined };
+    return decodeLegacy(bytes);
+  });
+  const encodings = new Set(sides.map(side => side?.encoding).filter(Boolean));
+  if (!sides[0] || !sides[1] || encodings.size !== 1) throw new Error('Binary changes need file-level review.');
+  return { before: left.toString('latin1'), after: right.toString('latin1'), beforeText: sides[0].text, afterText: sides[1].text, bytes: true };
+}
+
+export function encodeSnapshot(text: string, original: Buffer, bytes = false): Buffer {
+  if (bytes) return Buffer.from(text, 'latin1');
   if (original[0] === 0xff && original[1] === 0xfe) return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]);
   if (original[0] === 0xfe && original[1] === 0xff) return Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(text, 'utf16le').swap16()]);
   return Buffer.from(text, 'utf8');

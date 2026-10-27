@@ -8,7 +8,7 @@ import { createTwoFilesPatch, diffLines } from 'diff';
 import { HistoryStore, assertPath } from './history';
 import type { FileChange, Manifest, Snapshot } from './types';
 import { streamFile } from './blob';
-import { reviewHunks, textSnapshot, encodeSnapshot, type ReviewHunk } from './review-hunks';
+import { reviewHunks, textSnapshots, encodeSnapshot, type ReviewHunk } from './review-hunks';
 import { withStorageLock } from './storage-lock';
 import { captureConversations, editOverlapsCapture, type ReviewCapture, type ReviewConversation, type ConversationEdit } from './review-conversations';
 import { reviewGroup } from './review-groups';
@@ -136,7 +136,8 @@ export class ReviewStore {
           if (kind === 'file' && !dirty.has(name)) committed[name] = current[name];
           else if (id && current[name]) {
             const [left, right] = await Promise.all([this.history.inspectBlob(id), this.history.inspectBlob(current[name]!)]);
-            if (left.text !== undefined && right.text !== undefined && !left.binary && !right.binary) {
+            // Legacy Japanese text is readable but not re-encodable; keep it pending as before.
+            if (left.text !== undefined && right.text !== undefined && !left.binary && !right.binary && !left.legacy && !right.legacy) {
               const crlf = right.text.includes('\r\n') && !right.text.replace(/\r\n/g, '').includes('\n');
               const normalized = crlf ? left.text.replace(/\r?\n/g, '\r\n') : !right.text.includes('\r\n') ? left.text.replace(/\r\n/g, '\n') : left.text;
               if (normalized !== left.text) {
@@ -226,7 +227,8 @@ export class ReviewStore {
     const caseKey = (name: string) => process.platform === 'win32' ? name.toLowerCase() : name;
     let names: string[], ignored: string[] = [];
     try {
-      const { stdout } = await execute('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: project, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+      // Untranslated messages keep the "not a git repository" check working under a localized Git.
+      const { stdout } = await execute('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: project, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } });
       names = stdout.split('\0').filter(Boolean);
       if (dropIgnored) {
         // Known paths that a new .gitignore rule now covers (for example build
@@ -646,11 +648,11 @@ export class ReviewStore {
       file.before ? this.history.readBlob(file.before) : Buffer.alloc(0),
       file.after ? this.history.readBlob(file.after) : Buffer.alloc(0),
     ]);
-    const before = textSnapshot(left), after = textSnapshot(right);
+    const texts = textSnapshots(left, right), { before, after } = texts;
     let hunks = reviewHunks(before, after);
     // Creating/deleting even an empty file is one complete change.
     if (!hunks.length && (!file.before || !file.after)) hunks = [{ id: hash(`${file.before}:${file.after}`), oldLine: 0, newLine: 0, oldLines: 0, newLines: 0, oldStart: 0, oldEnd: before.length, newStart: 0, newEnd: after.length }];
-    return { left, right, before, after, hunks };
+    return { left, right, ...texts, hunks };
   }
   hunks(request: ReviewRequest) { return this.serial(async (): Promise<ReviewHunk[]> => {
     const value = await this.load(request.project), file = this.selected(value, request)[0]!;
@@ -666,7 +668,7 @@ export class ReviewStore {
       ? data.after.slice(0, hunk.newStart) + data.before.slice(hunk.oldStart, hunk.oldEnd) + data.after.slice(hunk.newEnd)
       : data.before.slice(0, hunk.oldStart) + data.after.slice(hunk.newStart, hunk.newEnd) + data.before.slice(hunk.oldEnd);
     const encoding = revert && file.after ? data.right : data.left;
-    const result = revert && !file.before ? undefined : encodeSnapshot(text, encoding);
+    const result = revert && !file.before ? undefined : encodeSnapshot(text, encoding, data.bytes);
     const resultHash = result ? hash(result) : undefined;
     const current = await this.fingerprint(request.project, file.path);
     // A retry can publish a partial revert whose bytes were saved before a crash.
@@ -714,12 +716,15 @@ export class ReviewStore {
     const result: ReviewWebviewFile = { ...file, beforeSize: left!.size, afterSize: right!.size, hunks: [] };
     const images = await imageSnapshots(this.history, file.path, file.before, file.after);
     if (images) return { ...result, images, notice: 'Image snapshots · review the whole file.' };
-    if (file.binary || left!.binary || right!.binary) return { ...result, notice: 'Binary file. Review the whole file or open its saved snapshots in the native editor.' };
+    // Inspect live: changes saved before legacy Japanese support still say binary.
+    const binary = { ...result, notice: 'Binary file. Review the whole file or open its saved snapshots in the native editor.' };
+    if (left!.binary || right!.binary) return binary;
     if (left!.size + right!.size > 4 * 1024 * 1024) return { ...result, notice: 'Large file. Review the whole file or open its full saved snapshots in the native editor.' };
     try {
       const data = await this.hunkData(file);
-      return { ...result, beforeText: data.before, afterText: data.after, hunks: data.hunks };
+      return { ...result, binary: false, beforeText: data.beforeText, afterText: data.afterText, hunks: data.hunks };
     } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Binary changes')) return binary;
       if (error instanceof Error && error.message.includes('computing changes took too long')) return { ...result, notice: error.message };
       throw error;
     }

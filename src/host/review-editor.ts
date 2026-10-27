@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { useReviewDiffLayout } from './diff-layout';
 import type { ChangeNavigation } from './change-navigation';
-import { assertPath, decodeText, type HistoryStore } from '../core/history';
+import { assertPath, displayText, type HistoryStore } from '../core/history';
 import type { ReviewStore, ReviewRequest } from '../core/review';
 import { imageMime } from '../core/media-preview';
 
@@ -24,7 +24,7 @@ export class ReviewDocuments implements vscode.TextDocumentContentProvider, vsco
     const hash = this.blob(uri);
     if (!hash) return '';
     const bytes = await this.history.readBlob(hash);
-    return decodeText(bytes) ?? `[Binary snapshot]\nFile: ${uri.path.slice(1)}\nSize: ${bytes.length} bytes\nSHA-256: ${hash}\n`;
+    return displayText(bytes) ?? `[Binary snapshot]\nFile: ${uri.path.slice(1)}\nSize: ${bytes.length} bytes\nSHA-256: ${hash}\n`;
   }
   blob(uri: vscode.Uri): string | undefined {
     assertPath(uri.path.slice(1));
