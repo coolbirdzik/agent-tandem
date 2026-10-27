@@ -266,7 +266,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, extensionStorage, storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, extensionStorage, storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaCycleStarts: quotaHistoryStore.cycleStarts, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day', statusBar: readStatusBarPreferences(config) }, activeProvider: state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex' };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
@@ -348,7 +348,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         const provider = status.account?.method === 'Claude account' ? 'Claude' : 'Codex';
         return quotaTicks(provider, status);
       }));
-      quotaHistory = await quotaHistoryStore.record([], statuses.flatMap(status => quotaMeters(status.account?.method === 'Claude account' ? 'Claude' : 'Codex', status)));
+      const ticks = statuses.flatMap(status => quotaTicks(status.account?.method === 'Claude account' ? 'Claude' : 'Codex', status));
+      quotaHistory = await quotaHistoryStore.capture(savedQuotaTicks, cycleStarts => ({ meters: statuses.flatMap(status => quotaMeters(status.account?.method === 'Claude account' ? 'Claude' : 'Codex', status, Date.now(), cycleStarts)) }));
     },
   });
   const quickAccounts = new QuickAccounts({ state: dashboardState, publish: () => accountManager.publish(),
@@ -365,10 +366,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state, dashboardState()); trackingBar.update(state); settings.update(); quickAccounts.update(); }
   async function recordQuotaHistory(data = usageState.data) {
     try {
-      const samples = (['Codex', 'Claude'] as const).flatMap(provider => quotaObservations(provider, state.accounts?.[provider], data));
-      const meters = (['Codex', 'Claude'] as const).flatMap(provider => quotaMeters(provider, state.accounts?.[provider]));
-      quotaHistory = await quotaHistoryStore.record(samples, meters); quotaHistoryError = undefined;
-      savedQuotaTicks = await quotaPaceStore.record((['Codex', 'Claude'] as const).flatMap(provider => quotaTicks(provider, state.accounts?.[provider])));
+      const ticks = (['Codex', 'Claude'] as const).flatMap(provider => quotaTicks(provider, state.accounts?.[provider]));
+      savedQuotaTicks = await quotaPaceStore.record(ticks);
+      quotaHistory = await quotaHistoryStore.capture(savedQuotaTicks, cycleStarts => ({
+        observations: (['Codex', 'Claude'] as const).flatMap(provider => quotaObservations(provider, state.accounts?.[provider], data, Date.now(), cycleStarts)),
+        meters: (['Codex', 'Claude'] as const).flatMap(provider => quotaMeters(provider, state.accounts?.[provider], Date.now(), cycleStarts)),
+      })); quotaHistoryError = undefined;
     } catch { quotaHistoryError = 'Could not save quota history. Refresh to retry.'; }
   }
   async function refreshUsageDashboard(): Promise<void> {

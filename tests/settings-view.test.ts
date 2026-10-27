@@ -79,6 +79,8 @@ describe('Settings host updates', () => {
     const meter = { provider: 'Codex' as const, accountId: 'demo', plan: 'plus', label: '5h' as const, from: 1, to: 2, resetsAt: 3, totalTokens: 100, usedPercent: 0 };
     state = { ...state, quotaBaselines: [{ start: meter, latest: meter }] }; view.update(); expect(host.post).toHaveBeenCalledTimes(9);
     state = { ...state, activeProvider: 'Claude' }; view.update(); expect(host.post).toHaveBeenCalledTimes(10);
+    state = { ...state, quotaCycleStarts: [{ provider: 'Codex', accountId: 'demo', plan: 'plus', label: '5h', from: 1, to: 2, startUsedPercent: 0, usedPercent: 10 }] };
+    view.update(); expect(host.post).toHaveBeenCalledTimes(11);
     view.dispose();
   });
 });

@@ -41,7 +41,7 @@ export class SettingsView implements vscode.Disposable {
   update(force = false) {
     if (!this.panel) return;
     const state = this.state();
-    const signature = JSON.stringify([state.status, state.data?.updatedAt, state.error, state.accounts, state.storage, state.extensionStorage, state.conversationCleanup, state.storageFreed, state.preferences, state.activeProvider, state.quotaHistory, state.quotaHistoryError, state.quotaBaselines, state.quotaTicks, state.managedAccounts, state.accountsBusy, state.accountsError, state.accountsNotice, state.accountSwitch, state.accountSwitchBlocked, state.conversationTitles, state.attributionBusy, state.attributionError, state.attributionNotice]);
+    const signature = JSON.stringify([state.status, state.data?.updatedAt, state.error, state.accounts, state.storage, state.extensionStorage, state.conversationCleanup, state.storageFreed, state.preferences, state.activeProvider, state.quotaHistory, state.quotaHistoryError, state.quotaBaselines, state.quotaCycleStarts, state.quotaTicks, state.managedAccounts, state.accountsBusy, state.accountsError, state.accountsNotice, state.accountSwitch, state.accountSwitchBlocked, state.conversationTitles, state.attributionBusy, state.attributionError, state.attributionNotice]);
     // Chat streaming, conversation sync and review capture don't change usage.
     if (!force && signature === this.lastUpdate && state.data === this.lastData) return;
     this.lastUpdate = signature; this.lastData = state.data;

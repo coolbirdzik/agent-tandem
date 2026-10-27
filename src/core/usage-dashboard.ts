@@ -44,6 +44,7 @@ export interface UsageDashboardState {
   attributionBusy?: boolean; attributionError?: string; attributionNotice?: string;
   conversationTitles?: Record<string, string>;
   quotaHistory?: import('./quota-estimate').QuotaObservation[]; quotaHistoryError?: string;
+  quotaCycleStarts?: import('./quota-cycle-start').QuotaCycleStart[];
   quotaBaselines?: import('./quota-estimate').QuotaBaseline[];
   storage?: import('./storage').StorageState;
   extensionStorage?: import('./storage-usage').ExtensionStorageUsage;

@@ -223,6 +223,7 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .api-activity-metric strong { display: block; font-size: 27px; font-weight: 500; font-variant-numeric: tabular-nums; margin: 4px 0; }
 .api-activity-metric small { display: block; }
 .api-activity-identity { overflow-wrap: anywhere; }
+.api-activity-local { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
 .local-usage-heading { margin-bottom: 14px; }
 @media (max-width: 600px) { .api-activity-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .source-label { white-space: normal; } }
 .dashboard-status { color: var(--muted); font-size: 12px; min-height: 18px; margin-bottom: 16px; }
@@ -306,14 +307,26 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .quota-chart-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; color: var(--muted); }
 .quota-chart-control { display: flex; align-items: center; gap: 6px; font-size: 10px; }
 .quota-chart-control select { min-width: 0; max-width: 100%; padding: 3px 5px; font-size: 11px; }
-.quota-cycle-plot { position: relative; padding-left: 35px; margin-top: 10px; }
-.quota-cycle-plot svg { display: block; width: 100%; height: 130px; overflow: visible; }
-.quota-chart-scale { position: absolute; inset: 8px auto 0 0; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 8px; font-size: 10px; color: var(--muted); }
+.quota-chart-viewport { overflow-x: auto; margin-top: 10px; padding-bottom: 5px; }
+.quota-cycle-plot { position: relative; padding-left: 45px; min-width: var(--quota-plot-width); }
+.quota-cycle-plot svg { display: block; width: 100%; height: 170px; overflow: visible; }
+.quota-chart-scale { position: absolute; inset: 19px auto 9px 0; display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: var(--muted); }
+.quota-cycle-axis { display: grid; gap: 0; padding-left: 45px; min-width: var(--quota-plot-width); text-align: center; }
+.quota-cycle-axis > span { padding: 0 4px; overflow-wrap: anywhere; }
+.quota-cycle-axis strong { display: block; margin-top: 3px; color: var(--quota-chart-color); font-weight: 500; }
 .quota-chart-grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.quota-chart-zero { stroke: var(--muted); }
 .quota-chart-average { stroke: var(--muted); stroke-dasharray: 4 4; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .quota-chart-line { fill: none; stroke: var(--quota-chart-color); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .quota-chart-mark { fill: var(--quota-chart-color); stroke: var(--vscode-editor-background); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.quota-chart-mark:hover, .quota-chart-mark:focus { stroke: var(--vscode-foreground); stroke-width: 2; outline: none; }
+.quota-chart-mark, .quota-chart-value { pointer-events: none; }
+.quota-chart-point[data-current=true] .quota-chart-mark { stroke: var(--vscode-foreground); stroke-width: 2; }
+.quota-chart-mark[data-direction=down] { fill: var(--vscode-charts-orange, #b96a1c); }
+.quota-chart-value { fill: var(--muted); font-size: 10px; }
+.quota-chart-hit { fill: transparent; cursor: pointer; outline: none; }
+.quota-chart-point.is-selected .quota-chart-hit { fill: var(--vscode-list-hoverBackground); fill-opacity: 0.5; }
+.quota-chart-point:focus-within .quota-chart-hit { stroke: var(--vscode-focusBorder); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.quota-chart-point.is-selected .quota-chart-value { fill: var(--vscode-foreground); }
 .quota-chart-detail { display: block; min-height: 3em; margin-top: 10px; overflow-wrap: anywhere; }
 .quota-chart-caption { display: block; margin-top: 4px; }
 .usage-details { color: var(--muted); font-size: 12px; margin-top: 12px; }

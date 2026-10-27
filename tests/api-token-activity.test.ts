@@ -25,6 +25,7 @@ describe('Account API token activity', () => {
     const status: ProviderAccountStatus = { status: 'ready', account: identity, usage: codexTokenActivity(raw, accountId) };
     const result = apiActivityBreakdown(status, { grouping: 'week', from: '2026-10-09', to: '2026-10-10', accountId, model: 'local-model' });
     expect(result.total).toBe(200); expect(result.periods).toEqual([{ key: '2026-10-05', tokens: 200, days: 2 }]);
+    expect(result.latestDay).toBe('2026-10-10');
     expect(result.usage?.summary?.lifetimeTokens).toBe(1000);
     expect(apiActivityBreakdown(status, { grouping: 'day', accountId: 'another' }).total).toBeUndefined();
     expect(apiActivityBreakdown(status, { grouping: 'day', provider: 'Claude' }).total).toBeUndefined();

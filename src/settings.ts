@@ -4,7 +4,7 @@ import { dashboardAccountGroups, emptyTotals, localDay, modelColorSlots, periodK
 import type { ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
 import { PRICING_CHECKED_AT, PRICING_SOURCES, type ApiCost } from './core/api-pricing';
-import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates, quotaMeters, quotaMeterKey, quotaObservations, quotaTrends } from './core/quota-estimate';
+import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates, quotaMeters, sameQuotaCycle, quotaObservations, quotaTrends } from './core/quota-estimate';
 import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-account';
 import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
@@ -17,6 +17,7 @@ import type { CleanupKind } from './core/storage';
 import { CheckboxRangeSelection } from './ui/checkbox-range';
 import { conversationTime, matchesConversation, type ConversationFilter } from './core/conversation-filter';
 import { quotaCycleCharts } from './ui/quota-cycle-charts';
+import { observeQuotaCycleStarts, quotaCycleScope } from './core/quota-cycle-start';
 import { storageUsageLevel, storageSize } from './core/storage-usage';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
@@ -349,6 +350,23 @@ function renderApiActivity(filters: UsageFilters) {
   if (result.reason) { root.append(node('p', result.reason, 'muted')); return; }
   const identity = usageAccount('Codex', account?.account), usage = result.usage!, summary = usage.summary;
   root.append(node('p', `Codex · ${usageAccountLabel(identity)} · ${account?.status === 'loading' ? 'Updating · previous snapshot · ' : ''}Updated ${new Date(usage.updatedAt!).toLocaleString()}`, 'muted api-activity-identity'));
+  if (result.latestDay) {
+    const pending = (filters.to ?? filters.from ?? '') > result.latestDay;
+    root.append(node('p', `API daily history through ${result.latestDay}.${pending ? ' Later dates in this selection have not been reported by the API yet.' : ''}`, 'muted api-activity-coverage'));
+  }
+  // Daily server buckets can lag behind active usage. Show the same account's
+  // local counts explicitly, without replacing or adding to the API totals.
+  if (result.total === undefined && identity) {
+    const local = usageBreakdown(state.data?.days ?? [], { ...filters, provider: 'Codex', accountId: identity.id }).totals;
+    if (local.requests) {
+      const notice = node('div', undefined, 'api-activity-local');
+      const badge = node('span', 'Local', 'source-label'); badge.dataset.source = 'Local';
+      const amount = node('span', `${compact(local.total)} tokens · ${number(local.requests)} recorded requests in this selection`); amount.title = `${number(local.total)} local tokens`;
+      const view = node('button', 'View local breakdown', 'quiet');
+      view.onclick = () => el('totals').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      notice.append(badge, amount, view); root.append(notice);
+    }
+  }
   const metrics = node('div', undefined, 'api-activity-metrics');
   for (const [label, value, detail] of [
     ['Selected range tokens', result.total, 'Reported daily buckets only'],
@@ -375,7 +393,7 @@ function renderApiActivity(filters: UsageFilters) {
     const rows = node('div', undefined, 'table-wrap');
     table(rows, ['API period', 'Tokens', 'Reported days'], result.periods.slice(-60).reverse().map(row => [row.key, row.tokens, row.days])); details.append(rows);
     if (result.periods.length > 60) details.append(node('p', 'Latest 60 periods shown.', 'muted'));
-  } else root.append(node('p', 'No daily buckets were reported for the selected range.', 'muted'));
+  } else root.append(node('p', 'No API daily buckets were reported for the selected range. Local token usage below shows recorded activity on this device.', 'muted'));
   details.append(node('p', 'Claude: local token history, native API quota.', 'muted'));
 }
 function providerIcon(provider: ConversationProvider) {
@@ -461,16 +479,20 @@ function dashboardAccountStatus(provider: ConversationProvider): ProviderAccount
 }
 function scopedQuotaObservations(provider: ConversationProvider, account = dashboardAccountStatus(provider)) {
   const active = usageAccount(provider, state?.accounts?.[provider]?.account)?.id;
-  return quotaObservations(provider, account, state?.data).filter(row => row.source !== 'Device' || row.accountId === active);
+  return quotaObservations(provider, account, state?.data, Date.now(), currentQuotaCycleStarts(provider, account)).filter(row => row.source !== 'Device' || row.accountId === active);
+}
+function currentQuotaCycleStarts(provider: ConversationProvider, account = dashboardAccountStatus(provider)) {
+  return state?.quotaCycleStarts === undefined ? undefined : observeQuotaCycleStarts(state.quotaCycleStarts, quotaTicks(provider, account));
 }
 function renderAccountGroups(filters: UsageFilters) {
   const grouped = el<HTMLSelectElement>('dashboard-view').value === 'accounts', selected = !!filters.accountId;
   el('account-overview').hidden = !grouped || selected; el('dashboard-detail').hidden = grouped && !selected;
   el('account-detail-bar').hidden = !grouped || !selected;
   if (grouped && selected) {
-    const group = dashboardGroups(filters).find(row => row.provider === filters.provider && (row.account?.id ?? UNKNOWN_ACCOUNT) === filters.accountId);
+    const group = dashboardGroups(filters).find(row => (!filters.provider || row.provider === filters.provider) && row.account?.id === filters.accountId);
+    const provider = group?.provider ?? filters.provider;
     el('account-detail-title').textContent = group?.label || group?.account?.email || 'Unknown account';
-    el('account-detail-meta').textContent = `${filters.provider === 'Claude' ? 'Claude Code' : filters.provider ?? ''} · ${group?.account ? usageAccountLabel(group.account) : 'Unattributed history'}`;
+    el('account-detail-meta').textContent = `${provider === 'Claude' ? 'Claude Code' : provider ?? ''} · ${group?.account ? usageAccountLabel(group.account) : 'Unattributed history'}`;
   }
   const root = el('account-groups'); root.replaceChildren();
   for (const group of dashboardGroups(filters)) {
@@ -727,15 +749,16 @@ function renderQuotaEstimates() {
     if (identity) item.append(node('p', usageAccountLabel(identity), 'muted quota-estimate-account'));
     const windows = node('div', undefined, 'quota-estimate-windows'); item.append(windows);
     if (!state || (state.status === 'loading' && !state.data && !state.quotaHistory?.length && !state.quotaBaselines?.length && !quotaMeters(provider, state.accounts?.[provider]).length)) { const loading = node('div'); loadingRows(loading, 2); item.append(loading); root.append(item); continue; }
-    const account = dashboardAccountStatus(provider), estimates = quotaEstimates(provider, account, state.data);
-    const meters = quotaMeters(provider, account);
+    const account = dashboardAccountStatus(provider), cycleStarts = currentQuotaCycleStarts(provider, account);
+    const estimates = quotaEstimates(provider, account, state.data, Date.now(), 'Account', cycleStarts);
+    const meters = quotaMeters(provider, account, Date.now(), cycleStarts);
     const observed = observeQuotaMeters(state.quotaBaselines ?? [], meters);
     // Render a valid paired sample immediately, even while the host persists it.
     const history = mergeQuotaObservations(state.quotaHistory ?? [], [...scopedQuotaObservations(provider, account), ...observed.observations]);
     for (const trend of quotaTrends(provider, account, history)) {
       const estimate = estimates.find(row => row.label === trend.label)!;
       const meter = meters.find(row => row.label === trend.label);
-      const baseline = meter && state.quotaBaselines?.find(row => quotaMeterKey(row.start) === quotaMeterKey(meter));
+      const baseline = meter && observed.baselines.find(row => sameQuotaCycle(row.start, meter));
       const tokenDelta = baseline ? meter!.totalTokens - baseline.start.totalTokens : 0;
       const quotaDelta = baseline ? meter!.usedPercent - baseline.start.usedPercent : 0;
       const waiting = baseline ? tokenDelta > 0 && quotaDelta <= 0 ? 'Waiting for quota to increase' : quotaDelta > 0 && tokenDelta <= 0 ? 'Waiting for API tokens to update' : 'Waiting for new usage'
@@ -753,8 +776,11 @@ function renderQuotaEstimates() {
         source.title = trend.source === 'API' ? 'API counters · token increase ÷ quota percentage-point increase' : trend.source === 'Device'
           ? 'Local history includes unknown, inferred and user-confirmed sessions. Other accounts with native turn evidence are excluded; usage on other devices is not recorded.' : 'Local · account-matched native turn history';
         row.append(amount, source);
-        const latestApi = trend.source === 'API' && meter ? trend.observations.find(sample => sample.resetsAt === meter.resetsAt && (!baseline || sample.from >= baseline.start.to)) : undefined;
-        const current = trend.source === 'API' ? latestApi : trend.observations.find(sample => sample.resetsAt > Date.now());
+        const currentReset = account?.quota?.windows.find(window => window.label === (trend.label === '5h' ? '5h' : '7d'))?.resetsAt;
+        const cycleStart = identity && cycleStarts?.find(start => quotaCycleScope(start) === quotaCycleScope({ provider, accountId: identity.id, plan: account?.account?.plan ?? '', label: trend.label }));
+        const allCycles = quotaCycles(trend.observations, Date.now(), currentReset, cycleStart?.from);
+        const latestApi = trend.source === 'API' && meter ? trend.observations.find(sample => sameQuotaCycle(sample, meter) && (!baseline || sample.from >= baseline.start.to)) : undefined;
+        const current = trend.source === 'API' ? latestApi : allCycles.find(sample => sample.active);
         const cycleRate = current ? current.observedTokens / current.usedPercent : trend.tokensPerPercent;
         const capacity = node('div', undefined, 'quota-cycle-capacity');
         capacity.dataset.basis = current ? 'current' : 'history';
@@ -777,14 +803,13 @@ function renderQuotaEstimates() {
             row.append(node('p', `≈ ${compact(rate * (100 - meter!.usedPercent))} tokens left`, 'muted'));
           } else row.append(node('p', waiting, 'muted'));
         } else {
-          const detail = node('p', current ? `≈ ${compact(current.observedTokens / current.usedPercent * (100 - current.usedPercent))} tokens left` : 'Waiting for current cycle usage', 'muted');
+          const detail = node('p', current ? `≈ ${compact(current.observedTokens / current.usedPercent * Math.max(0, 100 - (current.startUsedPercent ?? 0) - current.usedPercent))} tokens left` : 'Waiting for current cycle usage', 'muted');
           if (current) detail.title = `${number(current.observedTokens)} tokens from ${new Date(current.from).toLocaleString()} to ${new Date(current.to).toLocaleString()}`;
           row.append(detail);
         }
-        const allCycles = quotaCycles(trend.observations);
         row.append(quotaCycleCharts(allCycles, trend.tokensPerPercent, JSON.stringify([provider, identity?.id, account?.account?.plan, trend.label, trend.source])));
         const details = node('div', undefined, 'quota-trend-history');
-        details.append(node('h4', 'Tokens per reset cycle'));
+        details.append(node('h4', 'Tokens per cycle'));
         const calculation = node('details', undefined, 'usage-details quota-calculation');
         calculation.append(node('summary', 'Calculation details'));
         const totalTokens = trend.observations.reduce((sum, sample) => sum + sample.observedTokens, 0);
@@ -792,13 +817,13 @@ function renderQuotaEstimates() {
         calculation.append(node('p', `${number(totalTokens)} recorded tokens ÷ ${number(totalQuota)} quota percentage points = ≈ ${number(Math.round(trend.tokensPerPercent))} tokens / 1% across ${trend.observations.length} cycles.`));
         calculation.append(node('p', trend.source === 'API'
           ? 'Recorded tokens are the API counter increase between the two quota readings. If recording began below 100% remaining, earlier usage is unknown. Older records may have no saved starting percentage.'
-          : `Recorded tokens are the ${trend.source === 'Device' ? 'device' : 'account-matched local'} history found in each reset cycle, and may cover only part of the account usage. The 100% starting point is the cycle boundary, not a measured token counter.`));
+          : `Recorded tokens are the ${trend.source === 'Device' ? 'device' : 'account-matched local'} history after the last observed full-quota reading. Without a 100% reading, only usage after the first recorded sample is included and the cycle is partial.`));
         calculation.append(node('p', 'Full quota = recorded tokens ÷ quota used × 100. This is an extrapolation; model mix, cached tokens and usage on other devices can change the ratio.'));
         details.append(calculation);
         const tableRoot = node('div', undefined, 'table-wrap');
         const cycles = allCycles.slice(-30).reverse();
-        table(tableRoot, ['Reset', 'Quota remaining', 'Recorded tokens', 'Quota used (pp)', '≈ Tokens / 1%', '≈ Full quota', 'vs prev.'], cycles.map(sample => [
-          `${new Date(sample.resetsAt).toLocaleString(undefined, { month: 'short', day: 'numeric', ...(sample.label === '5h' ? { hour: '2-digit', minute: '2-digit' } : {}) })}${sample.active ? ' · current' : ''}`,
+        table(tableRoot, ['Cycle start', 'Quota remaining', 'Recorded tokens', 'Quota used (pp)', '≈ Tokens / 1%', '≈ Full quota', 'vs prev.'], cycles.map(sample => [
+          `${new Date(sample.cycleStartedAt ?? sample.from).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${sample.active ? ' · current' : ''}${sample.cycleStartKnown === false ? ' · partial' : sample.cycleStartedAt === undefined ? ' · legacy sample' : ''}`,
           sample.remainingFrom === undefined ? 'Start unknown' : `${number(sample.remainingFrom)}% → ${number(sample.remainingTo!)}%`,
           number(sample.observedTokens), number(sample.usedPercent), number(Math.round(sample.tokensPerPercent)), Math.round(sample.capacityTokens),
           sample.changePercent === undefined ? '—' : `${sample.changePercent > 0 ? '+' : ''}${Math.round(sample.changePercent * 10) / 10}%`,
@@ -806,9 +831,9 @@ function renderQuotaEstimates() {
         tableRoot.querySelectorAll('tbody tr').forEach((line, index) => {
           const cycle = cycles[index]!;
           line.querySelector('td')!.title = `Reset ${new Date(cycle.resetsAt).toLocaleString()} · ${cycle.partial ? 'Partial observation' : 'Full cycle'} · ${number(cycle.usedPercent)}% quota observed\n${new Date(cycle.from).toLocaleString()} – ${new Date(cycle.to).toLocaleString()}`;
-          const period = node('small', `${new Date(cycle.from).toLocaleString()} – ${new Date(cycle.to).toLocaleString()}`, 'muted quota-recorded-period');
+          const period = node('small', `${new Date(cycle.cycleStartedAt ?? cycle.from).toLocaleString()} – ${new Date(cycle.to).toLocaleString()}`, 'muted quota-recorded-period');
           line.querySelector('td')!.append(period);
-          line.children[1]!.setAttribute('title', cycle.source === 'API' ? 'Quota remaining at the first and last API readings' : 'Cycle boundary → remaining quota; recorded local tokens may be incomplete');
+          line.children[1]!.setAttribute('title', 'Quota remaining at the first and last readings; recorded local tokens may be incomplete');
           line.children[2]!.setAttribute('title', number(cycle.observedTokens));
           line.children[4]!.setAttribute('title', `${number(cycle.observedTokens)} tokens ÷ ${number(cycle.usedPercent)} percentage points`);
           if (index >= 3) (line as HTMLElement).hidden = true;

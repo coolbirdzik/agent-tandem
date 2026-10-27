@@ -48,6 +48,6 @@ export function apiActivityBreakdown(status: ProviderAccountStatus | undefined, 
     value.tokens += row.tokens; value.days++; periods.set(key, value);
   }
   const total = selected?.length ? selected.reduce((sum, row) => sum + row.tokens, 0) : undefined;
-  return { usage, periods: [...periods.values()].sort((a, b) => a.key.localeCompare(b.key)), total: total !== undefined && Number.isSafeInteger(total) ? total : undefined,
+  return { usage, latestDay: usage!.daily?.at(-1)?.day, periods: [...periods.values()].sort((a, b) => a.key.localeCompare(b.key)), total: total !== undefined && Number.isSafeInteger(total) ? total : undefined,
     reason: undefined };
 }

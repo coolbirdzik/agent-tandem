@@ -480,7 +480,7 @@ describe('Settings usage dashboard', () => {
     expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('title')).toContain('5,000,000 estimated tokens for 100% quota');
     const latest = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
     expect(latest[0]?.textContent).toContain('current'); expect(latest[0]?.getAttribute('title')).toContain('Partial observation');
-    expect(latest[1]?.textContent).toBe('100% → 80%');
+    expect(latest[1]?.textContent).toBe('Start unknown');
     expect(latest[2]?.textContent).toBe('1,000,000');
     expect(latest[3]?.textContent).toBe('20'); expect(latest[4]?.textContent).toBe('50,000');
     expect(latest[5]?.getAttribute('title')).toBe('5,000,000'); expect(latest[6]?.textContent).toBe('+100%');
@@ -502,6 +502,57 @@ describe('Settings usage dashboard', () => {
     const button = root.querySelector('button')!; button.click();
     expect(button.getAttribute('aria-expanded')).toBe('true'); expect(rows.every(row => !row.hidden)).toBe(true);
     button.click(); expect(rows.filter(row => !row.hidden)).toHaveLength(3);
+  });
+  it('collapses weekly reset jitter and labels only the current reading in both table and chart', () => {
+    const now = Date.parse('2026-10-27T23:30:00+07:00'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
+    const old: QuotaObservation = { provider: 'Codex', accountId: usageAccount('Codex', identity)!.id, plan: 'plus', label: 'Weekly',
+      from: Date.parse('2026-10-25T16:45:25+07:00'), to: Date.parse('2026-10-26T11:57:31+07:00'), resetsAt: Date.parse('2026-11-01T16:45:25+07:00'), observedTokens: 41907611, usedPercent: 17 };
+    const first = { ...old, from: Date.parse('2026-10-26T13:13:13+07:00'), to: Date.parse('2026-10-27T22:34:15+07:00'),
+      resetsAt: Date.parse('2026-11-02T13:13:13+07:00'), observedTokens: 194911940, usedPercent: 35 };
+    const latest = { ...first, from: first.from - 1000, resetsAt: first.resetsAt - 1000, to: Date.parse('2026-10-27T23:09:15+07:00'), observedTokens: 222856032, usedPercent: 39 };
+    const account = { status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const,
+      windows: [{ id: 'weekly', label: '7d', resetsAt: latest.resetsAt + 500, usedPercent: 39 }] } };
+    render({ ...value, data: undefined, accounts: { Codex: account }, quotaHistory: [first, latest, old] });
+    const root = document.querySelector('#quota-estimates')!;
+    const rows = [...root.querySelectorAll('.quota-trend-history tbody tr')];
+    expect(rows).toHaveLength(2);
+    expect(rows.filter(row => row.children[0]!.textContent?.includes('current'))).toHaveLength(1);
+    expect(rows[0]?.children[2]?.textContent).toBe('222,856,032');
+    expect(root.querySelectorAll('.quota-chart-point[data-current=true]')).toHaveLength(1);
+    expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
+    render({ ...value, data: undefined, accounts: { Codex: { ...account, quota: { ...account.quota, windows: [{ ...account.quota.windows[0]!, resetsAt: latest.resetsAt + 86400000 }] } } }, quotaHistory: [first, latest, old] });
+    expect(document.querySelectorAll('#quota-estimates .quota-chart-point[data-current=true]')).toHaveLength(0);
+    expect(document.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('history');
+  });
+  it('uses the last full-quota start for labels and current status, closing it immediately on a new full reading', () => {
+    const now = Date.parse('2026-10-27T23:30:00+07:00'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
+    const scope = { provider: 'Codex' as const, accountId: usageAccount('Codex', identity)!.id, plan: 'plus', label: 'Weekly' as const };
+    const from = now - 86400000;
+    const sample: QuotaObservation = { ...scope, from, to: now, resetsAt: now + 6 * 86400000, observedTokens: 1000, usedPercent: 20,
+      cycleStartedAt: from, cycleStartKnown: true, startUsedPercent: 0 };
+    const account = { status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const,
+      windows: [{ id: 'weekly', label: '7d', resetsAt: now + 2 * 86400000, usedPercent: 20 }] } };
+    const quotaCycleStarts = [{ ...scope, from, startUsedPercent: 0, usedPercent: 20, to: now }];
+    render({ ...value, data: undefined, accounts: { Codex: account }, quotaCycleStarts, quotaHistory: [sample] });
+    const root = document.querySelector('#quota-estimates')!;
+    expect(root.querySelector('th')?.textContent).toBe('Cycle start');
+    expect(root.querySelectorAll('.quota-chart-point[data-current=true]')).toHaveLength(1);
+    expect(root.querySelector('.quota-recorded-period')?.textContent).toBe(`${new Date(from).toLocaleString()} – ${new Date(now).toLocaleString()}`);
+    expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
+    vi.spyOn(Date, 'now').mockReturnValue(now + 60000);
+    render({ ...value, data: undefined, accounts: { Codex: { ...account, updatedAt: now + 60000,
+      quota: { ...account.quota, windows: [{ ...account.quota.windows[0]!, usedPercent: 0 }] } } }, quotaCycleStarts, quotaHistory: [sample] });
+    expect(document.querySelectorAll('#quota-estimates .quota-chart-point[data-current=true]')).toHaveLength(0);
+    expect(document.querySelector('.quota-trend-history tbody td')?.textContent).not.toContain('current');
+    expect(document.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('history');
+    const partial = { ...sample, cycleStartKnown: false, startUsedPercent: 30, usedPercent: 10 };
+    render({ ...value, data: undefined, accounts: { Codex: account }, quotaCycleStarts: [{ ...quotaCycleStarts[0]!, startUsedPercent: 30, usedPercent: 40 }], quotaHistory: [partial] });
+    expect(document.querySelector('.quota-trend-history tbody td')?.textContent).toContain('partial');
+    expect(document.querySelector('.quota-interval-chart')?.textContent).toContain('100% start not observed');
+    expect(document.querySelector('.quota-interval-chart')?.textContent).toContain('70% → 60%');
+    expect(document.querySelector('#quota-estimates')?.textContent).toMatch(/≈ 6[kK] tokens left/);
   });
   it('shows persisted API baseline progress and then the API ratio without local attribution', () => {
     const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
@@ -712,6 +763,48 @@ describe('Settings usage dashboard', () => {
     expect(api.textContent).toContain('API token activity unavailable'); expect(api.querySelector('strong')).toBeNull();
     choose('filter-provider', 'Claude'); expect(api.textContent).toContain('No personal-account token activity API');
   });
+  it('shows matching Local range usage when daily API reporting lags, and clears the fallback for a reported zero', () => {
+    const identity = { signedIn: true, email: 'one@test.invalid', method: 'ChatGPT', id: 'workspace-one' };
+    const account = usageAccount('Codex', identity)!;
+    const other = usageAccount('Codex', { ...identity, id: 'workspace-two', email: 'two@test.invalid' })!;
+    const raw = { summary: { lifetimeTokens: 9000000 }, dailyUsageBuckets: [{ startDate: '2026-10-08', tokens: 100 }] };
+    const status = { status: 'ready' as const, account: identity, usage: codexTokenActivity(raw, account.id, Date.now()) };
+    const fixture = { ...value, accounts: { Codex: status }, data: { ...value.data!, days: [
+      { ...row('2026-10-09', 'Codex', 'one-model', 1200000), account },
+      { ...row('2026-10-09', 'Codex', 'two-model', 200000), account },
+      { ...row('2026-10-08', 'Codex', 'one-model', 9000000), account },
+      { ...row('2026-10-09', 'Codex', 'one-model', 9000000), account: other },
+      row('2026-10-09', 'Codex', 'one-model', 9000000), row('2026-10-09', 'Claude', 'one-model', 9000000),
+    ] } };
+    render(fixture);
+    choose('filter-range', 'custom'); choose('filter-from', '2026-10-09'); choose('filter-to', '2026-10-10');
+    const api = document.querySelector('#api-activity')!;
+    expect(api.querySelector('.api-activity-coverage')!.textContent).toContain('through 2026-10-08');
+    expect(api.querySelector('.api-activity-coverage')!.textContent).toContain('have not been reported');
+    expect(api.querySelector('.api-activity-local [title]')!.getAttribute('title')).toBe('1,400,000 local tokens');
+    expect(api.querySelector('strong')!.getAttribute('title')).toBe('Not reported by API');
+    choose('filter-model', 'one-model');
+    expect(api.querySelector('.api-activity-local [title]')!.getAttribute('title')).toBe('1,200,000 local tokens');
+    const scroll = vi.fn(); document.getElementById('totals')!.scrollIntoView = scroll;
+    api.querySelector<HTMLButtonElement>('.api-activity-local button')!.click(); expect(scroll).toHaveBeenCalled();
+    render({ ...fixture, accounts: { Codex: { ...status, usage: codexTokenActivity({ ...raw, dailyUsageBuckets: [{ startDate: '2026-10-09', tokens: 0 }] }, account.id) } } });
+    expect(api.querySelector('.api-activity-local')).toBeNull();
+    expect(api.querySelector('strong')!.getAttribute('title')).toBe('0');
+    choose('filter-provider', 'Claude'); expect(api.querySelector('.api-activity-local')).toBeNull();
+  });
+  it('keeps partially reported API range totals visible with their latest reported date', () => {
+    const identity = { signedIn: true, email: 'one@test.invalid', method: 'ChatGPT' };
+    const account = usageAccount('Codex', identity)!;
+    render({ ...value, accounts: { Codex: { status: 'ready', account: identity, usage: codexTokenActivity({
+      dailyUsageBuckets: [{ startDate: '2026-10-08', tokens: 100 }, { startDate: '2026-10-09', tokens: 200 }],
+    }, account.id) } } });
+    choose('filter-range', 'custom'); choose('filter-from', '2026-10-08'); choose('filter-to', '2026-10-10');
+    const api = document.querySelector('#api-activity')!;
+    expect(api.querySelector('strong')!.getAttribute('title')).toBe('300');
+    expect(api.querySelector('.api-activity-coverage')!.textContent).toContain('through 2026-10-09');
+    expect(api.querySelector('.api-activity-coverage')!.textContent).toContain('have not been reported');
+    expect(api.querySelector('.api-activity-local')).toBeNull();
+  });
   it('scopes account usage and quota together without switching native sign-in', () => {
     const one = usageAccount('Codex', { signedIn: true, email: 'one@test.invalid', method: 'ChatGPT' })!;
     const two = usageAccount('Codex', { signedIn: true, email: 'two@test.invalid', method: 'ChatGPT' })!;
@@ -725,6 +818,9 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#account-breakdown')!.textContent).toContain('Unknown account');
     const quotaBefore = document.querySelector('#quota-estimates')!.textContent;
     choose('filter-account', one.id);
+    expect(document.querySelector('#account-detail-title')!.textContent).toBe('one@test.invalid');
+    expect(document.querySelector('#account-detail-meta')!.textContent).toContain('Codex');
+    expect(document.querySelector('#account-detail-meta')!.textContent).not.toContain('Unattributed history');
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('200');
     expect(document.querySelector('#period-breakdown')!.textContent).toContain('one-model');
     expect(document.querySelector('#period-breakdown')!.textContent).not.toContain('two-model');
