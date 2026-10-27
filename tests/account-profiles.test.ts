@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, access } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { AccountProfiles } from '../src/core/account-profiles';
+import { claudeKeychainService } from '../src/core/claude-keychain';
 
 const roots: string[] = [];
 async function setup() {
@@ -99,11 +100,39 @@ describe('Native account profiles', () => {
     expect(JSON.stringify(await store.read())).not.toContain('secret');
     await rollback(); expect(await readFile(path.join(home, '.credentials.json'), 'utf8')).toBe(original);
   });
+  it('uses the macOS Keychain item ahead of the plaintext file, like the Claude CLI', async () => {
+    const { root, home } = await setup(), items = new Map<string, { account: string; content: string }>();
+    const keychain = { read: async (service: string) => items.get(service), write: async (service: string, account: string, content: string) => { items.set(service, { account, content }); }, remove: async (service: string) => { items.delete(service); } };
+    const store = new AccountProfiles(path.join(root, 'accounts'), () => home, undefined, keychain);
+    const native = claudeKeychainService(home), original = JSON.stringify({ claudeAiOauth: { accessToken: 'native-secret' } });
+    await expect(store.importCurrent('Claude')).rejects.toThrow('No native sign-in found');
+    items.set(native, { account: 'claude-code-user', content: original });
+    const saved = await store.importCurrent('Claude', { signedIn: true, method: 'Claude account', email: 'old@test' });
+    expect(await readFile(path.join(store.home(saved.id), '.credentials.json'), 'utf8')).toBe(original);
+    // A profile added with `claude auth login` on macOS only exists in its hashed Keychain item.
+    const added = await store.create('Claude'), selected = JSON.stringify({ claudeAiOauth: { accessToken: 'selected-secret' } });
+    items.set(claudeKeychainService(store.home(added.id)), { account: 'me', content: selected });
+    const rollback = await store.apply(added.id);
+    expect(items.get(native)).toEqual({ account: 'claude-code-user', content: selected });
+    await expect(access(path.join(home, '.credentials.json'))).rejects.toThrow();
+    await rollback(); expect(items.get(native)?.content).toBe(original);
+    await store.import('Claude', JSON.stringify({ claudeAiOauth: { accessToken: 'rotated-secret' } }), { signedIn: true, method: 'Claude account', email: 'old@test' });
+    expect(items.get(claudeKeychainService(store.home(added.id)))?.content).toBe(selected);
+    await store.identify(added.id, { signedIn: true, method: 'Claude account', email: 'new@test' });
+    await store.import('Claude', JSON.stringify({ claudeAiOauth: { accessToken: 'rotated-secret' } }), { signedIn: true, method: 'Claude account', email: 'new@test' });
+    expect(items.get(claudeKeychainService(store.home(added.id)))).toEqual({ account: 'me', content: JSON.stringify({ claudeAiOauth: { accessToken: 'rotated-secret' } }) });
+    await store.remove(added.id); expect(items.has(claudeKeychainService(store.home(added.id)))).toBe(false);
+  });
+  it('names Claude Keychain items the way the CLI does', () => {
+    expect(claudeKeychainService()).toBe('Claude Code-credentials');
+    expect(claudeKeychainService('/Users/me/profile')).toMatch(/^Claude Code-credentials-[0-9a-f]{8}$/);
+  });
   it('clears environment auth overrides for isolated quota reads and validates profile IDs', async () => {
-    const { store } = await setup(); vi.stubEnv('OPENAI_API_KEY', 'secret'); vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'secret');
+    const { store } = await setup(); vi.stubEnv('OPENAI_API_KEY', 'secret'); vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'secret'); vi.stubEnv('CLAUDE_SECURESTORAGE_CONFIG_DIR', '/elsewhere');
     const a = await store.create('Codex'), b = await store.create('Claude');
     expect(store.environment(a).OPENAI_API_KEY).toBeUndefined(); expect(store.environment(a).CODEX_HOME).toBe(store.home(a.id));
     expect(store.environment(b).ANTHROPIC_AUTH_TOKEN).toBeUndefined(); expect(store.environment(b).CLAUDE_CONFIG_DIR).toBe(store.home(b.id));
+    expect(store.environment(b).CLAUDE_SECURESTORAGE_CONFIG_DIR).toBeUndefined();
     expect(() => store.home('../../native')).toThrow('Invalid account profile');
     await expect(store.import('Codex', '"credential-private-text')).rejects.toThrow('Invalid native account JSON');
   });

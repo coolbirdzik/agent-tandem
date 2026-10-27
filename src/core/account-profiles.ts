@@ -9,6 +9,7 @@ import { usageAccount } from './usage-account';
 import { withStorageLock } from './storage-lock';
 import type { RollbackProgress } from './account-switch';
 import { assertAccountIdentity, codexAuthIdentity, sameAccountIdentity } from './account-identity';
+import { claudeKeychainService, macKeychain, type ClaudeKeychain } from './claude-keychain';
 
 export interface AccountProfile { id: string; provider: AccountProvider; label: string; identity?: AccountIdentity; createdAt: number }
 export interface ProfileRegistry { version: 1; profiles: AccountProfile[] }
@@ -35,16 +36,25 @@ function json(content: string) {
 // Older builds labelled a profile from a signed-out read before sign-in finished.
 const placeholderLabel = (label: string) => label === 'New account' || label === 'Not signed in';
 const authFile = (provider: AccountProvider) => !isChatAccount(provider) ? 'sign-in.json' : provider === 'Codex' ? 'auth.json' : '.credentials.json';
-export const claudeMetadata = (home: string) => path.resolve(home) === path.resolve(path.join(os.homedir(), '.claude')) && !process.env.CLAUDE_CONFIG_DIR ? path.join(os.homedir(), '.claude.json') : path.join(home, '.claude.json');
+const defaultClaude = (home: string) => path.resolve(home) === path.resolve(path.join(os.homedir(), '.claude')) && !process.env.CLAUDE_CONFIG_DIR;
+export const claudeMetadata = (home: string) => defaultClaude(home) ? path.join(os.homedir(), '.claude.json') : path.join(home, '.claude.json');
+const claudeService = (home: string) => claudeKeychainService(defaultClaude(home) ? undefined : home);
 /** Only native auth files live in private profile homes. The registry/webview never contains tokens. */
 export class AccountProfiles {
-  constructor(readonly root: string, private defaults: (provider: AccountProvider) => string | Promise<string> = nativeHome, readonly desktop = new DesktopAccounts()) {}
+  constructor(readonly root: string, private defaults: (provider: AccountProvider) => string | Promise<string> = nativeHome, readonly desktop = new DesktopAccounts(),
+    private keychain: ClaudeKeychain | undefined = process.platform === 'darwin' ? macKeychain : undefined) {}
+  // The CLI reads its Keychain item before the plaintext fallback file, so mirror that order.
+  private async credentials(provider: AccountProvider, home: string) {
+    if (provider === 'Claude') { const item = await this.keychain?.read(claudeService(home)); if (item) return item.content; }
+    return optional(path.join(home, authFile(provider)));
+  }
   home(id: string) { if (!validId(id)) throw new Error('Invalid account profile.'); return path.join(this.root, 'profiles', id); }
   environment(profile: AccountProfile): NodeJS.ProcessEnv {
     if (!isChatAccount(profile.provider)) throw new Error('Desktop accounts use the native app sign-in.');
     const env = { ...process.env, [profile.provider === 'Codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR']: this.home(profile.id) };
     // Environment credentials must not silently override the selected native sign-in.
-    for (const key of profile.provider === 'Codex' ? ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'] : ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL']) env[key] = undefined;
+    // CLAUDE_SECURESTORAGE_CONFIG_DIR would point the profile at another Keychain item.
+    for (const key of profile.provider === 'Codex' ? ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'] : ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']) env[key] = undefined;
     return env;
   }
   async read(): Promise<ProfileRegistry> {
@@ -99,8 +109,8 @@ export class AccountProfiles {
       const snapshot = await this.desktop.snapshot(provider, home);
       return this.import(provider, JSON.stringify(snapshot), identity || await this.desktop.identity(snapshot));
     }
-    const content = await optional(path.join(home, authFile(provider)));
-    if (!content) throw new Error('No native sign-in file found. Use Add account to sign in.');
+    const content = await this.credentials(provider, home);
+    if (!content) throw new Error('No native sign-in found. Use Add account to sign in.');
     if (provider === 'Codex') {
       const actual = codexAuthIdentity(json(content));
       if (actual) { assertAccountIdentity(identity, actual); identity = actual; }
@@ -120,7 +130,10 @@ export class AccountProfiles {
     const existing = identityKey && (await this.read()).profiles.find(row => row.provider === provider && sameAccountIdentity(row.identity, identity));
     const profile = existing || await this.create(provider, identity?.email || 'New account');
     await withStorageLock(this.home(profile.id), async () => {
-      await atomic(path.join(this.home(profile.id), authFile(provider)), JSON.stringify(auth));
+      // A profile signed in (or refreshed) by the macOS CLI lives in Keychain, which outranks the file.
+      const item = provider === 'Claude' ? await this.keychain?.read(claudeService(this.home(profile.id))) : undefined;
+      if (item) await this.keychain!.write(claudeService(this.home(profile.id)), item.account, JSON.stringify(auth));
+      else await atomic(path.join(this.home(profile.id), authFile(provider)), JSON.stringify(auth));
       if (metadata && provider === 'Claude') {
         const value = json(metadata), clean = Object.fromEntries(['oauthAccount', 'hasCompletedOnboarding'].filter(key => value[key] !== undefined).map(key => [key, value[key]]));
         await atomic(path.join(this.home(profile.id), '.claude.json'), JSON.stringify(clean));
@@ -133,10 +146,13 @@ export class AccountProfiles {
   async apply(id: string, onRollback?: RollbackProgress): Promise<() => Promise<void>> {
     const profile = await this.get(id), home = await this.defaults(profile.provider);
     if (!isChatAccount(profile.provider)) return this.desktop.apply(await readDesktopSignIn(path.join(this.home(id), 'sign-in.json'), profile.provider), home, onRollback);
-    const content = await optional(path.join(this.home(id), authFile(profile.provider)));
+    const content = await this.credentials(profile.provider, this.home(id));
     if (!content) throw new Error('Finish signing in before switching.');
     json(content);
-    const writes = new Map<string, string>([[path.join(home, authFile(profile.provider)), content]]);
+    const writes = new Map<string, string>();
+    const item = profile.provider === 'Claude' ? await this.keychain?.read(claudeService(home)) : undefined;
+    const keychain = item && { service: claudeService(home), account: item.account, old: item.content };
+    if (!keychain) writes.set(path.join(home, authFile(profile.provider)), content);
     if (profile.provider === 'Claude') {
       const file = claudeMetadata(home), current = json(await optional(file) || '{}');
       const meta = json(await optional(path.join(this.home(id), '.claude.json')) || '{}');
@@ -150,10 +166,16 @@ export class AccountProfiles {
     for (const file of writes.keys()) backups.set(file, await optional(file));
     const rollback = async () => {
       onRollback?.('running');
-      try { for (const [file, old] of backups) { if (old === undefined) await unlink(file).catch(error => { if (!missing(error)) throw error; }); else await atomic(file, old); } onRollback?.('success'); }
-      catch (error) { onRollback?.('error'); throw error; }
+      try {
+        if (keychain) await this.keychain!.write(keychain.service, keychain.account, keychain.old);
+        for (const [file, old] of backups) { if (old === undefined) await unlink(file).catch(error => { if (!missing(error)) throw error; }); else await atomic(file, old); }
+        onRollback?.('success');
+      } catch (error) { onRollback?.('error'); throw error; }
     };
-    try { for (const [file, value] of writes) await atomic(file, value); } catch (error) { await rollback(); throw error; }
+    try {
+      if (keychain) await this.keychain!.write(keychain.service, keychain.account, content);
+      for (const [file, value] of writes) await atomic(file, value);
+    } catch (error) { await rollback(); throw error; }
     return rollback;
   }
   async rename(id: string, label: string) {
@@ -164,6 +186,8 @@ export class AccountProfiles {
     await withStorageLock(this.root, async () => {
       const profile = await this.get(id);
       for (const file of [authFile(profile.provider), '.claude.json']) await unlink(path.join(this.home(id), file)).catch(error => { if (!missing(error)) throw error; });
+      const item = profile.provider === 'Claude' ? await this.keychain?.read(claudeService(this.home(id))) : undefined;
+      if (item) await this.keychain!.remove(claudeService(this.home(id)), item.account);
       const data = await this.read(); data.profiles = data.profiles.filter(row => row.id !== id); await this.save(data);
     });
   }
