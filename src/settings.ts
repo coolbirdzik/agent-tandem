@@ -1252,9 +1252,10 @@ function renderNativeDialog(value: UsageDashboardState['conversationCleanup']) {
     const failures = result?.failures ?? [], skipped = result?.skipped ?? [];
     status = failures.length ? 'error' : removed ? (kept.length || skipped.length ? 'warning' : 'success') : 'empty';
     icon = failures.length ? 'error' : removed ? (status === 'warning' ? 'warning' : 'check') : 'info';
-    title = failures.length ? 'Cleanup finished with problems' : removed ? 'Cleanup complete' : 'Nothing was deleted';
+    title = result?.cancelled ? 'Cleanup cancelled' : failures.length ? 'Cleanup finished with problems' : removed ? 'Cleanup complete' : 'Nothing was deleted';
     summary = [removed ? `Deleted ${plural(removed, 'conversation')} and freed ${fileSize(result!.bytes)}.` : 'No conversation could be deleted.',
       kept.length + skipped.length ? `${plural(kept.length + skipped.length, 'conversation')} kept.` : '', failures.length ? `${plural(failures.length, 'problem')} reported.` : ''].filter(Boolean).join(' ');
+    if (result?.cancelled) summary = `${removed ? summary : 'Nothing was deleted.'} Remaining deletions were cancelled.`;
     section('failures', 'Problems', failures.map(failure => ({ title: failure })), true);
     section('kept', 'Kept', [...kept.map(row => ({ title: row.title, detail: row.reason })), ...skipped.map(key => ({ title: titles[key] ?? key, detail: 'Changed or became protected during cleanup.' }))], !removed || kept.length + skipped.length <= 5);
     section('removed', 'Deleted', (result?.removed ?? []).map(key => ({ title: titles[key] ?? key })));

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, utimes, unlink, rm, readFile, symlink } from
 import os from 'node:os';
 import path from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
-import { ConversationCleanup, type CleanupConversation } from '../src/core/conversation-cleanup';
+import { ConversationCleanup, type CleanupConversation, type ConversationCleanupPlan } from '../src/core/conversation-cleanup';
 import { transcriptPrefix } from '../src/providers/transcript-prefix';
 
 const roots: string[] = [];
@@ -30,6 +30,59 @@ async function compress(file: string, keepPlain = false) {
 }
 
 describe('Native conversation cleanup', () => {
+  it('waits for confirmation with the exact expanded count and cancels without deleting', async () => {
+    const f = await fixture(); await f.session('Codex', ids[0]!); await f.session('Codex', ids[1]!, false, ids[0]);
+    let answer!: (confirmed: boolean) => void;
+    const confirm = vi.fn((_plan: ConversationCleanupPlan) => new Promise<boolean>(resolve => { answer = resolve; }));
+    const job = f.cleaner.deleteMatching({ before: Date.now(), provider: 'Codex' }, { confirm });
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+    expect(confirm.mock.calls[0]![0].conversations).toHaveLength(2);
+    expect(f.remove).not.toHaveBeenCalled();
+    answer(false);
+    const state = await job;
+    expect(state.result).toMatchObject({ removed: [], cancelled: true });
+    expect(state.conversations).toHaveLength(2); expect(f.remove).not.toHaveBeenCalled();
+  });
+  it('revalidates transcripts after confirmation before deleting', async () => {
+    const f = await fixture(), file = await f.session('Codex', ids[0]!);
+    await expect(f.cleaner.deleteSelected([`Codex:${ids[0]}`], Date.now(), { confirm: async () => {
+      await writeFile(file, await readFile(file, 'utf8') + '{}\n'); await age(file); return true;
+    } })).rejects.toThrow('changed');
+    expect(f.remove).not.toHaveBeenCalled();
+  });
+  it('pauses immediately on an error until Skip is chosen', async () => {
+    const f = await fixture(); for (const id of ids) await f.session('Codex', id);
+    f.remove.mockRejectedValueOnce(new Error('Locked'));
+    let answer!: (choice: 'skip') => void;
+    const onError = vi.fn((_row: CleanupConversation, _reason: string) => new Promise<'skip'>(resolve => { answer = resolve; }));
+    const job = f.cleaner.deleteMatching({ before: Date.now() }, { onError });
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    expect(f.remove).toHaveBeenCalledOnce(); expect(onError.mock.calls[0]![1]).toBe('Locked');
+    answer('skip');
+    expect((await job).result).toMatchObject({ removed: expect.any(Array), failures: [expect.stringContaining('Locked')] });
+    expect(f.remove).toHaveBeenCalledTimes(3);
+  });
+  it('limits Skip All to the same provider and exact error and resets it each run', async () => {
+    const f = await fixture(); for (const id of ids) await f.session('Codex', id);
+    f.remove.mockRejectedValueOnce(new Error('Locked')).mockRejectedValueOnce(new Error('Locked')).mockRejectedValueOnce(new Error('Permission denied'));
+    const onError = vi.fn(async (_row: CleanupConversation, _reason: string) => 'skipAll' as const);
+    const first = await f.cleaner.deleteMatching({ before: Date.now() }, { onError });
+    expect(first.result!.failures).toHaveLength(3); expect(onError.mock.calls.map(call => call[1])).toEqual(['Locked', 'Permission denied']);
+    f.remove.mockRejectedValue(new Error('Locked')); onError.mockClear();
+    await f.cleaner.deleteMatching({ before: Date.now() }, { onError });
+    expect(onError).toHaveBeenCalledOnce();
+    await f.session('Claude', ids[0]!); onError.mockClear();
+    await f.cleaner.deleteMatching({ before: Date.now() }, { onError });
+    expect(onError.mock.calls.map(call => call[0].provider).sort()).toEqual(['Claude', 'Codex']);
+  });
+  it('stops after Cancel and reports already completed deletions', async () => {
+    const f = await fixture(); for (const id of ids) await f.session('Codex', id);
+    const remove = f.remove.getMockImplementation()!;
+    f.remove.mockImplementationOnce(remove).mockRejectedValueOnce(new Error('Locked'));
+    const state = await f.cleaner.deleteMatching({ before: Date.now() }, { onError: async () => 'cancel' });
+    expect(state.result).toMatchObject({ cancelled: true, failures: [expect.stringContaining('Locked')] });
+    expect(state.result!.removed).toHaveLength(1); expect(state.conversations).toHaveLength(2); expect(f.remove).toHaveBeenCalledTimes(2);
+  });
   it('uses the last user/assistant message beyond the prefix, ignores later tool records and reads compressed history', async () => {
     const f = await fixture(), plain = await f.session('Codex', ids[0]!);
     const metadata = await readFile(plain, 'utf8');

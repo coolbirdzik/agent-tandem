@@ -68,6 +68,7 @@ import { spawn as launchDesktopProcess } from 'node:child_process';
 import { withStorageLock } from './core/storage-lock';
 import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeletionPlan, type StorageProgress } from './core/storage';
 import { ConversationCleanup, type ConversationCleanupState, type DeletionProgress } from './core/conversation-cleanup';
+import { conversationCleanupPrompts } from './host/conversation-cleanup-prompts';
 import { deleteCodexThread } from './providers/codex-history-mutation';
 import { addFreed, storageFreed } from './core/storage-freed';
 import { shouldWarnStorage, storageSize, storageWarningBytes, type ExtensionStorageUsage } from './core/storage-usage';
@@ -824,9 +825,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.scanConversationCleanup', () => conversationCleanupAction(async () => { conversationCleanup.cancel(); return conversationCleanup.inspect(); }));
   register('agentTandem.previewConversationCleanup', value => conversationCleanupAction(() => conversationCleanup.preview((value as { keys?: unknown } | undefined)?.keys)));
   register('agentTandem.deleteConversations', async value => {
-    // Clicking Delete selected/all matching authorizes the selected keys or the filters, with their date cutoff.
     const request = value as { token?: unknown; keys?: unknown; before?: unknown; filter?: unknown } | undefined;
     const progress: DeletionProgress = {
+      ...conversationCleanupPrompts(request ?? {}),
       signal: conversationCleanupDisposed.signal,
       dates: dates => { conversationCleanupState = { ...conversationCleanupState, dates }; settings.update(); },
       deleting: (done, total) => { conversationCleanupState = { ...conversationCleanupState, dates: undefined, done, total }; settings.update(); }
@@ -835,7 +836,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       ? conversationCleanup.deleteMatching(request.filter, progress)
       : request?.keys !== undefined
         ? conversationCleanup.deleteSelected(request.keys, request.before, progress)
-        : conversationCleanup.delete(request?.token, progress.deleting)), true);
+        : conversationCleanup.delete(request?.token, progress)), true);
     const deleted = conversationCleanupState.result;
     if (deleted) await recordFreed({ bytes: deleted.bytes, conversations: deleted.removed.length });
     await syncConversations().catch(report);

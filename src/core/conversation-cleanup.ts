@@ -21,9 +21,15 @@ export interface ConversationCleanupPlan { token: string; createdAt: number; con
 export interface ConversationKept { key: string; title: string; reason: string }
 export interface ConversationCleanupResult {
   removed: string[]; bytes: number; skipped: string[]; failures: string[];
-  kept?: ConversationKept[]; titles?: Record<string, string>;
+  kept?: ConversationKept[]; titles?: Record<string, string>; cancelled?: boolean;
 }
-export interface DeletionProgress { deleting?: (done: number, total: number) => void; dates?: (dates: { done: number; total: number }) => void; signal?: AbortSignal }
+export interface DeletionProgress {
+  deleting?: (done: number, total: number) => void;
+  dates?: (dates: { done: number; total: number }) => void;
+  confirm?: (plan: ConversationCleanupPlan) => Promise<boolean>;
+  onError?: (row: CleanupConversation, reason: string) => Promise<'skip' | 'skipAll' | 'cancel'>;
+  signal?: AbortSignal;
+}
 export interface ConversationCleanupState {
   status: 'idle' | 'loading' | 'ready' | 'cleaning' | 'error'; roots: Record<ConversationProvider, string>;
   conversations?: CleanupConversation[]; errors?: string[]; error?: string;
@@ -262,7 +268,7 @@ export class ConversationCleanup {
     if (!conversations.length) return { ...state, result: { removed: [], bytes: 0, skipped: [], failures: [], kept, titles: {} } };
     this.plan = { token: randomUUID(), createdAt: Date.now(), conversations, bytes: conversations.reduce((sum, row) => sum + row.bytes, 0) };
     progress.deleting?.(0, conversations.length);
-    const next = await this.delete(this.plan.token, progress.deleting);
+    const next = await this.delete(this.plan.token, progress);
     return { ...next, result: { ...next.result!, kept } };
   }
   async deleteSelected(keys: unknown, before: unknown, progress: DeletionProgress = {}): Promise<ConversationCleanupState> {
@@ -281,20 +287,27 @@ export class ConversationCleanup {
     const state = await this.exactDates(await this.inspect(), progress);
     return this.deleteEligible(state, state.conversations!.filter(row => matchesConversation(row, filter)).map(row => row.key), filter.before, progress);
   }
-  async delete(token: unknown, progress: (done: number, total: number) => void = () => {}): Promise<ConversationCleanupState> {
+  async delete(token: unknown, options: DeletionProgress | ((done: number, total: number) => void) = {}): Promise<ConversationCleanupState> {
+    const progress = typeof options === 'function' ? { deleting: options } : options;
     const plan = this.plan; this.cancel();
     if (!plan || token !== plan.token || Date.now() - plan.createdAt > 10 * 60 * 1000) throw new Error('Preview conversation deletion again before deleting.');
+    const result: ConversationCleanupResult = { removed: [], bytes: 0, skipped: [], failures: [], titles: Object.fromEntries(plan.conversations.map(row => [row.key, row.title])) };
+    if (progress.signal?.aborted || (progress.confirm && !await progress.confirm(plan))) {
+      result.cancelled = true;
+      return { ...await this.inspect(), result };
+    }
     const current = await this.inspect();
     if (current.errors?.length) throw new Error('Transcript scan failed. Nothing was deleted.');
     const fresh = this.expand(current.conversations!, new Set(plan.conversations.map(row => row.key)));
     if (fresh.length !== plan.conversations.length || plan.conversations.some(row => {
       const latest = fresh.find(item => item.key === row.key); return !latest || latest.blocked || fingerprint(latest) !== fingerprint(row);
     })) throw new Error('Conversations changed or became protected. Preview deletion again.');
-    const result: ConversationCleanupResult = { removed: [], bytes: 0, skipped: [], failures: [], titles: Object.fromEntries(plan.conversations.map(row => [row.key, row.title])) };
+    const ignoredErrors = new Set<string>();
     const remaining = new Set(fresh.map(row => row.key));
     // Children first: a parent's native deletion may cascade to spawned children.
     const pending = new Map(plan.conversations.map(row => [row.key, row]));
     while (pending.size) {
+      if (progress.signal?.aborted) { result.cancelled = true; break; }
       const row = [...pending.values()].find(item => ![...pending.values()].some(child => child.parent === item.key));
       if (!row) { result.failures.push('Cyclic conversation ancestry. Remaining conversations were kept.'); break; }
       pending.delete(row.key);
@@ -320,8 +333,16 @@ export class ConversationCleanup {
           remaining.delete(row.key);
           result.removed.push(row.key); result.bytes += row.bytes;
         }
-      } catch (error) { result.failures.push(`${row.provider} · ${row.title}: ${message(error)}`); }
-      progress(result.removed.length + result.skipped.length + result.failures.length, plan.conversations.length);
+      } catch (error) {
+        const reason = message(error), signature = JSON.stringify([row.provider, reason]);
+        result.failures.push(`${row.provider} · ${row.title}: ${reason}`);
+        if (progress.onError && !ignoredErrors.has(signature)) {
+          const choice = await progress.onError(row, reason);
+          if (choice === 'cancel') { result.cancelled = true; break; }
+          if (choice === 'skipAll') ignoredErrors.add(signature);
+        }
+      }
+      progress.deleting?.(result.removed.length + result.skipped.length + result.failures.length, plan.conversations.length);
     }
     return { ...await this.inspect(), result };
   }
