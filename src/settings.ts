@@ -696,6 +696,14 @@ function renderQuotaPace() {
     plot.onpointerleave = () => { cross.hidden = tip.hidden = true; };
     const axis = node('div', undefined, 'burn-axis-labels'); axis.append(node('span', measured ? burnTime(burn.start, long) : `Since ${burnTime(burn.start, long)}`), node('span', `Reset ${burnTime(burn.end, long)}`));
     item.append(plot, axis);
+    const legend = node('div', undefined, 'chart-legend burn-legend'); legend.setAttribute('aria-hidden', 'true');
+    for (const [label, style, visible] of [['Remaining', 'burn-actual', true], ['Even pace', 'burn-ideal', measured], ['Projection', 'burn-projection', !!rate && rate > 0]] as const) {
+      if (!visible) continue;
+      const key = node('span'), sample = svgNode('svg', { viewBox: '0 0 24 8' });
+      sample.append(svgNode('line', { x1: 1, y1: 4, x2: 23, y2: 4, class: style }));
+      key.append(sample, document.createTextNode(label)); legend.append(key);
+    }
+    item.append(legend);
     if (burn.stale) item.append(node('small', 'Quota sample is older than 5 minutes', 'muted'));
     root.append(item);
   }
