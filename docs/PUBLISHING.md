@@ -47,6 +47,8 @@ Pushing a semantic version tag such as `v0.1.1` creates a GitHub Release after t
 
 Start from a clean, up-to-date `main`, choose one bump command, then release:
 
+Before running the bump command, prepare and commit `CHANGELOG.md`: move the changes being released from `[Unreleased]` into a `[X.Y.Z] - YYYY-MM-DD` section for the intended version, group them under the applicable Keep a Changelog categories, and update the version comparison links. Keep `[Unreleased]` for subsequent work. Check that the intended version follows Semantic Versioning and that the bump command will produce it. Historical entries reconstructed from package version commits use those commit dates and comparison hashes where tags are unavailable; new releases should use their actual release dates and `vX.Y.Z` tags.
+
 ```powershell
 git switch main
 git pull --ff-only
