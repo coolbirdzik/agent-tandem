@@ -2,7 +2,7 @@
   "name": "agent-tandem",
   "displayName": "AgentTandem — Claude Code & Codex Chat, Code Review & Usage",
   "description": "Chat with Claude Code and Codex, review code changes, restore checkpoints, resume conversations and track usage in VS Code.",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "publisher": "agent-tandem-local",
   "private": true,
   "repository": {
