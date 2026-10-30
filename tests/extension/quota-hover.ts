@@ -16,7 +16,12 @@ export async function activate(context: vscode.ExtensionContext) {
   ] };
   state.extensionStorage = { status: 'ready', total: 1.4 * 1024 ** 3, files: 2400, checkedAt: now, warningBytes: 1024 ** 3,
     categories: [{ label: 'Review snapshots & tracking', bytes: 1.2 * 1024 ** 3, files: 2100 }, { label: 'Chat attachments', bytes: 204.8 * 1024 ** 2, files: 300 }] };
-  const actions: string[] = [], bar = new QuotaStatusBar();
+  const actions: string[] = [], bar = new QuotaStatusBar(async () => {
+    // Exercise the native lazy tooltip callback without querying a real account.
+    state.managedAccounts![1]!.status!.quota!.windows[0]!.usedPercent = 16;
+    update();
+    await record('hover-check');
+  });
   // Regression input: an old summary window and a second saved copy of Work.
   // Neither may survive as a duplicate or override the current quota in the native hover.
   status.quota.windows.unshift({ ...status.quota.windows[0]!, usedPercent: 100 });

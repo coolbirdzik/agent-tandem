@@ -899,6 +899,20 @@ describe('Settings usage dashboard', () => {
     choose('filter-provider', 'Claude'); choose('filter-range', 'all');
     expect(root.textContent).toBe(before);
   });
+  it('filters Yesterday as the previous local calendar date across month and year boundaries', () => {
+    const clock = vi.spyOn(Date, 'now');
+    for (const [today, yesterday] of [[new Date(2026, 9, 1, 0, 15), '2026-09-30'], [new Date(2027, 0, 1, 23, 45), '2026-12-31']] as const) {
+      clock.mockReturnValue(today.getTime());
+      render({ ...value, data: { ...value.data!, days: [row(yesterday, 'Codex', 'codex-model', 200), row(today.getFullYear() === 2027 ? '2027-01-01' : '2026-10-01', 'Codex', 'codex-model', 900)] } });
+      choose('filter-range', 'yesterday');
+      expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('200');
+      expect(document.querySelectorAll('#period-breakdown tr.period-row')).toHaveLength(1);
+      expect(document.getElementById('custom-dates')!.hidden).toBe(true);
+      render({ ...value, data: { ...value.data!, days: [row(yesterday, 'Codex', 'codex-model', 400)] } });
+      expect((document.getElementById('filter-range') as HTMLSelectElement).value).toBe('yesterday');
+      expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('400');
+    }
+  });
   it('defaults to today with daily grouping and resets to today after browsing other ranges', () => {
     vi.spyOn(Date, 'now').mockReturnValue(new Date(2026, 9, 9, 12).getTime());
     render();

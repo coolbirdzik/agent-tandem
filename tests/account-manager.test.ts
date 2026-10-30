@@ -126,6 +126,7 @@ describe('Account switching controller', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('publishes saved quota before querying the CLI, keeps it after a failed refresh and updates it after success', async () => {
+    let now = Date.now(); const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-managed-quota-'));
     try {
       const store = new AccountProfiles(root), row = await store.create('Codex', 'Work');
@@ -137,15 +138,38 @@ describe('Account switching controller', () => {
       const reopened = new AccountManager(new AccountProfiles(root), deps); await reopened.publish();
       expect(read).not.toHaveBeenCalled();
       expect(reopened.state.managedAccounts?.[0]?.status).toMatchObject({ quotaCached: true, updatedAt: status.updatedAt, quota: status.quota });
+      now += 60001;
       let fail!: (error: Error) => void; read.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
       const refreshing = reopened.refresh(); await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
       expect(reopened.state.managedAccounts?.[0]?.status?.quota).toEqual(status.quota);
       fail(new Error('Offline')); await refreshing;
       expect(reopened.state.managedAccounts?.[0]?.status).toMatchObject({ status: 'error', quotaCached: true, updatedAt: status.updatedAt, quota: status.quota });
-      status.updatedAt! += 1000; status.quota!.windows[0]!.usedPercent = 40; await reopened.refresh();
+      await reopened.refresh(); expect(read).toHaveBeenCalledOnce();
+      now += 11 * 60000;
+      status.updatedAt = now; status.quota!.windows[0]!.usedPercent = 40; await reopened.refresh();
       expect(reopened.state.managedAccounts?.[0]?.status?.quota?.windows[0]?.usedPercent).toBe(40);
       expect(reopened.state.managedAccounts?.[0]?.status?.quotaCached).toBeUndefined();
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally { clock.mockRestore(); await rm(root, { recursive: true, force: true }); }
+  });
+  it('shares the ten-minute saved-account cache across hover and background refreshes, including after restart', async () => {
+    let now = Date.now(); const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-hover-quota-'));
+    try {
+      const store = new AccountProfiles(root), row = await store.create('Claude', 'Work');
+      const identity = { signedIn: true, method: 'Claude account', email: 'work@test' }; await store.identify(row.id, identity);
+      const read = vi.fn(async () => ({ status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 25 }] } }));
+      const refreshing: boolean[] = [];
+      const deps = { busy: () => false, project: () => root, current: () => undefined, read, executable: vi.fn(), changed: vi.fn(), update: () => { refreshing.push(!!manager.state.accountsRefreshing); } };
+      const manager = new AccountManager(store, deps);
+      await Promise.all([manager.refresh(undefined, true), manager.refresh(undefined, true)]); expect(read).toHaveBeenCalledOnce();
+      expect(refreshing).toContain(true); refreshing.length = 0;
+      now += 9 * 60000; await manager.refresh(undefined, true); expect(read).toHaveBeenCalledOnce();
+      expect(refreshing).not.toContain(true);
+      const reopened = new AccountManager(new AccountProfiles(root), deps);
+      await reopened.refresh(undefined, true); expect(read).toHaveBeenCalledOnce();
+      now += 60001; await reopened.refresh(undefined, true); expect(read).toHaveBeenCalledTimes(2);
+      expect(reopened.state.managedAccounts?.[0]?.status?.quotaCached).toBeUndefined();
+    } finally { clock.mockRestore(); await rm(root, { recursive: true, force: true }); }
   });
   it('interrupts a pending quota refresh to switch without waiting for other saved accounts', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-switch-refresh-')), home = path.join(root, 'native'); await mkdir(home);

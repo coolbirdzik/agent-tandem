@@ -330,6 +330,10 @@ function dateRange(): { from?: string; to?: string } {
   const range = el<HTMLSelectElement>('filter-range').value, today = localDay(Date.now());
   el('custom-dates').hidden = range !== 'custom';
   if (range === 'today') return { from: today, to: today };
+  if (range === 'yesterday') {
+    const date = new Date(Date.now()); date.setDate(date.getDate() - 1);
+    const yesterday = localDay(date.getTime()); return { from: yesterday, to: yesterday };
+  }
   if (range === 'week') return { from: periodKey(today, 'week'), to: today };
   if (range === 'month') return { from: `${today.slice(0, 7)}-01`, to: today };
   if (range === 'year') return { from: `${today.slice(0, 4)}-01-01`, to: today };

@@ -11,6 +11,7 @@ export function readStatusBarPreferences(config: vscode.WorkspaceConfiguration):
 }
 
 export class QuotaStatusBar implements vscode.Disposable {
+  constructor(private refreshSaved?: () => Promise<void>) {}
   private items = new Map<ConversationProvider, vscode.StatusBarItem>();
   private rendered = new Map<ConversationProvider, string>();
   private visible = new Set<ConversationProvider>();
@@ -27,6 +28,16 @@ export class QuotaStatusBar implements vscode.Disposable {
         const item = vscode.window.createStatusBarItem(`agentTandem.quota.${provider.toLowerCase()}`, preferences.alignment === 'left' ? vscode.StatusBarAlignment.Left : vscode.StatusBarAlignment.Right, 25 - index);
         item.name = `AgentTandem ${provider === 'Claude' ? 'Claude Code' : provider} quota`;
         item.command = { command: 'agentTandem.quickAccounts', title: 'Quota & quick account switch', arguments: [provider] }; this.items.set(provider, item);
+        // Optional proposed API. Stable/marketplace builds retain the cached tooltip
+        // and the regular background refresh when hover callbacks are unavailable.
+        if (this.refreshSaved && 'tooltip2' in item) {
+          try {
+            (item as vscode.StatusBarItem & { tooltip2: (token: vscode.CancellationToken) => Promise<vscode.MarkdownString | string | undefined> }).tooltip2 = async token => {
+              if (!token.isCancellationRequested) await this.refreshSaved!().catch(() => undefined);
+              return item.tooltip;
+            };
+          } catch { /* Proposal not enabled in this host. */ }
+        }
       }
     }
     const values = quotaStatuses(state, preferences);

@@ -46,6 +46,7 @@
     "onStartupFinished"
   ],
   "enabledApiProposals": [
+    "statusBarItemTooltip",
     "contribEditorContentMenu",
     "editorInsets"
   ],

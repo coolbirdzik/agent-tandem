@@ -11,12 +11,12 @@ const light = process.argv.includes('--light'), suffix = light ? '-light' : '';
 await mkdir(fixture, { recursive: true }); await mkdir(path.join(profile, 'User'), { recursive: true }); await mkdir(path.join(root, 'artifacts'), { recursive: true });
 const manifest = JSON.parse(await readFile('package.json', 'utf8'));
 await mkdir(path.join(fixture, 'media'), { recursive: true }); await copyFile('media/provider-icons.ttf', path.join(fixture, 'media', 'provider-icons.ttf'));
-await writeFile(path.join(fixture, 'package.json'), JSON.stringify({ name: 'quota-hover-fixture', publisher: 'agent-tandem-tests', version: '1.0.0', engines: { vscode: '^1.100.0' }, main: './main.cjs', activationEvents: ['onStartupFinished'], contributes: { icons: manifest.contributes.icons } }));
+await writeFile(path.join(fixture, 'package.json'), JSON.stringify({ name: 'quota-hover-fixture', publisher: 'agent-tandem-tests', version: '1.0.0', engines: { vscode: '^1.100.0' }, enabledApiProposals: ['statusBarItemTooltip'], main: './main.cjs', activationEvents: ['onStartupFinished'], contributes: { icons: manifest.contributes.icons } }));
 await writeFile(path.join(profile, 'User', 'settings.json'), JSON.stringify({ 'window.restoreWindows': 'none', 'workbench.startupEditor': 'none', 'window.zoomLevel': 0, 'workbench.colorTheme': light ? 'Default Light Modern' : 'Default Dark Modern', 'extensions.autoCheckUpdates': false, 'agentTandem.statusBarProviders': 'codex', 'agentTandem.statusBarFields': ['quota'] }));
 await build({ entryPoints: ['tests/extension/quota-hover.ts'], outfile: path.join(fixture, 'main.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['vscode'] });
 const listener = net.createServer(); await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve)); const port = listener.address().port; await new Promise(resolve => listener.close(resolve));
 const env = { ...process.env, AGENT_TANDEM_HOVER_REPORT: report }; delete env.ELECTRON_RUN_AS_NODE;
-const child = spawn(process.env.VSCODE_EXECUTABLE_PATH || path.join(process.env.LOCALAPPDATA, 'Programs/Microsoft VS Code/Code.exe'), ['--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--extensionDevelopmentPath', fixture, `--remote-debugging-port=${port}`, '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'], { env, windowsHide: true, stdio: 'ignore' });
+const child = spawn(process.env.VSCODE_EXECUTABLE_PATH || path.join(process.env.LOCALAPPDATA, 'Programs/Microsoft VS Code/Code.exe'), ['--user-data-dir', profile, '--extensions-dir', path.join(runtime, 'extensions'), '--extensionDevelopmentPath', fixture, '--enable-proposed-api', 'agent-tandem-tests.quota-hover-fixture', `--remote-debugging-port=${port}`, '--new-window', '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust'], { env, windowsHide: true, stdio: 'ignore' });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(get, label) { const start = Date.now(); while (Date.now() - start < 30000) { const value = await get().catch(() => undefined); if (value) return value; await pause(150); } throw new Error(`Timed out: ${label}`); }
 let ws;
@@ -42,7 +42,9 @@ try {
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point }); await call('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
   };
   await hover();
+  await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('hover-check'), 'lazy hover quota check');
   const text = await evaluate(`document.querySelector('.monaco-hover').innerText`); assert.match(text, /Reset usage/); assert.match(text, /Work/); assert.match(text, /24% left/);
+  assert.match(text, /84% left/, 'Hover renders the updated saved-account quota');
   assert.equal(text.match(/24% left/g)?.length, 1, 'Current quota appears once');
   assert.doesNotMatch(text, /Work old copy|0% left/, 'Stale duplicate quota and saved profile are omitted');
   assert.match(text, /Extension storage/i); assert.match(text, /1.4 GB/); assert.match(text, /Above 1 GB/);
@@ -58,7 +60,7 @@ try {
   const shot = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(path.join(root, 'artifacts', `quota-hover-native${suffix}.png`), Buffer.from(shot.data, 'base64'));
   const hoverRect = await evaluate(`(()=>{const r=document.querySelector('.monaco-hover').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,scale:1}})()`);
   const crop = await call('Page.captureScreenshot', { format: 'png', clip: hoverRect }); await mkdir(path.join(root, 'media', 'screenshots'), { recursive: true });
-  await writeFile(path.join(root, light ? 'artifacts' : 'media/screenshots', `account-hover${suffix}.png`), Buffer.from(crop.data, 'base64'));
+  await writeFile(path.join(root, 'artifacts', `account-hover${suffix}.png`), Buffer.from(crop.data, 'base64'));
   await clickLink('Open dashboard'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('dashboard'), 'dashboard link');
   await hover(); await clickLink('Manage storage'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('storage'), 'storage link');
   for (const [label, scope] of [['Clean accepted', 'accepted'], ['Clean all', 'all']]) {

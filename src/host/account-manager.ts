@@ -7,6 +7,7 @@ import { withStorageLock } from '../core/storage-lock';
 import { randomUUID } from 'node:crypto';
 import type { AccountSwitchLog } from '../core/account-switch';
 import { AccountQuotaCache } from '../core/account-quota-cache';
+import { QuotaRefreshPolicy, quotaRetryAfter } from '../core/quota-refresh-policy';
 import { assertAccountIdentity, accountIdentityMatches, sameAccountIdentity, AccountIdentityMismatchError } from '../core/account-identity';
 
 interface Dependencies {
@@ -30,30 +31,43 @@ export class AccountManager {
   private job?: Promise<void>;
   private refreshAbort?: AbortController;
   private quotaCache: AccountQuotaCache;
+  private quotaRefresh = new QuotaRefreshPolicy();
   constructor(readonly store: AccountProfiles, private deps: Dependencies) { this.quotaCache = new AccountQuotaCache(store.root); }
   async rememberQuota(provider: AccountProvider, status: ProviderAccountStatus) {
     await this.quotaCache.remember(provider, status);
     return this.quotaCache.restore(provider, status);
   }
-  async refresh(signal?: AbortSignal) {
+  async refresh(signal?: AbortSignal, background = false) {
     if (this.state.accountsBusy) return;
     if (this.job) return this.job;
     if (signal?.aborted) return;
     const abort = new AbortController(); this.refreshAbort = abort;
     const stop = () => abort.abort(); signal?.addEventListener('abort', stop, { once: true });
-    this.state.accountsRefreshing = true; this.deps.update();
+    // A cache-only hover must not toggle the tooltip's refreshing state: that
+    // would invalidate the lazy tooltip and cause another hover resolution.
+    const markRefreshing = () => { if (!this.state.accountsRefreshing) { this.state.accountsRefreshing = true; this.deps.update(); } };
     this.job = (async () => {
+      await this.quotaCache.load();
       const profiles = (await this.store.read()).profiles;
       for (const provider of ['Cursor', 'Antigravity'] as const) if (profiles.some(row => row.provider === provider)) {
         if (abort.signal.aborted) return;
-        try { const status = await this.deps.read(provider, abort.signal); if (!abort.signal.aborted) this.desktopCurrent.set(provider, status); } catch { if (!abort.signal.aborted) this.desktopCurrent.delete(provider); }
+        if (!this.quotaRefresh.due(provider, background, this.desktopCurrent.get(provider)?.updatedAt)) continue;
+        markRefreshing();
+        this.quotaRefresh.start(provider);
+        try { const status = await this.deps.read(provider, abort.signal); if (!abort.signal.aborted) { this.desktopCurrent.set(provider, status); this.quotaRefresh.complete(provider, status.status === 'error', status.quota?.retryAfterAt); } }
+        catch (error) { if (!abort.signal.aborted) { this.desktopCurrent.delete(provider); this.quotaRefresh.complete(provider, true, quotaRetryAfter(error)); } }
       }
       for (const id of this.statuses.keys()) if (!profiles.some(row => row.id === id)) this.statuses.delete(id);
-      for (let offset = 0; offset < profiles.length; offset += 2) await Promise.all(profiles.slice(offset, offset + 2).map(async row => {
+      // Read saved accounts sequentially to avoid a burst of subscription queries.
+      for (const row of profiles) {
         if (abort.signal.aborted) return;
+        const native = this.current(row.provider), id = profileIdentityKey(row.provider, row.identity);
+        const active = !!id && id === profileIdentityKey(row.provider, native?.account);
+        const refreshKey = id ?? row.id;
+        const saved = this.statuses.get(row.id) ?? this.quotaCache.restore(row.provider, { status: 'ready', account: row.identity });
+        if (!active && !this.quotaRefresh.due(refreshKey, background, saved.updatedAt)) continue;
         try {
-          const native = this.current(row.provider), id = profileIdentityKey(row.provider, row.identity);
-          const active = !!id && id === profileIdentityKey(row.provider, native?.account);
+          if (!active) { markRefreshing(); this.quotaRefresh.start(refreshKey); }
           const status = active && native ? native : await this.deps.read(row, abort.signal);
           if (abort.signal.aborted) return;
           // The default CLI owns token rotation while this account is active.
@@ -61,11 +75,15 @@ export class AccountManager {
           if (active && status.status === 'ready' && status.account) await this.store.importCurrent(row.provider, status.account);
           assertAccountIdentity(row.identity, status.account);
           if (status.status === 'ready' && status.account) await this.store.identify(row.id, status.account);
+          if (!active) this.quotaRefresh.complete(refreshKey, status.status === 'error' || status.quota?.status === 'error', status.quota?.retryAfterAt);
           this.statuses.set(row.id, await this.rememberQuota(row.provider, status));
         }
-        catch (error) { if (!abort.signal.aborted) this.statuses.set(row.id, this.quotaCache.restore(row.provider, { status: 'error', account: row.identity, error: error instanceof AccountIdentityMismatchError ? error.message : 'Could not refresh this sign-in.' })); }
+        catch (error) { if (!abort.signal.aborted) {
+          if (!active) this.quotaRefresh.complete(refreshKey, true, quotaRetryAfter(error));
+          this.statuses.set(row.id, this.quotaCache.restore(row.provider, { status: 'error', account: row.identity, error: error instanceof AccountIdentityMismatchError ? error.message : 'Could not refresh this sign-in.' }));
+        } }
         if (!abort.signal.aborted) await this.publish();
-      }));
+      }
       if (abort.signal.aborted) return;
       await this.deps.observed?.(profiles.filter(row => isChatAccount(row.provider)).flatMap(row => this.statuses.get(row.id) ? [this.statuses.get(row.id)!] : []));
       await this.publish();

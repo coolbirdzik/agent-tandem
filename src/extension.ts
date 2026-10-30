@@ -213,7 +213,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const preview = new TandemView(context.extensionUri, () => state,
     async (command, selected) => vscode.commands.executeCommand(command, selected), report);
   const attributionStore = new UsageAttributionStore(path.join(context.globalStorageUri.fsPath, 'usage'));
-  const quotaBar = new QuotaStatusBar(), trackingBar = new TrackingStatusBar(), usageHistory = new UsageHistory(undefined, usageAccounts, path.join(context.globalStorageUri.fsPath, 'usage', 'history-cache'),
+  const quotaBar = new QuotaStatusBar(async () => { await accountManager.refresh(undefined, true); }), trackingBar = new TrackingStatusBar(), usageHistory = new UsageHistory(undefined, usageAccounts, path.join(context.globalStorageUri.fsPath, 'usage', 'history-cache'),
     { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts) });
   const storage = new StorageManager(context.globalStorageUri.fsPath);
   let storageState: StorageState = { status: 'idle', root: storage.root }, cleanupPlan: CleanupPlan | undefined;
@@ -559,7 +559,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     await recordQuotaHistory();
     await refreshUsageDashboard();
     await accountManager.publish();
-    if (settings.visible && !accountManager.state.accountsBusy && accountManager.state.managedAccounts?.length) await accountManager.refresh();
+    if (!accountManager.state.accountsBusy && accountManager.state.managedAccounts?.length) await accountManager.refresh(undefined, true);
   }
   function resetAccounts() {
     for (const job of accountJobs.values()) job.abort.abort(); accountJobs.clear(); state.accounts = {}; refreshAccounts();

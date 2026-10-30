@@ -57,6 +57,8 @@ Quota rows use theme colors: green for healthy, amber at 25% remaining or less, 
 
 The hover and status bar use the same current quota snapshot. Repeated limit windows and saved copies of the same account appear once; hover percentages show quota **remaining**, and saved quota is marked **Cached quota**. A profile named after its email does not repeat that email on the next line.
 
+Saved-account quota is checked in the background at most once every ten minutes, even with Settings closed. Opening the status-bar hover checks the same cache when VS Code enables `statusBarItemTooltip`; other builds use the background snapshot. Manual refresh has a one-minute cooldown. Reads are sequential, overlapping refreshes share one job, and failures back off from ten minutes up to two hours with jitter. A longer `Retry-After` is honored when the CLI exposes it, following [OpenAI's error guidance](https://developers.openai.com/api/docs/guides/error-codes) and [Anthropic's rate-limit guidance](https://platform.claude.com/docs/en/api/rate-limits). These cache intervals are AgentTandem defaults, not provider-published polling limits.
+
 Saved profile identity is checked against credential metadata before native sign-in is mirrored. A different account cannot overwrite a saved profile or supply its plan/quota. Expired sign-ins keep their saved identity and require signing in again.
 
 ![Native VS Code quota hover with active account, saved-account switch links, Reset usage and Open dashboard](media/screenshots/account-hover.png)

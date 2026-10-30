@@ -5,12 +5,13 @@ import { findExecutable } from './probe';
 import { terminateProcessTree } from './process';
 import { codexTokenActivity, type ProviderTokenActivity } from '../core/api-token-activity';
 import { usageAccount } from '../core/usage-account';
+import { quotaRetryAfter } from '../core/quota-refresh-policy';
 
 export interface AccountIdentity { signedIn: boolean; id?: string; email?: string; plan?: string; organization?: string; method: string }
 export interface QuotaWindow { id: string; label: string; usedPercent: number; resetsAt?: number }
 export interface BankedReset { title?: string; expiresAt?: number }
 export interface BankedResets { availableCount: number; credits?: BankedReset[] }
-export interface AccountQuota { status: 'available' | 'unavailable' | 'error'; windows: QuotaWindow[]; detail?: string; credits?: string; bankedResets?: BankedResets }
+export interface AccountQuota { status: 'available' | 'unavailable' | 'error'; windows: QuotaWindow[]; detail?: string; credits?: string; bankedResets?: BankedResets; retryAfterAt?: number }
 /** Only display fields cross the host/webview boundary; never credentials or raw RPC payloads. */
 export interface ProviderAccountStatus { status: 'loading' | 'ready' | 'error'; account?: AccountIdentity; quota?: AccountQuota; usage?: ProviderTokenActivity; updatedAt?: number; quotaCached?: boolean; error?: string }
 export interface AccountReadOptions { refreshToken?: boolean }
@@ -112,7 +113,7 @@ export async function readCodexAccount(project: string, configured = '', signal?
       const message = JSON.parse(line), p = pending.get(message.id); if (!p) return;
       pending.delete(message.id);
       if (p.timer) clearTimeout(p.timer);
-      if (message.error) p.reject(new Error('Codex could not read this account data.')); else p.resolve(message.result);
+      if (message.error) p.reject(Object.assign(new Error('Codex could not read this account data.'), { retryAfterAt: quotaRetryAfter(message.error) })); else p.resolve(message.result);
     } catch { fail(new Error('Invalid Codex account response.')); }
   });
   const call = (method: string, params: unknown, timeoutMs?: number): Promise<any> => new Promise((resolve, reject) => {
@@ -139,7 +140,7 @@ export async function readCodexAccount(project: string, configured = '', signal?
     let quota = unavailable(account.signedIn ? 'Subscription quota is not available for this authentication method.' : 'Sign in to view quota.');
     if (account.signedIn && account.method === 'ChatGPT') {
       try { quota = codexQuota(await call('account/rateLimits/read', {})); }
-      catch { signal?.throwIfAborted(); quota = { status: 'error', windows: [], detail: 'Could not refresh quota. Try again.' }; }
+      catch (error) { signal?.throwIfAborted(); quota = { status: 'error', windows: [], detail: 'Could not refresh quota. Try again.', retryAfterAt: quotaRetryAfter(error) }; }
       try { usage = codexTokenActivity(await call('account/usage/read', {}, 8000), usageAccount('Codex', account)?.id, Date.now()); }
       catch { signal?.throwIfAborted(); usage = { source: 'API', status: 'error', detail: 'Could not read account/usage/read. The CLI or account may not support token activity. Refresh to retry.' }; }
     }
@@ -184,7 +185,7 @@ export async function readClaudeAccount(project: string, query: typeof sdkQuery,
         const usage = await bounded(stream.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }));
         if (text(usage.subscription_type)) account.plan = text(usage.subscription_type);
         quota = claudeQuota(usage);
-      } catch { signal?.throwIfAborted(); quota = { status: 'error', windows: [], detail: 'Could not refresh quota. Try again.' }; }
+      } catch (error) { signal?.throwIfAborted(); quota = { status: 'error', windows: [], detail: 'Could not refresh quota. Try again.', retryAfterAt: quotaRetryAfter(error) }; }
     }
     return { status: 'ready', account, quota, updatedAt: Date.now() };
   } finally {
