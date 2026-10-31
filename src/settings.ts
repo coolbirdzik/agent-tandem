@@ -564,8 +564,11 @@ function renderManagedAccounts() {
   const root = el('managed-account-list'); root.replaceChildren();
   const busy = !!state?.accountsBusy;
   for (const id of ['accounts-refresh', 'account-add', 'account-save', 'account-import', 'account-provider', 'account-connect']) el<HTMLButtonElement>(id).disabled = busy;
-  el('managed-accounts').setAttribute('aria-busy', String(busy)); renderAccountConnection();
-  el('accounts-notice').textContent = busy ? 'Updating accounts…' : state?.accountsError ? '' : state?.accountSwitchBlocked || state?.accountsNotice || '';
+  const refreshing = !!state?.accountsRefreshing;
+  el<HTMLButtonElement>('accounts-refresh').disabled = busy || refreshing;
+  el('accounts-refresh').querySelector('.codicon')?.classList.toggle('codicon-modifier-spin', refreshing);
+  el('managed-accounts').setAttribute('aria-busy', String(busy || refreshing)); renderAccountConnection();
+  el('accounts-notice').textContent = busy ? 'Updating accounts…' : refreshing ? 'Refreshing sign-ins and quota…' : state?.accountsError ? '' : state?.accountSwitchBlocked || state?.accountsNotice || '';
   el('accounts-error').hidden = !state?.accountsError; el('accounts-error').textContent = state?.accountsError || '';
   const all = state?.managedAccounts ?? [], platforms = el('account-platforms'); platforms.replaceChildren();
   for (const provider of ['', ...ACCOUNT_PROVIDERS] as const) {

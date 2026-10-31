@@ -362,7 +362,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     switch: id => accountManager.action({ action: 'switch', id }),
     resetUsage: () => accountManager.action({ action: 'resetUsage', provider: 'Codex' }),
     open: async page => { await vscode.commands.executeCommand(page === 'dashboard' ? 'agentTandem.openSettings' : 'agentTandem.manageAccounts'); }, report });
-  context.subscriptions.push(quickAccounts);
+  context.subscriptions.push(quickAccounts, accountManager);
   function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state, dashboardState()); trackingBar.update(state); settings.update(); quickAccounts.update(); }
   async function recordQuotaHistory(data = usageState.data) {
     try {

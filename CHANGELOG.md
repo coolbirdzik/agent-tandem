@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Accounts: automatically update Claude Code and Codex profiles when terminal sign-in finishes. New credentials retry immediately after an earlier sign-in error; unchanged credentials retain quota backoff. Verify account identity before updating the saved profile, discard stale signed-out reads during login, and keep renewed credentials until explicitly switching to them, including across restarts. Show progress while refreshing accounts.
+
 - Review: select the file being reviewed in VS Code's Explorer as you move between changed files, in both the Monaco review and native diffs. Review files open from snapshots, so Explorer's own auto-reveal never followed them. Keyboard focus returns to the editor; deleted files are skipped. Turn off with `agentTandem.revealReviewFileInExplorer`.
 
 - Open Git image changes in AgentTandem's Before / After view. Clicking an image in Source Control, or a Git image diff tab restored after reload, no longer reaches VS Code's built-in binary image diff, which fails with "Cannot read properties of undefined (reading 'selection')" and closes. Staged changes compare HEAD → index, unstaged index → working tree (untracked as added), with file navigation across changed images. Also available as **AgentTandem: Open Image Changes**; turn off with `agentTandem.openGitImageDiffs`.

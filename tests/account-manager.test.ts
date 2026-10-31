@@ -2,14 +2,131 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-const ui = vi.hoisted(() => ({ terminal: vi.fn(), show: vi.fn() }));
-vi.mock('vscode', () => ({ window: { createTerminal: (options: unknown) => { ui.terminal(options); return { show: ui.show }; } } }));
+const ui = vi.hoisted(() => ({ terminal: vi.fn(), show: vi.fn(), closeListeners: new Set<(terminal: unknown) => void>(), terminals: [] as unknown[] }));
+vi.mock('vscode', () => ({ window: {
+  createTerminal: (options: unknown) => { ui.terminal(options); const terminal = { show: ui.show }; ui.terminals.push(terminal); return terminal; },
+  onDidCloseTerminal: (listener: (terminal: unknown) => void) => { ui.closeListeners.add(listener); return { dispose: () => ui.closeListeners.delete(listener) }; },
+} }));
 import { AccountManager } from '../src/host/account-manager';
 import { AccountProfiles, type AccountProfile } from '../src/core/account-profiles';
 import type { ConversationProvider } from '../src/providers/conversations';
 import type { AccountReadOptions, ProviderAccountStatus } from '../src/providers/account-status';
 
 describe('Account switching controller', () => {
+  it('automatically publishes a completed Claude sign-in after an earlier signed-out refresh', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-login-completed-'));
+    let manager: AccountManager | undefined;
+    try {
+      const store = new AccountProfiles(root);
+      let signedIn = false;
+      const read = vi.fn(async (): Promise<ProviderAccountStatus> => ({ status: 'ready', updatedAt: Date.now(),
+        account: signedIn ? { signedIn: true, method: 'Claude account', email: 'new@example.test', plan: 'pro' } : { signedIn: false, method: 'Not signed in' },
+        quota: { status: 'available', windows: signedIn ? [{ id: 'five_hour', label: '5h', usedPercent: 25 }] : [] } }));
+      manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined, read, executable: async () => 'claude.exe', changed: vi.fn(), update: vi.fn() });
+      await manager.action({ action: 'add', provider: 'Claude' });
+      const row = (await store.read()).profiles[0]!;
+      await manager.refresh(); expect(read).toHaveBeenCalledOnce();
+      signedIn = true;
+      await writeFile(path.join(store.home(row.id), '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'private-login-token' } }));
+      await writeFile(path.join(store.home(row.id), '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'new@example.test' } }));
+      await vi.waitFor(() => expect(manager!.state.managedAccounts?.[0]?.identity?.email).toBe('new@example.test'), { timeout: 5000 });
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(manager.state.managedAccounts?.[0]).toMatchObject({ label: 'new@example.test', status: { quota: { windows: [{ usedPercent: 25 }] } } });
+      await vi.waitFor(() => expect(manager!.state.accountsNotice).toContain('sign-in saved'));
+      expect(JSON.stringify(manager.state)).not.toContain('private-login-token');
+    } finally { manager?.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
+  it('retries immediately when credentials change, while keeping backoff for unchanged failed credentials', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-login-retry-'));
+    try {
+      const store = new AccountProfiles(root), row = await store.create('Claude');
+      const read = vi.fn<() => Promise<ProviderAccountStatus>>().mockRejectedValueOnce(new Error('Expired credentials')).mockResolvedValue({ status: 'ready', account: { signedIn: true, method: 'Claude account', email: 'renewed@example.test' }, updatedAt: Date.now() });
+      const manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined, read, executable: vi.fn(), changed: vi.fn(), update: vi.fn() });
+      await manager.refresh(); await manager.refresh(); expect(read).toHaveBeenCalledOnce();
+      await writeFile(path.join(store.home(row.id), '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'renewed-private-token' } }));
+      await manager.refresh(); expect(read).toHaveBeenCalledTimes(2);
+      expect(manager.state.managedAccounts?.[0]?.identity?.email).toBe('renewed@example.test');
+      expect(manager.state.managedAccounts?.[0]?.status?.status).toBe('ready');
+      await manager.refresh(); expect(read).toHaveBeenCalledTimes(2);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it.each(['signed-out', 'signed-in'])('does not consume a newer login when an older %s read finishes after the terminal closes', async mode => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-login-race-'));
+    let manager: AccountManager | undefined;
+    try {
+      const store = new AccountProfiles(root);
+      let finish!: (status: ProviderAccountStatus) => void;
+      const read = vi.fn<() => Promise<ProviderAccountStatus>>().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+        .mockResolvedValue({ status: 'ready', account: { signedIn: true, method: 'Claude account', email: 'latest@example.test' }, updatedAt: Date.now() });
+      manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined, read, executable: async () => 'claude.exe', changed: vi.fn(), update: vi.fn() });
+      await manager.action({ action: 'add', provider: 'Claude' });
+      const row = (await store.read()).profiles[0]!, file = path.join(store.home(row.id), '.credentials.json');
+      await writeFile(file, JSON.stringify({ claudeAiOauth: { accessToken: 'old-grant' } }));
+      for (const listener of ui.closeListeners) listener(ui.terminals.at(-1));
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+      await writeFile(file, JSON.stringify({ claudeAiOauth: { accessToken: 'new-grant' } }));
+      finish({ status: 'ready', account: mode === 'signed-out' ? { signedIn: false, method: 'Not signed in' } : { signedIn: true, method: 'Claude account', email: 'stale@example.test' } });
+      await vi.waitFor(() => expect(manager!.state.accountsNotice).toContain('sign-in saved'), { timeout: 6000 });
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(manager.state.managedAccounts?.[0]?.identity?.email).toBe('latest@example.test');
+    } finally { manager?.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
+  it('preserves a renewed sign-in for the same native account across restart until it is explicitly switched', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-login-activation-')), home = path.join(root, 'native'); await mkdir(home);
+    let manager: AccountManager | undefined;
+    try {
+      const store = new AccountProfiles(path.join(root, 'accounts'), () => home);
+      const identity = { signedIn: true, method: 'Claude account', email: 'same@example.test' };
+      const auth = (token: string) => JSON.stringify({ claudeAiOauth: { accessToken: token } });
+      const row = await store.import('Claude', auth('old'), identity);
+      await writeFile(path.join(home, '.credentials.json'), auth('old'));
+      const read = vi.fn(async (): Promise<ProviderAccountStatus> => ({ status: 'ready', account: identity, updatedAt: Date.now() }));
+      const deps = { busy: () => false, project: () => root, current: () => ({ status: 'ready' as const, account: identity, updatedAt: 1 }), read, executable: async () => 'claude.exe', changed: vi.fn(), update: vi.fn() };
+      manager = new AccountManager(store, deps);
+      await manager.action({ action: 'login', id: row.id });
+      await writeFile(path.join(store.home(row.id), '.credentials.json'), auth('renewed'));
+      for (const listener of ui.closeListeners) listener(ui.terminals.at(-1));
+      await vi.waitFor(() => expect(manager!.state.accountsNotice).toContain('sign-in saved'));
+      expect((await store.get(row.id)).needsActivation).toBe(true);
+      expect(manager.state.managedAccounts?.[0]?.active).toBe(false);
+      manager.dispose(); manager = new AccountManager(store, deps);
+      const nativeBackup = vi.spyOn(store, 'importCurrent');
+      await manager.refresh();
+      expect(await readFile(path.join(store.home(row.id), '.credentials.json'), 'utf8')).toBe(auth('renewed'));
+      expect(await readFile(path.join(home, '.credentials.json'), 'utf8')).toBe(auth('old'));
+      await manager.action({ action: 'switch', id: row.id });
+      expect(manager.state.accountSwitch?.status).toBe('success');
+      expect(await readFile(path.join(home, '.credentials.json'), 'utf8')).toBe(auth('renewed'));
+      expect((await store.get(row.id)).needsActivation).toBeUndefined();
+      expect(manager.state.managedAccounts?.[0]?.active).toBe(true);
+      expect(nativeBackup).not.toHaveBeenCalled();
+    } finally { manager?.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
+  it('verifies a terminal login against its saved identity and stops monitoring removed profiles', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-login-identity-'));
+    let manager: AccountManager | undefined;
+    try {
+      const store = new AccountProfiles(root), row = await store.create('Claude');
+      await store.identify(row.id, { signedIn: true, method: 'Claude account', email: 'expected@example.test' });
+      const read = vi.fn(async (): Promise<ProviderAccountStatus> => ({ status: 'ready', account: { signedIn: true, method: 'Claude account', email: 'different@example.test' } }));
+      manager = new AccountManager(store, { busy: () => false, project: () => root, current: () => undefined, read, executable: async () => 'claude.exe', changed: vi.fn(), update: vi.fn() });
+      const listenersBefore = ui.closeListeners.size;
+      await manager.action({ action: 'login', id: row.id });
+      const terminal = ui.terminals.at(-1);
+      await writeFile(path.join(store.home(row.id), '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'different-token' } }));
+      for (const listener of ui.closeListeners) listener(terminal);
+      await vi.waitFor(() => expect(manager!.state.managedAccounts?.[0]?.status?.error).toContain('different account'));
+      expect((await store.get(row.id)).identity?.email).toBe('expected@example.test');
+      expect(manager.state.accountsNotice).not.toContain('sign-in saved');
+      await manager.action({ action: 'login', id: row.id });
+      const removedTerminal = ui.terminals.at(-1);
+      await manager.action({ action: 'remove', id: row.id });
+      for (const listener of ui.closeListeners) listener(removedTerminal);
+      expect(ui.closeListeners.size).toBe(listenersBefore);
+      expect((await store.read()).profiles).toEqual([]);
+      expect(read).toHaveBeenCalledOnce();
+    } finally { manager?.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
   it('refreshes the selected saved Codex grant before applying it and saves native rotation for the next switch', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-switch-rotation-')), home = path.join(root, 'native'); await mkdir(home);
     try {
@@ -284,6 +401,7 @@ describe('Account switching controller', () => {
       expect(ui.terminal).toHaveBeenLastCalledWith(expect.objectContaining({ shellPath: 'claude.exe', shellArgs: ['auth', 'login'], env: expect.objectContaining({ CLAUDE_CONFIG_DIR: store.home(row.id) }) }));
       expect(ui.terminal).toHaveBeenLastCalledWith(expect.objectContaining({ env: expect.objectContaining({ ANTHROPIC_API_KEY: null, CLAUDE_CODE_OAUTH_TOKEN: null }) }));
       expect(ui.show).toHaveBeenCalled();
+      manager.dispose();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });

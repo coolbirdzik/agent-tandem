@@ -18,6 +18,19 @@ const credential = (email: string, id: string, plan = 'plus') => JSON.stringify(
   id_token: `header.${Buffer.from(JSON.stringify({ email, 'https://api.openai.com/auth': { chatgpt_account_id: id, chatgpt_plan_type: plan } })).toString('base64url')}.signature`, access_token: 'private-access' } });
 
 describe('Native account profiles', () => {
+  it('tracks credential and login metadata changes without treating unrelated settings as a new sign-in', async () => {
+    const { store } = await setup(), row = await store.create('Claude'), home = store.home(row.id);
+    expect(await store.authRevision(row)).toBeUndefined();
+    await writeFile(path.join(home, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'private-grant' } }));
+    const first = await store.authRevision(row); expect(first).toMatch(/^[a-f0-9]{64}$/);
+    await writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'one@example.test' }, theme: 'dark' }));
+    const identified = await store.authRevision(row); expect(identified).not.toBe(first);
+    await writeFile(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'one@example.test' }, theme: 'light', projects: {} }));
+    expect(await store.authRevision(row)).toBe(identified);
+    await writeFile(path.join(home, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'rotated-grant' } }));
+    expect(await store.authRevision(row)).not.toBe(identified);
+    expect(JSON.stringify(await store.read())).not.toContain('grant');
+  });
   it('recovers expired profile display metadata from its own credentials after an older refresh erased it', async () => {
     const { store } = await setup(), dev = { ...identity('dev@example.test'), id: 'dev', plan: 'prolite' };
     const profile = await store.import('Codex', credential(dev.email, dev.id, dev.plan), dev);

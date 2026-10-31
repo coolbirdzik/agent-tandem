@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile, rename, unlink, stat } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { isAccountProvider, isChatAccount, type AccountProvider } from './account-providers';
@@ -11,7 +11,7 @@ import type { RollbackProgress } from './account-switch';
 import { assertAccountIdentity, codexAuthIdentity, sameAccountIdentity } from './account-identity';
 import { claudeKeychainService, macKeychain, type ClaudeKeychain } from './claude-keychain';
 
-export interface AccountProfile { id: string; provider: AccountProvider; label: string; identity?: AccountIdentity; createdAt: number }
+export interface AccountProfile { id: string; provider: AccountProvider; label: string; identity?: AccountIdentity; createdAt: number; needsActivation?: boolean }
 export interface ProfileRegistry { version: 1; profiles: AccountProfile[] }
 export function nativeHome(provider: 'Codex' | 'Claude'): string;
 export function nativeHome(provider: AccountProvider): string | Promise<string>;
@@ -49,6 +49,16 @@ export class AccountProfiles {
     return optional(path.join(home, authFile(provider)));
   }
   home(id: string) { if (!validId(id)) throw new Error('Invalid account profile.'); return path.join(this.root, 'profiles', id); }
+  /** Host-only change marker. Never expose credential contents to the registry or UI. */
+  async authRevision(profile: AccountProfile): Promise<string | undefined> {
+    const home = this.home(profile.id), content = await this.credentials(profile.provider, home);
+    if (!content) return undefined;
+    const metadata = profile.provider === 'Claude' ? await optional(claudeMetadata(home)) : undefined;
+    // CLI settings also change during account/usage reads. Only login metadata
+    // belongs in the marker, otherwise a refresh could trigger another refresh.
+    const account = metadata ? json(metadata).oauthAccount : undefined;
+    return createHash('sha256').update(content).update(JSON.stringify(account) ?? '').digest('hex');
+  }
   environment(profile: AccountProfile): NodeJS.ProcessEnv {
     if (!isChatAccount(profile.provider)) throw new Error('Desktop accounts use the native app sign-in.');
     const env = { ...process.env, [profile.provider === 'Codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR']: this.home(profile.id) };
@@ -65,7 +75,7 @@ export class AccountProfiles {
     const profiles: AccountProfile[] = value.profiles.map((row: any) => {
       if (!row || !validId(row.id) || !isAccountProvider(row.provider) || typeof row.label !== 'string' || !Number.isFinite(row.createdAt)) throw new Error('Invalid account registry.');
       const a = row.identity, email = a?.signedIn === true && typeof a.email === 'string' && a.email.trim() ? a.email.trim() : undefined;
-      return { id: row.id, provider: row.provider, label: placeholderLabel(row.label) && email ? email : row.label, createdAt: row.createdAt,
+      return { id: row.id, provider: row.provider, label: placeholderLabel(row.label) && email ? email : row.label, createdAt: row.createdAt, ...(row.needsActivation === true ? { needsActivation: true } : {}),
         ...(a && typeof a.method === 'string' ? { identity: { signedIn: a.signedIn === true, method: a.method, ...Object.fromEntries(['id', 'email', 'plan', 'organization'].filter(k => typeof a[k] === 'string').map(k => [k, a[k]])) } } : {}) };
     });
     // Older refreshes replaced expired identities with "Not signed in". Recover display
@@ -93,11 +103,12 @@ export class AccountProfiles {
       data.profiles.push(profile); await this.save(data); return profile;
     });
   }
-  async identify(id: string, identity: AccountIdentity) {
+  async identify(id: string, identity: AccountIdentity, needsActivation?: boolean) {
     return withStorageLock(this.root, async () => {
       const data = await this.read(), profile = data.profiles.find(row => row.id === id);
       if (!profile) throw new Error('Account no longer exists.');
       assertAccountIdentity(profile.identity, identity);
+      if (needsActivation !== undefined) { if (needsActivation) profile.needsActivation = true; else delete profile.needsActivation; }
       profile.identity = { signedIn: identity.signedIn, method: identity.method, ...Object.fromEntries(['id', 'email', 'plan', 'organization'].filter(k => typeof identity[k as keyof AccountIdentity] === 'string').map(k => [k, identity[k as keyof AccountIdentity]])) };
       if (placeholderLabel(profile.label) && identity.signedIn) profile.label = identity.email || identity.method;
       await this.save(data);
