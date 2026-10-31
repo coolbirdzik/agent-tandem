@@ -131,7 +131,8 @@ function renderAttribution() {
   const list = el('attribution-assignments'); list.replaceChildren();
   for (const row of state?.data?.assignments ?? []) {
     const item = node('div', undefined, 'attribution-assignment'), label = node('span');
-    label.textContent = `${row.provider} · ${row.conversationId ? state?.conversationTitles?.[`${row.provider}:${row.conversationId}`] || row.conversationId : 'All conversations'} · ${row.from || 'Start'} – ${row.to || 'No end date'} → ${row.account ? usageAccountLabel(row.account) : 'Keep unknown'} · User confirmed`;
+    const scope = row.responseIds ? `${row.responseIds.length} selected responses` : `${row.from || 'Start'} – ${row.to || 'No end date'}`;
+    label.textContent = `${row.provider} · ${row.conversationId ? state?.conversationTitles?.[`${row.provider}:${row.conversationId}`] || row.conversationId : 'All conversations'} · ${scope} → ${row.account ? usageAccountLabel(row.account) : 'Keep unknown'} · User confirmed`;
     const remove = node('button', 'Remove assignment', 'quiet'); remove.disabled = !!state?.attributionBusy;
     remove.onclick = () => send('usageAttribution', { action: 'remove', id: row.id }); item.append(label, remove); list.append(item);
   }
@@ -1464,7 +1465,7 @@ function render(value: UsageDashboardState) {
   const root = el('usage-coverage'), coverage = node('details', undefined, 'usage-details');
   coverage.append(node('summary', 'Data & pricing details')); root.replaceChildren(coverage);
   coverage.append(node('div', 'Local usage includes saved history across projects, archived sessions and subagents. Other devices and deleted history are excluded. Input includes cache; output includes reported reasoning.'));
-  coverage.append(node('div', 'Native turn evidence takes priority. Codex creator IDs, Claude bridge owners and consistent Claude response identities can infer an account for other history in the same session; inferred sessions may include account switches. When a provider has only one known account on this device, history without evidence is inferred for it. User-confirmed assignments can replace inference and can be removed. Unmatched history stays under Unknown account. Local quota estimates use native evidence only; Device estimates also include inferred, user-confirmed and unknown history.'));
+  coverage.append(node('div', 'Native response and turn evidence takes priority, including account switches within one conversation. A Claude response account is never copied to other responses. Codex creator IDs do not identify the account for later turns. Claude bridge owners and a sole known Claude account can infer historical ownership. Other responses without account evidence stay under Unknown account. User-confirmed conversation or date assignments apply only where native evidence is missing and can be removed. Local quota estimates use native evidence only; Device estimates also include inferred, user-confirmed and unknown history.'));
   const pricing = node('div', `API equivalent uses published standard global token rates checked ${PRICING_CHECKED_AT}, not historical invoices. Prompt-length premiums are estimated per response; older session-wide billing cannot be reconstructed. Fast modes, tool fees, taxes and regional premiums are excluded. Unspecified Claude cache writes use the 5-minute rate. Sources: `);
   for (const provider of ['Codex', 'Claude'] as const) { const link = node('a', provider === 'Codex' ? 'OpenAI API pricing' : 'Claude API pricing'); link.href = PRICING_SOURCES[provider]; pricing.append(link, document.createTextNode(' ')); }
   coverage.append(pricing);

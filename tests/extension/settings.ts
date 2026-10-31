@@ -89,7 +89,7 @@ export async function run() {
   await profiles.identify(firstProfile.id, firstIdentity); await profiles.identify(secondProfile.id, secondIdentity);
   await vscode.commands.executeCommand('agentTandem.refreshUsageDashboard');
   const restored = api.usageDashboard().data!;
-  assert.equal(restored.days.filter(row => row.accountSource === 'inferred').reduce((sum, row) => sum + row.total, 0), 220, 'Saved creator ID restores historical Codex usage without inference requests');
+  assert.equal(restored.days.filter(row => row.provider === 'Codex' && row.account).length, 0, 'Saved creator ID never assigns historical Codex turns to the conversation creator');
   const conversationId = '11111111-1111-4111-8111-111111111111', secondAccount = usageAccount('Codex', secondIdentity)!;
   await vscode.commands.executeCommand('agentTandem.usageAttribution', { action: 'assign', scope: { provider: 'Codex', conversationId }, accountId: secondAccount.id });
   let assigned = api.usageDashboard(); assert.equal(assigned.attributionError, undefined);
@@ -100,7 +100,13 @@ export async function run() {
   assert.equal(api.usageDashboard().data!.assignments!.length, 1);
   await vscode.commands.executeCommand('agentTandem.usageAttribution', { action: 'remove', id: assigned.data!.assignments![0]!.id });
   assigned = api.usageDashboard(); assert.equal(assigned.attributionError, undefined); assert.equal(assigned.data!.assignments!.length, 0);
-  assert.equal(assigned.data!.days.filter(row => row.accountSource === 'inferred').reduce((sum, row) => sum + row.total, 0), 220, 'Removing a user assignment restores automatic matching');
+  assert.equal(assigned.data!.days.filter(row => row.provider === 'Codex' && row.account).length, 0, 'Removing a user assignment keeps Codex turns without native account evidence unknown');
+  await vscode.commands.executeCommand('agentTandem.usageAttribution', { action: 'assign', scope: { provider: 'Codex', conversationId, responseIds: ['Codex:codex1'] }, accountId: secondAccount.id });
+  const responseAssignment = api.usageDashboard().data!.assignments!.find(row => row.responseIds)!;
+  assert.deepEqual(responseAssignment.responseIds, ['Codex:codex1'], 'Exact response scopes survive the host command and persisted store');
+  assert.equal(api.usageDashboard().data!.days.filter(row => row.account?.id === secondAccount.id).reduce((sum, row) => sum + row.total, 0), 110, 'An exact response correction leaves unrelated history alone');
+  await vscode.commands.executeCommand('agentTandem.usageAttribution', { action: 'remove', id: responseAssignment.id });
+  assert.equal(api.usageDashboard().data!.assignments!.length, 0, 'Exact response corrections can be removed');
   const storedHistory = new HistoryStore(path.join(storage.root, 'reviews/history'), undefined, storage.root), id = randomUUID();
   const blob = await storedHistory.putBlob(Buffer.from('unused host snapshot'));
   const manifest = path.join(storedHistory.directory, 'snapshots', `${id}.json`); await mkdir(path.dirname(manifest), { recursive: true });
@@ -175,7 +181,7 @@ export async function run() {
   await assert.rejects(readFile(nativeFile), { code: 'ENOENT' });
   const report = { success: true, vscode: vscode.version, checks: ['Dashboard script and styles exist in the loaded extension', 'Activates automatically for the status bar without opening AgentTandem', 'Settings opens Dashboard in one reusable editor tab', 'Dashboard reads both providers across all projects including archived history', 'Duplicate Claude content blocks count once', 'API equivalent includes cache pricing and explicitly unpriced models', 'Recent usage exposes deduplicated timestamp/token metadata for quota estimates', 'Status bar visibility and dashboard grouping update persisted preferences'] };
   report.checks.push('Conversation usage preserves native IDs and deduplicated totals', 'Manage Accounts opens without importing or switching native sign-ins');
-  report.checks.push('Creator IDs restore inferred account history from saved profiles', 'User assignment changes one session without changing totals, shows invalid-account errors and restores inference on removal');
+  report.checks.push('Codex creator IDs never substitute for response or turn account evidence', 'User assignment changes one session without changing totals, shows invalid-account errors and restores unknown attribution on removal');
   report.checks.push('Status bar quick account popup opens without creating a Dashboard tab or importing sign-ins');
   report.checks.push('Storage shows the runtime data path and exact old-unused snapshot preview', 'Cleanup rejects unknown preview tokens and retains tracking baselines');
   report.checks.push('Background extension storage inventory reports measured bytes and a 1 GB alert threshold without opening cleanup');

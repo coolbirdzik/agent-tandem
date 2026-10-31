@@ -261,6 +261,10 @@ describe('Settings usage dashboard', () => {
     expect(postMessage.mock.lastCall![0].value.accountId).toBeNull();
     document.querySelector<HTMLButtonElement>('#attribution-assignments button')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'usageAttribution', value: { action: 'remove', id: 'saved' } });
+    render({ ...fixture, data: { ...fixture.data!, assignments: [{ id: 'responses', provider: 'Codex', conversationId: 'session', responseIds: ['Codex:first', 'Codex:second'], account }] } });
+    expect(document.querySelector('#attribution-assignments')!.textContent).toContain('2 selected responses');
+    document.querySelector<HTMLButtonElement>('#attribution-assignments button')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'usageAttribution', value: { action: 'remove', id: 'responses' } });
     render({ ...fixture, attributionBusy: true });
     expect((document.querySelector('#attribution-save') as HTMLButtonElement).disabled).toBe(true);
     expect((document.querySelector('#attribution-conversation') as HTMLSelectElement).value).toBe('session');

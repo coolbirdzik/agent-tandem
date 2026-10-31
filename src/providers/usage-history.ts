@@ -284,8 +284,9 @@ export class UsageHistory {
       await setImmediate();
     }
     stats.parseMs = performance.now() - parseStart;
-    // A provider with exactly one known identity on this device (signed in, saved or native metadata), and no
-    // turn evidence for another, can own history without evidence, e.g. Claude Code sessions run outside the extension.
+    // Claude sessions outside the extension can use consistent owner/sole-account evidence.
+    // Codex must use response/turn evidence: creator_account_id identifies the thread's
+    // creator, not the account billed for later turns after a resume or account switch.
     const soleAccounts = new Map<ConversationProvider, UsageAccount | null>();
     for (const { account } of known ?? []) {
       const previous = soleAccounts.get(account.provider);
@@ -296,7 +297,9 @@ export class UsageHistory {
     for (const row of records.values()) {
       if (row.provider !== 'Claude' || !row.conversationId) continue;
       const owner = row.creatorAccountId ? creators.get(`Claude:${row.creatorAccountId}`) : undefined;
-      const evidence = row.account ?? owner;
+      // A response proves only its own account. Resuming this conversation may
+      // bill another account even before that account's evidence is available.
+      const evidence = owner;
       const previous = claudeSessions.get(row.conversationId);
       if (row.accountConflict || row.creatorConflict || (row.creatorAccountId && !owner) ||
         (row.account && owner && row.account.id !== owner.id) || (previous && evidence && previous.id !== evidence.id)) claudeSessions.set(row.conversationId, null);
@@ -310,9 +313,9 @@ export class UsageHistory {
       if (row.kind === 'legacy' && row.equivalent && nativeAliases.has(row.equivalent)) { duplicates++; continue; }
       const day = localDay(row.timestamp);
       if (!row.account) {
-        const assignment = matchingAssignment(assignments ?? [], row.provider, row.conversationId, day);
+        const assignment = matchingAssignment(assignments ?? [], row.provider, row.conversationId, day, row.id);
         if (assignment) { row.account = assignment.account ?? undefined; row.accountSource = 'manual'; }
-        else if (!row.accountConflict && !row.creatorConflict) {
+        else if (row.provider === 'Claude' && !row.accountConflict && !row.creatorConflict) {
           const session = row.provider === 'Claude' && row.conversationId ? claudeSessions.get(row.conversationId) : undefined;
           if (session !== null) row.account = (row.creatorAccountId ? creators.get(`${row.provider}:${row.creatorAccountId}`) : session ?? soleAccounts.get(row.provider)) ?? undefined;
           if (row.account) row.accountSource = 'inferred';

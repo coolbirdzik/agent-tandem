@@ -100,7 +100,7 @@ Filter by **provider, account, model and date range**, including custom dates. G
 
 **API activity and Local totals are displayed separately and never added together.** Codex API activity depends on CLI/account support; Claude token details come from local history. Model filters apply to Local usage. Missing API metrics remain unavailable, and unknown model prices remain **Unpriced**.
 
-Account attribution preserves native per-turn evidence. Older Codex history may be labeled **Inferred from session creator**; unmatched history stays **Unknown account**. **Assign history to an account** lets you confirm a conversation/date range or keep it unknown without rewriting native transcripts.
+Account attribution preserves native per-response and per-turn evidence across account switches within a conversation. Codex history without that evidence stays **Unknown account**, even when the conversation creator is known. **Assign history to an account** lets you confirm a conversation/date range or keep it unknown without rewriting native transcripts.
 
 ### Quota burn-down
 

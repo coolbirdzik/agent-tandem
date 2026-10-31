@@ -61,13 +61,14 @@ describe('Restoring historical account attribution', () => {
     expect((await reload.read()).days.find(row => row.account)?.account).toEqual(claudeTwo);
     await f.store.remove(assignment.id); expect((await reload.read()).days).toEqual(first.days);
   });
-  it('infers only consistent Claude session evidence and keeps switched sessions, mismatched owners and conflicts unknown', async () => {
+  it('never extends a Claude response account to unrecorded responses and keeps mismatched owners and conflicts unknown', async () => {
     const f = await fixture(), options = claudeOptions(f);
     await f.ledger.record('Claude:native', claudeOne);
     await claudeFile(f, 'main', [message('native', 'main'), message('unrecorded', 'main')]);
     const history = new UsageHistory(f.homes, f.ledger, f.cache, options);
     let data = await history.read();
-    expect(data.days.find(row => row.accountSource === 'inferred')?.account).toEqual(claudeOne);
+    expect(data.days.filter(row => row.accountSource === 'inferred')).toHaveLength(0);
+    expect(usageBreakdown(data.days, { grouping: 'day', accountId: 'unknown' }).totals.total).toBe(110);
     await f.ledger.record('Claude:switched', claudeTwo);
     await claudeFile(f, 'switch', [message('switched', 'main')]);
     await claudeFile(f, 'mismatch', [message('mismatch', 'mismatch'), owner('mismatch', 'owner-one', 'wrong-org')]);
@@ -76,6 +77,54 @@ describe('Restoring historical account attribution', () => {
     expect(data.days.filter(row => row.accountSource === 'inferred')).toHaveLength(0);
     expect(usageBreakdown(data.days, { grouping: 'day', accountId: 'unknown' }).totals.total).toBe(330);
     expect(data.days.filter(row => row.account).reduce((sum, row) => sum + row.total, 0)).toBe(220);
+  });
+  it('separates Claude responses in a resumed conversation despite a broad manual date assignment and cache reloads', async () => {
+    const f = await fixture(), options = claudeOptions(f);
+    await claudeFile(f, 'resumed', [message('first', 'shared'), message('second', 'shared'), message('unrecorded', 'shared')]);
+    await f.ledger.record('Claude:first', claudeOne);
+    await f.ledger.record('Claude:second', claudeTwo);
+    const history = new UsageHistory(f.homes, f.ledger, f.cache, options);
+    const first = await history.read();
+    expect(first.conversations).toHaveLength(1);
+    for (const accountId of [claudeOne.id, claudeTwo.id, 'unknown']) {
+      expect(usageBreakdown(first.days, { grouping: 'day', accountId }).totals.total).toBe(110);
+    }
+    await f.store.assign({ provider: 'Claude', from: '2026-10-14', to: '2026-10-14' }, claudeOne);
+    const reload = new UsageHistory(f.homes, new UsageAccountStore(f.ledger.directory), f.cache, options);
+    const manual = await reload.read(); expect(reload.readStats?.diskHits).toBe(1);
+    expect(usageBreakdown(manual.days, { grouping: 'day', accountId: claudeOne.id }).totals.total).toBe(220);
+    expect(usageBreakdown(manual.days, { grouping: 'day', accountId: claudeTwo.id }).totals.total).toBe(110);
+    expect(manual.conversations![0]!.days.reduce((sum, row) => sum + row.total, 0)).toBe(330);
+    expect((await reload.read()).days).toEqual(manual.days); expect(reload.readStats?.memoryHits).toBe(1);
+  });
+  it('persists user-confirmed Claude response splits separately from legacy date assignments and keeps native evidence first', async () => {
+    const f = await fixture(), options = claudeOptions(f);
+    await claudeFile(f, 'split', [message('before', 'shared'), message('after', 'shared'), message('native', 'shared'), message('later', 'shared')]);
+    const baseline = await f.store.assign({ provider: 'Claude', from: '2026-10-14', to: '2026-10-14' }, claudeOne);
+    const legacyFile = path.join(f.store.directory, 'assignments.json'), original = await readFile(legacyFile, 'utf8');
+    const before = await f.store.assign({ provider: 'Claude', conversationId: 'shared', responseIds: ['Claude:before', 'Claude:native'] }, claudeOne);
+    const after = await f.store.assign({ provider: 'Claude', conversationId: 'shared', responseIds: ['Claude:after'] }, claudeTwo);
+    expect(await readFile(legacyFile, 'utf8')).toBe(original);
+    await f.ledger.record('Claude:native', claudeTwo);
+    const history = new UsageHistory(f.homes, f.ledger, f.cache, options);
+    const check = (data: Awaited<ReturnType<UsageHistory['read']>>) => {
+      expect(usageBreakdown(data.days, { grouping: 'day', accountId: claudeOne.id }).totals.total).toBe(220);
+      expect(usageBreakdown(data.days, { grouping: 'day', accountId: claudeTwo.id }).totals.total).toBe(220);
+      expect(data.days.filter(row => row.account?.id === claudeTwo.id && !row.accountSource).map(row => row.total)).toEqual([110]);
+      expect(data.assignments?.find(row => row.id === after.id)?.responseIds).toEqual(['Claude:after']);
+    };
+    check(await history.read()); check(await history.read());
+    const reload = new UsageHistory(f.homes, new UsageAccountStore(f.ledger.directory), f.cache, { store: new UsageAttributionStore(f.store.directory), knownAccounts: options.knownAccounts });
+    check(await reload.read()); expect(reload.readStats?.diskHits).toBe(1);
+    await f.store.remove(baseline.id);
+    const data = await reload.read();
+    expect(usageBreakdown(data.days, { grouping: 'day', accountId: 'unknown' }).totals.total).toBe(110);
+    await f.store.remove(after.id); await f.store.remove(before.id);
+    expect(await f.store.read()).toEqual([]);
+    for (const responseIds of [[], ['Codex:wrong-provider'], ['Claude:duplicate', 'Claude:duplicate'], ['Claude:bad\nkey']]) {
+      await expect(f.store.assign({ provider: 'Claude', conversationId: 'shared', responseIds }, claudeOne)).rejects.toThrow();
+    }
+    await expect(f.store.assign({ provider: 'Claude', from: '2026-10-14', to: '2026-10-14', responseIds: ['Claude:before'] }, claudeOne)).rejects.toThrow();
   });
   it('reads Claude account aliases from matching native metadata without exporting unrelated metadata', async () => {
     const f = await fixture(), profiles = new AccountProfiles(path.join(f.root, 'profiles'));
@@ -138,11 +187,11 @@ describe('Restoring historical account attribution', () => {
     expect(data.duplicates).toBe(1);
     expect(usageBreakdown(data.days, { grouping: 'day' }).totals.total).toBe(220);
   });
-  it('reapplies inferred and reversible manual choices on disk/memory cache while native turns take priority', async () => {
+  it('reapplies reversible manual choices on disk/memory cache while native turns take priority', async () => {
     const f = await fixture(); await f.write('first', 'creator-one'); await f.write('second', 'creator-one');
     await f.ledger.record('Codex:turn:turn-second', two);
     const first = await f.history.read();
-    expect(first.days.find(row => row.account?.id === one.id)?.accountSource).toBe('inferred');
+    expect(first.days.find(row => !row.account)?.total).toBe(110);
     expect(first.days.find(row => row.account?.id === two.id)?.accountSource).toBeUndefined();
     const assignment = await f.store.assign({ provider: 'Codex', from: '2026-10-14', to: '2026-10-14' }, two);
     const reload = new UsageHistory(f.homes, f.ledger, f.cache, f.options);
@@ -153,7 +202,7 @@ describe('Restoring historical account attribution', () => {
     await f.store.remove(assignment.id);
     expect((await reload.read()).days).toEqual(first.days); expect(reload.readStats?.memoryHits).toBe(2);
   });
-  it('lets users suppress inference and edit overlapping choices without touching history or counts', async () => {
+  it('lets users keep usage unknown and edit overlapping choices without touching history or counts', async () => {
     const f = await fixture(), file = await f.write('first', 'creator-one'); const original = await readFile(file, 'utf8');
     const assigned = await f.store.assign({ provider: 'Codex', conversationId: 'first' }, two);
     const unknown = await f.store.assign({ provider: 'Codex', conversationId: 'first' }, null);
@@ -161,8 +210,56 @@ describe('Restoring historical account attribution', () => {
     await new UsageAttributionStore(f.store.directory).remove(unknown.id);
     expect((await f.history.read()).days[0]?.account?.id).toBe(two.id);
     await f.store.remove(assigned.id);
-    expect((await f.history.read()).days[0]).toMatchObject({ total: 110, account: one, accountSource: 'inferred' });
+    expect((await f.history.read()).days[0]).toMatchObject({ total: 110 });
+    expect((await f.history.read()).days[0]?.account).toBeUndefined();
     expect(await readFile(file, 'utf8')).toBe(original);
+  });
+  it.each(['modern', 'legacy'] as const)('attributes each %s Codex turn independently of the conversation creator across switches and cache reloads', async format => {
+    const f = await fixture(), date = new Date(Date.now() - 60000).toISOString();
+    const file = await f.write('switched', 'creator-one', 'first', date);
+    const token = (response: string, input: number, cumulative: number) => format === 'modern'
+      ? { timestamp: date, type: 'token_usage_record', payload: { response_id: response, usage: { input_tokens: input, output_tokens: input / 10 } } }
+      : { timestamp: date, type: 'event_msg', payload: { type: 'token_count', info: {
+        total_token_usage: { input_tokens: cumulative, output_tokens: cumulative / 10 },
+        last_token_usage: { input_tokens: input, output_tokens: input / 10 },
+      } } };
+    await writeFile(file, [
+      { type: 'session_meta', payload: { id: 'switched', creator_account_id: 'creator-one' } },
+      { type: 'turn_context', payload: { turn_id: 'turn-first', model: 'model' } },
+      token('first', 100, 100),
+      { type: 'turn_context', payload: { turn_id: 'turn-second', model: 'model' } },
+      token('second', 200, 300),
+      { type: 'turn_context', payload: { turn_id: 'turn-external', model: 'model' } },
+      token('external', 300, 600),
+    ].map(row => JSON.stringify(row)).join('\n'));
+    await f.ledger.record('Codex:turn:turn-first', one);
+    await f.ledger.record('Codex:turn:turn-second', two);
+    const check = (data: Awaited<ReturnType<UsageHistory['read']>>) => {
+      expect(usageBreakdown(data.days, { grouping: 'day', accountId: one.id }).totals.total).toBe(110);
+      expect(usageBreakdown(data.days, { grouping: 'day', accountId: two.id }).totals.total).toBe(220);
+      expect(usageBreakdown(data.days, { grouping: 'day', accountId: 'unknown' }).totals.total).toBe(330);
+      expect(data.conversations).toHaveLength(1);
+      expect(data.conversations![0]!.days.reduce((sum, row) => sum + row.total, 0)).toBe(660);
+      expect(data.recent?.map(row => [row.total, row.accountId])).toEqual([[110, one.id], [220, two.id], [330, undefined]]);
+    };
+    check(await f.history.read()); check(await f.history.read());
+    expect(f.history.readStats?.memoryHits).toBe(1);
+    const reloadedLedger = new UsageAccountStore(f.ledger.directory);
+    const reload = new UsageHistory(f.homes, reloadedLedger, f.cache, f.options);
+    check(await reload.read()); expect(reload.readStats?.diskHits).toBe(1);
+    // Evidence discovered later must also fix previously cached unknown usage.
+    await reloadedLedger.record('Codex:turn:turn-external', two);
+    const recovered = await reload.read();
+    expect(usageBreakdown(recovered.days, { grouping: 'day', accountId: two.id }).totals.total).toBe(550);
+    expect(usageBreakdown(recovered.days, { grouping: 'day', accountId: 'unknown' }).totals.total).toBe(0);
+  });
+  it('does not assign external Codex history to its creator or the sole currently known account', async () => {
+    const f = await fixture(); await f.write('external', 'creator-one'); await f.write('missing', '');
+    for (const knownAccounts of [f.options.knownAccounts, async () => [{ account: one, nativeAccountIds: ['creator-one'] }]]) {
+      const data = await new UsageHistory(f.homes, f.ledger, f.cache, { store: f.store, knownAccounts }).read();
+      expect(data.days.every(row => !row.account && !row.accountSource)).toBe(true);
+      expect(usageBreakdown(data.days, { grouping: 'day', accountId: 'unknown' }).totals.total).toBe(220);
+    }
   });
   it('matches provider, session and inclusive dates without capturing unrelated history', async () => {
     const f = await fixture(); await f.write('first', 'missing'); await f.write('second', 'missing'); await f.write('old', 'missing', 'old', '2026-10-12T08:00:00Z');
