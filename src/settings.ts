@@ -1,6 +1,8 @@
 import { hoverHints } from './ui/hover-hints';
 import { autoHideScrollbars } from './ui/scrollbars';
 import { dashboardAccountGroups, emptyTotals, localDay, modelColorSlots, periodKey, usageBreakdown, type TokenTotals, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
+import { emptyApiCost } from './core/api-pricing';
+import { quotaCycleRanges, type QuotaCycleRange, type QuotaCycleWindow } from './core/quota-cycle-ranges';
 import type { ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
 import { PRICING_CHECKED_AT, PRICING_SOURCES, type ApiCost } from './core/api-pricing';
@@ -9,7 +11,7 @@ import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-a
 import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
 import { bankedResetDetails } from './core/banked-resets';
-import { quotaGlyphCharacter, quotaStatuses } from './core/quota-status';
+import { compactCountdown, quotaGlyphCharacter, quotaStatuses, resetClock } from './core/quota-status';
 import { statusBarPreferences, type StatusBarField, type StatusBarPreferences } from './core/status-bar-preferences';
 import { ACCOUNT_PROVIDERS, accountProviderName, accountProviderDetail, isChatAccount, type AccountProvider } from './core/account-providers';
 import { validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution';
@@ -42,6 +44,120 @@ const collapsedPeriods = new Set<string>(); let periodsCollapsed = false, modelS
 let conversationLimit = 20, selectedUsageConversation: string | undefined;
 let accountPlatform: AccountProvider | '' = '';
 let observedSwitchId: string | undefined;
+const DASHBOARD_TABS = ['overview', 'quota', 'conversations', 'details'] as const;
+type DashboardTab = typeof DASHBOARD_TABS[number];
+function showTab(tab: DashboardTab, focus = false) {
+  document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => {
+    const selected = button.dataset.tab === tab; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
+    if (selected && focus) button.focus();
+  });
+  for (const name of DASHBOARD_TABS) el(`panel-${name}`).hidden = name !== tab;
+}
+document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => {
+  button.onclick = () => showTab(button.dataset.tab as DashboardTab);
+  button.onkeydown = event => {
+    const index = DASHBOARD_TABS.indexOf(button.dataset.tab as DashboardTab);
+    const next = ({ ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: DASHBOARD_TABS.length - 1 } as Record<string, number>)[event.key];
+    if (next === undefined) return;
+    event.preventDefault(); showTab(DASHBOARD_TABS[(next + DASHBOARD_TABS.length) % DASHBOARD_TABS.length]!, true);
+  };
+});
+const RANGE_CHIPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time'], ['custom', 'Custom'], ['cycle-5h', '5h cycle'], ['cycle-weekly', 'Weekly cycle']] as const;
+function renderRangeChips() {
+  const root = el('range-chips'), value = el<HTMLSelectElement>('filter-range').value;
+  if (!root.children.length) for (const [key, label] of RANGE_CHIPS) {
+    if (key === 'cycle-5h') { const divider = node('span', undefined, 'range-divider'); divider.setAttribute('aria-hidden', 'true'); root.append(divider); }
+    const chip = node('button', label, 'range-chip'); chip.type = 'button'; chip.dataset.range = key;
+    if (key.startsWith('cycle-')) { chip.title = 'Usage of one account between its quota resets'; const icon = node('span', undefined, 'codicon codicon-history'); icon.setAttribute('aria-hidden', 'true'); chip.prepend(icon); }
+    chip.onclick = () => { const select = el<HTMLSelectElement>('filter-range'); if (select.value !== key) { select.value = key; select.dispatchEvent(new Event('change')); } };
+    root.append(chip);
+  }
+  root.querySelectorAll<HTMLButtonElement>('[data-range]').forEach(chip => chip.setAttribute('aria-pressed', String(chip.dataset.range === value)));
+}
+let cycleIndex = 0, requestedWindow: { from: number; to: number } | undefined;
+/** Reset times jitter between polls; within this tolerance a cycle is the same window. */
+const sameWindow = (a: { from: number; to: number }, b: { from: number; to: number }) => Math.abs(a.from - b.from) <= 120000 && Math.abs(a.to - b.to) <= 120000;
+function cycleWindow(): QuotaCycleWindow | undefined {
+  const value = el<HTMLSelectElement>('filter-range').value;
+  return value === 'cycle-5h' ? '5h' : value === 'cycle-weekly' ? 'Weekly' : undefined;
+}
+const accountProvider = (id: string): ConversationProvider | undefined => {
+  try { const provider = JSON.parse(id)[0]; return provider === 'Codex' || provider === 'Claude' ? provider : undefined; } catch { return undefined; }
+};
+/** A cycle belongs to one account: the chosen one, otherwise the active sign-in of the chosen or active provider. */
+function cycleAccount(): { provider: ConversationProvider; id: string } | undefined {
+  const id = el<HTMLSelectElement>('filter-account').value, chosen = id && id !== UNKNOWN_ACCOUNT ? accountProvider(id) : undefined;
+  if (chosen) return { provider: chosen, id };
+  const provider = (el<HTMLSelectElement>('filter-provider').value || state?.activeProvider || 'Codex') as ConversationProvider;
+  const account = usageAccount(provider, state?.accounts?.[provider]?.account);
+  return account ? { provider, id: account.id } : undefined;
+}
+function selectedCycle(): { cycles: QuotaCycleRange[]; cycle?: QuotaCycleRange; account?: { provider: ConversationProvider; id: string } } {
+  const window = cycleWindow(), account = window ? cycleAccount() : undefined;
+  if (!window || !account) return { cycles: [], account };
+  const cycles = quotaCycleRanges(account.provider, account.id, window, state?.quotaTicks ?? [], state?.quotaHistory ?? []);
+  cycleIndex = Math.max(0, Math.min(cycleIndex, cycles.length - 1));
+  return { cycles, cycle: cycles[cycleIndex], account };
+}
+/** The host aggregates one window at a time, so per-response timestamps never reach the webview. */
+function requestCycleUsage(cycle: QuotaCycleRange | undefined) {
+  if (!cycle) { if (requestedWindow) { requestedWindow = undefined; send('usageWindow', null); } return; }
+  if (requestedWindow && sameWindow(requestedWindow, cycle)) return;
+  requestedWindow = { from: cycle.from, to: cycle.to }; send('usageWindow', requestedWindow);
+}
+function cycleUsage() {
+  const { cycle } = selectedCycle(), window = state?.usageWindow;
+  return cycle && window && sameWindow(window, cycle) ? window : undefined;
+}
+const usageDays = () => cycleWindow() ? cycleUsage()?.days ?? [] : state?.data?.days ?? [];
+const usageConversations = () => cycleWindow() ? cycleUsage()?.conversations ?? [] : state?.data?.conversations ?? [];
+function renderCycleBar() {
+  const window = cycleWindow(); el('cycle-bar').hidden = !window;
+  if (!window) return;
+  const { cycles, cycle, account } = selectedCycle(), title = el('cycle-title'), meta = el('cycle-meta');
+  el<HTMLButtonElement>('cycle-prev').disabled = cycleIndex >= cycles.length - 1;
+  el<HTMLButtonElement>('cycle-next').disabled = cycleIndex <= 0;
+  el<HTMLButtonElement>('cycle-current').disabled = cycleIndex === 0;
+  if (!account) { title.textContent = `No account for ${window} cycles`; meta.textContent = 'Sign in, or choose an account, to follow its quota cycles.'; return; }
+  if (!cycle) { title.textContent = `No ${window} cycles recorded yet`; meta.textContent = "AgentTandem records a cycle when it reads this account's quota. Refresh quota while you use the account."; return; }
+  const now = Date.now();
+  title.textContent = `${resetClock(cycle.from, now)} → ${resetClock(cycle.current ? cycle.resetsAt : cycle.to, now)}`;
+  meta.textContent = [cycle.current ? `Current · resets in ${compactCountdown(cycle.resetsAt, now)}` : `${cycleIndex + 1} of ${cycles.length} recorded`,
+    cycle.to < cycle.resetsAt ? 'reset early' : '', cycle.usedPercent === undefined ? '' : `${percent(cycle.usedPercent)} used`,
+    cycle.estimated ? 'estimated from saved quota history' : ''].filter(Boolean).join(' · ');
+  meta.title = cycle.estimated ? 'No quota samples cover this cycle. Its start and any early reset are inferred from saved reset times.' : '';
+}
+el('cycle-prev').onclick = () => { cycleIndex++; renderUsage(); };
+el('cycle-next').onclick = () => { cycleIndex = Math.max(0, cycleIndex - 1); renderUsage(); };
+el('cycle-current').onclick = () => { cycleIndex = 0; renderUsage(); };
+/** Local tokens and cost, quota and unattributed tokens for the current selection. */
+function renderSummary(filters: UsageFilters, result: ReturnType<typeof usageBreakdown>) {
+  const root = el('summary'); root.replaceChildren();
+  const card = (label: string, value: string, detail: string, title?: string) => {
+    const item = node('div', undefined, 'summary-card'), amount = node('strong', value); if (title) amount.title = title;
+    item.append(node('span', label), amount, node('small', detail)); root.append(item); return item;
+  };
+  card('Tokens', compact(result.totals.total), `${number(result.totals.requests)} requests · Local`, number(result.totals.total));
+  card('API equivalent', costLabel(result.cost), 'Estimate · local tokens × API prices', `${result.cost.usd.toFixed(6)} USD`);
+  const window = cycleWindow(), { cycle, account } = selectedCycle();
+  const accountId = window ? account?.id : filters.accountId && filters.accountId !== UNKNOWN_ACCOUNT ? filters.accountId : undefined;
+  const provider: ConversationProvider = (window ? account?.provider : filters.provider) ?? (accountId ? accountProvider(accountId) : undefined) ?? state?.activeProvider ?? 'Codex';
+  const windows = (accountId ? dashboardAccountStatus(provider) : state?.accounts?.[provider])?.quota?.windows ?? [];
+  if (window && cycle) {
+    const live = cycle.current ? windows.find(row => row.label === (window === '5h' ? '5h' : '7d'))?.usedPercent : undefined, used = live ?? cycle.usedPercent;
+    card('Quota used', used === undefined ? '—' : percent(used), `${window} cycle · ${cycle.current ? 'live reading' : 'highest reading'}`);
+  } else {
+    const tightest = windows.reduce<typeof windows[number] | undefined>((best, row) => !best || row.usedPercent > best.usedPercent ? row : best, undefined);
+    card('Quota left', tightest ? percent(Math.max(0, 100 - tightest.usedPercent)) : '—', tightest ? `${providerName(provider)} ${tightest.label}${tightest.resetsAt ? ` · resets in ${compactCountdown(tightest.resetsAt)}` : ''}` : `${providerName(provider)} quota unavailable`);
+  }
+  // A selected account hides its provider's unknown history, so show that beside the account's own total.
+  const unknownFilters = accountId ? { ...filters, provider, accountId: UNKNOWN_ACCOUNT } : { ...filters, accountId: UNKNOWN_ACCOUNT };
+  const unknown = usageBreakdown(usageDays(), unknownFilters).totals.total, base = accountId ? result.totals.total + unknown : result.totals.total;
+  const item = card('Unknown account', compact(unknown), unknown ? `${Math.round(unknown / Math.max(1, base) * 100)}% of ${accountId ? `${providerName(provider)} tokens here` : 'these tokens'} · not attributed` : 'Every token here has an account', number(unknown));
+  item.dataset.unknown = String(unknown > 0);
+  // History assignments cover whole days, wider than a cycle, so they are offered outside cycles only.
+  if (unknown && !window) { const assign = node('button', 'Assign', 'quiet'); assign.onclick = () => openAttribution(accountId ? provider : filters.provider ?? provider); item.append(assign); }
+}
 function showSwitchDialog() {
   const dialog = el<HTMLDialogElement>('account-switch-dialog');
   if (!dialog.open) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
@@ -63,6 +179,10 @@ function loadingAccount(root: HTMLElement) {
   root.append(skeleton('line'), skeleton('caption'), skeleton('meter'), skeleton('caption'), skeleton('meter'));
 }
 function renderLoading() {
+  const summary = el('summary'); summary.replaceChildren();
+  for (const label of ['Tokens', 'API equivalent', 'Quota', 'Unknown account']) {
+    const item = node('div', undefined, 'summary-card'); item.append(node('span', label), skeleton('value'), skeleton('caption')); summary.append(item);
+  }
   const totals = el('totals'); totals.replaceChildren();
   for (const label of ['Total tokens', 'Input tokens', 'Output tokens', 'Cache read']) {
     const item = node('div', undefined, 'usage-total'); item.append(node('span', label), skeleton('value'), skeleton('caption')); totals.append(item);
@@ -93,6 +213,7 @@ function renderAttributionPreview() {
   el<HTMLButtonElement>('attribution-save').disabled = !state?.data || !!state.attributionBusy || !valid || !el<HTMLSelectElement>('attribution-account').value || !totals.total;
 }
 function openAttribution(provider: ConversationProvider, conversationId?: string) {
+  showTab('details');
   el<HTMLSelectElement>('attribution-provider').value = provider; renderAttribution();
   el<HTMLSelectElement>('attribution-conversation').value = conversationId ?? '';
   const range = conversationId ? {} : dateRange();
@@ -187,11 +308,9 @@ el('attribution-form').onsubmit = event => {
 };
 el('account-detail-back').onclick = () => {
   for (const id of ['filter-account', 'filter-provider', 'filter-model']) el<HTMLSelectElement>(id).value = '';
+  // A cycle belongs to one account, so all accounts return to a calendar range.
+  if (cycleWindow()) el<HTMLSelectElement>('filter-range').value = 'today';
   renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); el('dashboard').scrollIntoView?.({ block: 'start' });
-};
-el('dashboard-view').onchange = () => {
-  for (const id of ['filter-account', 'filter-provider', 'filter-model']) el<HTMLSelectElement>(id).value = '';
-  renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
 };
 el('storage-refresh').onclick = () => send('storage'); el('storage-reveal').onclick = () => send('revealStorage');
 el('storage-preview').onclick = () => send('previewCleanup'); el('storage-cancel').onclick = () => send('storage');
@@ -320,12 +439,14 @@ el<HTMLSelectElement>('default-grouping').onchange = () => {
   const grouping = el<HTMLSelectElement>('default-grouping').value;
   el<HTMLSelectElement>('filter-group').value = grouping; renderUsage(); send('preferences', { grouping });
 };
-for (const id of ['filter-provider', 'filter-account', 'filter-model', 'filter-range', 'filter-group', 'filter-from', 'filter-to']) el(id).onchange = () => { periodLimit = 60; renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); };
+for (const id of ['filter-provider', 'filter-account', 'filter-model', 'filter-range', 'filter-group', 'filter-from', 'filter-to']) el(id).onchange = () => {
+  if (['filter-provider', 'filter-account', 'filter-range'].includes(id)) cycleIndex = 0;
+  periodLimit = 60; renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
+};
 el('reset-filters').onclick = () => {
   for (const id of ['filter-provider', 'filter-account', 'filter-model', 'filter-from', 'filter-to']) el<HTMLInputElement>(id).value = '';
   el<HTMLSelectElement>('filter-range').value = 'today'; el<HTMLSelectElement>('filter-group').value = state?.preferences.grouping ?? 'day';
-  el<HTMLSelectElement>('dashboard-view').value = 'accounts';
-  periodLimit = 60; renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
+  cycleIndex = 0; periodLimit = 60; renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
 };
 function dateRange(): { from?: string; to?: string } {
   const range = el<HTMLSelectElement>('filter-range').value, today = localDay(Date.now());
@@ -339,8 +460,14 @@ function dateRange(): { from?: string; to?: string } {
   if (range === 'month') return { from: `${today.slice(0, 7)}-01`, to: today };
   if (range === 'year') return { from: `${today.slice(0, 4)}-01-01`, to: today };
   if (range === 'custom') return { from: el<HTMLInputElement>('filter-from').value || undefined, to: el<HTMLInputElement>('filter-to').value || undefined };
+  // API daily activity and history assignments use whole local days of the cycle.
+  const { cycle } = selectedCycle();
+  if (cycle) return { from: localDay(cycle.from), to: localDay(Math.min(cycle.to, Date.now()) - 1) };
   return {};
 }
+/** Local usage filters. A cycle's usage arrives already windowed, in hourly or daily buckets. */
+const localRange = () => cycleWindow() ? {} : dateRange();
+const usageGrouping = () => cycleWindow() ? 'day' : el<HTMLSelectElement>('filter-group').value as UsageGrouping;
 function metric(label: string, value: number, detail: string) {
   const item = node('div', undefined, 'usage-total'), strong = node('strong', compact(value)); strong.title = number(value);
   item.append(node('span', label), strong, node('small', detail)); return item;
@@ -467,7 +594,7 @@ function dashboardStatuses() {
     ...(state?.managedAccounts ?? []).filter(profile => isChatAccount(profile.provider)).map(profile => ({ provider: profile.provider as ConversationProvider, label: profile.label, active: profile.active, status: profile.status ?? { status: 'loading' as const, account: profile.identity } }))];
 }
 function dashboardGroups(filters: UsageFilters = { grouping: 'day' }) {
-  return dashboardAccountGroups(state?.data?.days ?? [], filters, dashboardStatuses());
+  return dashboardAccountGroups(usageDays(), filters, dashboardStatuses());
 }
 function accountInScope(provider: ConversationProvider) {
   const id = el<HTMLSelectElement>('filter-account').value;
@@ -490,10 +617,9 @@ function currentQuotaCycleStarts(provider: ConversationProvider, account = dashb
   return state?.quotaCycleStarts === undefined ? undefined : observeQuotaCycleStarts(state.quotaCycleStarts, quotaTicks(provider, account));
 }
 function renderAccountGroups(filters: UsageFilters) {
-  const grouped = el<HTMLSelectElement>('dashboard-view').value === 'accounts', selected = !!filters.accountId;
-  el('account-overview').hidden = !grouped || selected; el('dashboard-detail').hidden = grouped && !selected;
-  el('account-detail-bar').hidden = !grouped || !selected;
-  if (grouped && selected) {
+  const selected = !!filters.accountId;
+  el('account-overview').hidden = selected; el('account-detail-bar').hidden = !selected;
+  if (selected) {
     const group = dashboardGroups(filters).find(row => (!filters.provider || row.provider === filters.provider) && row.account?.id === filters.accountId);
     const provider = group?.provider ?? filters.provider;
     el('account-detail-title').textContent = group?.label || group?.account?.email || 'Unknown account';
@@ -511,7 +637,7 @@ function renderAccountGroups(filters: UsageFilters) {
     meta.append(node('span', 'Local tokens', 'muted'), node('span', `${number(group.totals.requests)} requests · ${costLabel(group.cost)}`, 'muted'));
     totals.append(amount, meta);
     item.append(heading, identity, totals);
-    const source = attributionCaption(state?.data?.days ?? [], { ...filters, provider: group.provider, accountId: id });
+    const source = attributionCaption(usageDays(), { ...filters, provider: group.provider, accountId: id });
     if (source) item.append(node('p', source, 'muted'));
     if (!group.account || source) {
       if (!group.account && group.provider === 'Claude') item.append(node('p', 'Claude transcripts without account identity remain unknown. Assign history to the account used for these conversations.', 'muted'));
@@ -710,11 +836,11 @@ function renderQuotaPace() {
   if (!root.children.length) root.append(node('p', 'Refresh account quota to start measuring.', 'empty'));
 }
 function usageFilters(): UsageFilters {
-  return { ...dateRange(), provider: el<HTMLSelectElement>('filter-provider').value as ConversationProvider || undefined, accountId: el<HTMLSelectElement>('filter-account').value || undefined, model: el<HTMLSelectElement>('filter-model').value || undefined, grouping: el<HTMLSelectElement>('filter-group').value as UsageGrouping };
+  return { ...localRange(), provider: el<HTMLSelectElement>('filter-provider').value as ConversationProvider || undefined, accountId: el<HTMLSelectElement>('filter-account').value || undefined, model: el<HTMLSelectElement>('filter-model').value || undefined, grouping: usageGrouping() };
 }
 function renderConversations(filters: UsageFilters) {
   const root = el('conversation-breakdown'), query = el<HTMLInputElement>('conversation-search').value.trim().toLowerCase();
-  const rows = (state?.data?.conversations ?? []).map(conversation => ({ conversation, result: usageBreakdown(conversation.days, filters), title: state?.conversationTitles?.[conversation.key] || `${conversation.provider} · ${conversation.id === 'unknown' ? 'Unknown conversation' : conversation.id.slice(0, 8)}` }))
+  const rows = usageConversations().map(conversation => ({ conversation, result: usageBreakdown(conversation.days, filters), title: state?.conversationTitles?.[conversation.key] || `${conversation.provider} · ${conversation.id === 'unknown' ? 'Unknown conversation' : conversation.id.slice(0, 8)}` }))
     .filter(row => row.result.totals.total > 0 && (!query || `${row.title} ${row.conversation.id} ${row.conversation.project || ''}`.toLowerCase().includes(query)))
     .sort((a, b) => b.result.totals.total - a.result.totals.total);
   table(root, ['Conversation', 'Provider', 'Tokens', 'Requests', 'API USD', 'Last activity'], rows.slice(0, conversationLimit).map(row => [row.title, row.conversation.provider, row.result.totals.total, row.result.totals.requests, costLabel(row.result.cost), new Date(row.conversation.lastAt).toLocaleDateString()]), 2);
@@ -946,10 +1072,24 @@ function renderPeriods(periods: UsageResult['periods']) {
   table.append(head, body); root.append(table);
 }
 el('period-toggle-all').onclick = () => { periodsCollapsed = !periodsCollapsed; collapsedPeriods.clear(); renderUsage(); };
+/** Every hour or day of a cycle, including those without usage, so the chart keeps its time scale. */
+function cyclePeriods(periods: ReturnType<typeof usageBreakdown>['periods'], window: NonNullable<UsageDashboardState['usageWindow']>) {
+  const step = window.bucket === 'hour' ? 3600000 : 86400000, end = Math.min(window.to, Date.now()), keys: string[] = [];
+  const key = (at: number) => window.bucket === 'hour' ? `${localDay(at)} ${String(new Date(at).getHours()).padStart(2, '0')}:00` : localDay(at);
+  for (let at = window.from; at < end; at += step) if (!keys.includes(key(at))) keys.push(key(at));
+  if (end > window.from && !keys.includes(key(end - 1))) keys.push(key(end - 1));
+  const byKey = new Map(periods.map(row => [row.key, row]));
+  return keys.map(at => byKey.get(at) ?? { key: at, totals: emptyTotals(), cost: emptyApiCost(), Codex: 0, Claude: 0, models: [] });
+}
 function renderUsage() {
+  renderRangeChips();
   if (!state || (state.status === 'loading' && !state.data)) {
-    const range = dateRange(); renderApiActivity({ ...range, grouping: el<HTMLSelectElement>('filter-group').value as UsageGrouping }); renderLoading(); return;
+    const range = dateRange(); renderApiActivity({ ...range, grouping: usageGrouping() }); renderLoading(); renderCycleBar(); return;
   }
+  // A cycle follows one account, so the account and its provider become the filters.
+  const window = cycleWindow(), target = window ? cycleAccount() : undefined;
+  if (target) el<HTMLSelectElement>('filter-provider').value = target.provider;
+  el<HTMLSelectElement>('filter-group').disabled = !!window;
   const provider = el<HTMLSelectElement>('filter-provider').value as ConversationProvider | '', modelSelect = el<HTMLSelectElement>('filter-model');
   const accountSelect = el<HTMLSelectElement>('filter-account'), previousAccount = accountSelect.value;
   const accounts = new Map<string, string>();
@@ -971,6 +1111,7 @@ function renderUsage() {
     accountSelect.replaceChildren(allAccounts, ...accountOptions.map(([id, label]) => { const option = node('option', label); option.value = id; return option; }));
     accountSelect.value = accounts.has(previousAccount) ? previousAccount : '';
   }
+  if (target && accounts.has(target.id)) accountSelect.value = target.id;
   const accountId = accountSelect.value;
   const models = [...new Set(state.data?.days.filter(row => (!provider || row.provider === provider) && (!accountId || (row.account?.id ?? UNKNOWN_ACCOUNT) === accountId)).map(row => row.model) ?? [])].sort();
   const signature = JSON.stringify(models);
@@ -980,14 +1121,20 @@ function renderUsage() {
     modelSelect.replaceChildren(all, ...models.map(model => { const option = node('option', model); option.value = model; return option; }));
     modelSelect.value = models.includes(previous) ? previous : '';
   }
-  const range = dateRange(), filters: UsageFilters = { ...range, provider: provider || undefined, accountId: accountId || undefined, model: modelSelect.value || undefined, grouping: el<HTMLSelectElement>('filter-group').value as UsageGrouping };
-  renderApiActivity(filters);
+  const range = localRange(), filters: UsageFilters = { ...range, provider: provider || undefined, accountId: accountId || undefined, model: modelSelect.value || undefined, grouping: usageGrouping() };
+  renderApiActivity({ ...filters, ...dateRange() });
+  renderCycleBar();
+  const { cycle } = selectedCycle(), cycleData = cycleUsage();
+  requestCycleUsage(cycle);
   const rangeSelect = el<HTMLSelectElement>('filter-range');
   el('selection-caption').textContent = rangeSelect.value === 'today' ? new Date(Date.now()).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : rangeSelect.selectedOptions[0]?.textContent ?? '';
   const invalidRange = !!range.from && !!range.to && range.from > range.to;
   el('dashboard-error').hidden = !state.error && !invalidRange;
   el('dashboard-error').textContent = invalidRange ? 'Choose an end date on or after the start date.' : state.error ?? '';
-  const result = usageBreakdown(state.data?.days ?? [], filters), t = result.totals;
+  // The host replies with this cycle's usage; keep the previous view's numbers out meanwhile.
+  if (cycle && !cycleData) { renderLoading(); renderAccountGroups(filters); return; }
+  const result = usageBreakdown(usageDays(), filters), t = result.totals;
+  renderSummary(filters, result);
   renderCost(result.cost);
   el('totals').replaceChildren(metric('Total tokens', t.total, `${number(t.requests)} recorded requests`),
     metric('Input tokens', t.input, `${compact(Math.max(0, t.input - t.cacheRead - t.cacheWrite))} uncached · ${compact(t.cacheWrite)} cache write`),
@@ -995,10 +1142,10 @@ function renderUsage() {
     metric('Cache read', t.cacheRead, `${t.input ? Math.round(t.cacheRead / t.input * 100) : 0}% of input served from cache`));
   modelSlots = modelColorSlots(state.data?.days ?? []);
   const chart = el('usage-chart'); chart.replaceChildren();
-  const periods = result.periods.slice(-30), single = rangeSelect.value === 'today'; chart.dataset.single = String(single);
+  const periods = cycleData ? cyclePeriods(result.periods, cycleData) : result.periods.slice(-30), single = rangeSelect.value === 'today'; chart.dataset.single = String(single);
   const max = Math.max(1, ...periods.map(row => single ? Math.max(row.Codex, row.Claude) : row.totals.total));
   el('chart-max').textContent = compact(max); el('chart-mid').textContent = compact(max / 2);
-  el('activity-title').textContent = single ? "Today's usage" : 'Token activity';
+  el('activity-title').textContent = single ? "Today's usage" : cycleData ? 'Cycle activity' : 'Token activity';
   if (!periods.length) chart.append(node('p', state.status === 'loading' ? 'Reading local usage history…' : 'No recorded usage for this selection.', 'empty'));
   if (single && periods.length) {
     const row = periods[0]!;
@@ -1015,13 +1162,14 @@ function renderUsage() {
     column.setAttribute('role', 'img'); column.setAttribute('aria-label', column.title);
     const stack = modelStack(row.models); stack.style.height = `${row.totals.total / max * 100}%`;
     column.append(stack);
-    if (index === 0 || index === periods.length - 1 || index % Math.max(1, Math.ceil(periods.length / 5)) === 0) column.append(node('span', filters.grouping === 'month' ? row.key : row.key.slice(5), 'chart-date'));
+    if (index === 0 || index === periods.length - 1 || index % Math.max(1, Math.ceil(periods.length / 5)) === 0) column.append(node('span', cycleData?.bucket === 'hour' ? row.key.slice(11) : filters.grouping === 'month' ? row.key : row.key.slice(5), 'chart-date'));
     chart.append(column);
   });
-  el('chart-caption').textContent = 'Local · ' + (single ? 'Tokens by provider and model · your local day' : result.periods.length > 30 ? `Latest 30 of ${result.periods.length} ${filters.grouping}s · stacked by model · full breakdown below` : `${result.periods.length} ${filters.grouping}${result.periods.length === 1 ? '' : 's'} · stacked by model`);
+  el('chart-caption').textContent = 'Local · ' + (single ? 'Tokens by provider and model · your local day' : cycleData ? `${cycleData.bucket === 'hour' ? 'Hours' : 'Days'} of this ${window} cycle · stacked by model` : result.periods.length > 30 ? `Latest 30 of ${result.periods.length} ${filters.grouping}s · stacked by model · full breakdown below` : `${result.periods.length} ${filters.grouping}${result.periods.length === 1 ? '' : 's'} · stacked by model`);
   renderModelLegend(result.models, t.total);
   const providersRoot = el('provider-breakdown'); providersRoot.replaceChildren();
   for (const provider of ['Codex', 'Claude'] as const) {
+    if (filters.provider && filters.provider !== provider) continue;
     const usage = result.providers.find(row => row.key === provider)?.totals ?? emptyTotals(), percent = t.total ? usage.total / t.total * 100 : 0;
     const row = node('div', undefined, 'provider-row'); row.dataset.provider = provider;
     const label = node('div', undefined, 'provider-row-heading'); label.append(providerIcon(provider), node('span', provider === 'Claude' ? 'Claude Code' : provider), node('strong', `${compact(usage.total)} · ${Math.round(percent)}%`));
@@ -1029,10 +1177,10 @@ function renderUsage() {
     const cost = result.providers.find(row => row.key === provider)?.cost;
     row.append(label, meter, node('span', `${number(usage.requests)} requests · ${cost ? costLabel(cost) : money(0)} API equivalent`, 'muted')); providersRoot.append(row);
   }
-  table(el('account-breakdown'), ['Account', 'Provider', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD', 'Attribution'], result.accounts.map(row => [usageAccountLabel(row.account), row.provider, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.cacheWrite, row.totals.total, row.totals.requests, costLabel(row.cost), attributionCaption(state?.data?.days ?? [], { ...filters, provider: row.provider, accountId: row.account?.id ?? UNKNOWN_ACCOUNT }) || (row.account ? 'Native turn evidence' : 'Unknown')]), 2);
+  table(el('account-breakdown'), ['Account', 'Provider', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD', 'Attribution'], result.accounts.map(row => [usageAccountLabel(row.account), row.provider, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.cacheWrite, row.totals.total, row.totals.requests, costLabel(row.cost), attributionCaption(usageDays(), { ...filters, provider: row.provider, accountId: row.account?.id ?? UNKNOWN_ACCOUNT }) || (row.account ? 'Native turn evidence' : 'Unknown')]), 2);
   const periodsDescending = result.periods.slice().reverse();
-  el('period-title').textContent = `${{ day: 'Daily', week: 'Weekly', month: 'Monthly' }[filters.grouping]} breakdown by model`;
-  el('period-caption').textContent = `${filters.grouping === 'week' ? 'Weeks start Monday' : `Calendar ${filters.grouping === 'day' ? 'days' : 'months'} in your local timezone`} · select a period to show or hide its models`;
+  el('period-title').textContent = `${cycleData?.bucket === 'hour' ? 'Hourly' : { day: 'Daily', week: 'Weekly', month: 'Monthly' }[filters.grouping]} breakdown by model`;
+  el('period-caption').textContent = cycleData ? `${cycleData.bucket === 'hour' ? 'Hours' : 'Days'} of the selected ${window} cycle in your local timezone · select a period to show or hide its models` : `${filters.grouping === 'week' ? 'Weeks start Monday' : `Calendar ${filters.grouping === 'day' ? 'days' : 'months'} in your local timezone`} · select a period to show or hide its models`;
   renderPeriods(periodsDescending.slice(0, periodLimit));
   if (periodsDescending.length > periodLimit) {
     const more = node('button', `Show ${Math.min(60, periodsDescending.length - periodLimit)} more`, 'quiet'); more.onclick = () => { periodLimit += 60; renderUsage(); }; el('period-breakdown').append(more);
@@ -1465,7 +1613,7 @@ function render(value: UsageDashboardState) {
   el('dashboard-status').textContent = value.status === 'loading' ? 'Reading local CLI history…' : value.data ? `Updated ${new Date(value.data.updatedAt).toLocaleString()} · ${value.data.timezone}` : 'Usage history has not been loaded.';
   renderManagedAccounts(); renderAccountSwitch(); renderAttribution();
   const signature = JSON.stringify([value.status, value.data && { ...value.data, recent: undefined }, value.error,
-    value.accounts?.Codex?.account, value.accounts?.Claude?.account, value.conversationTitles]);
+    value.accounts?.Codex?.account, value.accounts?.Claude?.account, value.conversationTitles, value.usageWindow && [value.usageWindow.from, value.usageWindow.to, value.usageWindow.days]]);
   // Account/quota updates need estimates, but leave history tables and filters intact.
   if (signature !== usageRenderSignature) { usageRenderSignature = signature; renderUsage(); }
   else renderApiActivity({ ...dateRange(), provider: el<HTMLSelectElement>('filter-provider').value as ConversationProvider || undefined,

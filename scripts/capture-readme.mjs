@@ -59,7 +59,7 @@ async function captureSection(name, url, width, selectors, setup = '', view = 'a
     const evaluate = async expression => { const result = await call('Runtime.evaluate', { expression, returnByValue: true }); if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails)); return result.result.value; };
     await call('Page.navigate', { url });
     const targets = `${JSON.stringify(selectors)}.map(s=>{const e=document.querySelector(s);return ${exactTargets ? 'e' : "e?.closest('section:not(#dashboard-detail):not(#dashboard)')??e"}})`;
-    await until(() => evaluate(view === 'storage' ? `!document.getElementById('storage').hidden && !!document.querySelector('[data-review-cleanup]')` : `document.getElementById('dashboard-view').value===${JSON.stringify(view)}&&!!document.querySelector('#account-groups .account-group')`), 'dashboard');
+    await until(() => evaluate(view === 'storage' ? `!document.getElementById('storage').hidden && !!document.querySelector('[data-review-cleanup]')` : `!!document.querySelector('#account-groups .account-group')`), 'dashboard');
     await pause(800); if (setup) await evaluate(setup);
     await until(() => evaluate(`${targets}.every(e=>e&&e.getBoundingClientRect().height>40)`), 'dashboard sections');
     await evaluate('scrollTo(0,0)'); await pause(800);
@@ -83,14 +83,15 @@ try {
       await capture('history', `${panel}/?history=1`, 900, 760);
     }
     await capture('dashboard', `${settings}/?accounts=1`, 1440, 1400);
-    const all = `${settings}/?accounts=1&view=all&range=month`;
-    await capture('token-dashboard', all, 1440, 1696);
-    await captureSection('account-detail', `${settings}/?accounts=1`, 1440, ['#account-detail-bar', '.dashboard-grid'], `document.querySelector('.account-group-open').click()`, 'accounts');
-    await captureSection('quota-burn-down', all, 1440, ['#quota-pace']);
-    await captureSection('tokens-per-quota', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], '', 'all', true);
-    await captureSection('quota-cycle-tokens', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], `document.querySelectorAll('#quota-estimates > .quota-estimate-provider:first-child .quota-chart-control select').forEach((select, index) => { select.value = index ? 'capacityTokens' : 'observedTokens'; select.dispatchEvent(new Event('change')); })`, 'all', true);
-    await captureSection('conversations', all, 1440, ['#conversation-breakdown'], `document.querySelector('#conversation-breakdown button').click()`);
-    await captureSection('usage-breakdown', all, 1440, ['#period-breakdown', '#account-breakdown'], `document.getElementById('period-toggle-all').click()`);
+    const all = `${settings}/?accounts=1&range=month`, tab = name => `document.getElementById('tab-${name}').click();`;
+    await capture('token-dashboard', `${all}&tab=details`, 1440, 1696);
+    await capture('dashboard-cycle', `${settings}/?accounts=1&range=cycle-5h`, 1440, 1180);
+    await captureSection('account-detail', `${settings}/?accounts=1`, 1440, ['#account-detail-bar', '.activity-panel'], `document.querySelector('.account-group-open').click()`, 'accounts');
+    await captureSection('quota-burn-down', all, 1440, ['#quota-pace'], tab('quota'));
+    await captureSection('tokens-per-quota', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], tab('quota'), 'all', true);
+    await captureSection('quota-cycle-tokens', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], `${tab('quota')}document.querySelectorAll('#quota-estimates > .quota-estimate-provider:first-child .quota-chart-control select').forEach((select, index) => { select.value = index ? 'capacityTokens' : 'observedTokens'; select.dispatchEvent(new Event('change')); })`, 'all', true);
+    await captureSection('conversations', all, 1440, ['#conversation-breakdown'], `${tab('conversations')}document.querySelector('#conversation-breakdown button').click()`);
+    await captureSection('usage-breakdown', all, 1440, ['#period-breakdown', '#account-breakdown'], `${tab('details')}document.getElementById('period-toggle-all').click()`);
     if (!usageOnly) {
       await capture('accounts', `${settings}/?accounts=1&page=accounts`, 1440, 1080);
       await capture('account-switch', `${settings}/?accounts=1&switch=1`, 1440, 1080);

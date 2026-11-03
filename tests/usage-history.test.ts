@@ -39,6 +39,30 @@ describe('Checking compressed history is complete', () => {
   });
 });
 
+describe('Usage inside a time window', () => {
+  it('counts only responses inside the window, in hourly buckets for short windows and daily ones otherwise', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-window-usage-'));
+    try {
+      const homes = { codex: path.join(root, 'codex'), claude: path.join(root, 'claude') }, at = Date.parse('2026-10-14T08:30:00Z');
+      const record = (response: string, offset: number, input: number) => ({ ...token(response, input, 10), timestamp: new Date(at + offset).toISOString(), payload: { ...token(response, input, 10).payload, thread_id: 'thread' } });
+      await mkdir(path.join(homes.codex, 'sessions'), { recursive: true });
+      await writeFile(path.join(homes.codex, 'sessions', 'one.jsonl'), jsonl([meta, turn, record('before', -3600000, 1000), record('a', 0, 100), record('b', 1800000, 200), record('c', 2 * 86400000, 400)]));
+      const history = new UsageHistory(homes);
+      expect(await history.windowUsage(at, at + 3600000)).toMatchObject({ bucket: 'hour', days: [] });
+      await history.read();
+      const short = await history.windowUsage(at - 60000, at + 5 * 3600000);
+      expect(short.bucket).toBe('hour'); expect(usageBreakdown(short.days, { grouping: 'day' }).totals.total).toBe(320);
+      const local = new Date(at), hourKey = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')} ${String(local.getHours()).padStart(2, '0')}:00`;
+      expect(short.days.map(row => row.day)).toContain(hourKey);
+      expect(short.conversations.map(row => row.id)).toEqual(['thread']); expect(usageBreakdown(short.conversations[0]!.days, { grouping: 'day' }).totals.total).toBe(320);
+      const week = await history.windowUsage(at - 60000, at + 7 * 86400000);
+      expect(week.bucket).toBe('day'); expect(usageBreakdown(week.days, { grouping: 'day' }).totals.total).toBe(730); expect(week.days.every(row => /^\d{4}-\d{2}-\d{2}$/.test(row.day))).toBe(true);
+      // The end of a window is exclusive.
+      expect(usageBreakdown((await history.windowUsage(at - 60000, at + 1800000)).days, { grouping: 'day' }).totals.total).toBe(110);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
+
 describe('Keeping tokens of deleted transcripts', () => {
   const rollout = (id: string, response: string, input: number, output: number) => jsonl([{ ...meta, payload: { id, cwd: 'L:/project' } }, turn,
     { ...token(response, input, output), payload: { ...token(response, input, output).payload, thread_id: id } }]);

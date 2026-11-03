@@ -44,7 +44,7 @@ import { ContextStore } from './core/context-store';
 import { ChatQueue } from './core/chat-queue';
 import { ChatQueueStore } from './core/chat-queue-store';
 import { UsageHistory } from './providers/usage-history';
-import type { UsageDashboardState, UsageGrouping } from './core/usage-dashboard';
+import type { UsageDashboardState, UsageGrouping, UsageWindowData } from './core/usage-dashboard';
 import { QuotaStatusBar, readStatusBarPreferences } from './host/quota-status-bar';
 import { STATUS_BAR_CONFIGURATION, statusBarPreferenceChanges } from './core/status-bar-preferences';
 import { TrackingStatusBar } from './host/tracking-status-bar';
@@ -265,6 +265,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let usageState: Pick<UsageDashboardState, 'status' | 'data' | 'error'> = { status: 'idle' };
   let usageJob: Promise<void> | undefined, usageAbort: AbortController | undefined;
   let usageConversationTitles: Record<string, string> = {};
+  // The dashboard asks for one window at a time, e.g. a quota cycle; recomputed after each usage refresh.
+  let usageWindowRequest: { from: number; to: number } | undefined, usageWindow: UsageWindowData | undefined;
+  async function updateUsageWindow() {
+    const request = usageWindowRequest;
+    const next = request && await usageHistory.windowUsage(request.from, request.to);
+    if (request === usageWindowRequest) usageWindow = next;
+  }
   let attributionBusy = false, attributionError: string | undefined, attributionNotice: string | undefined;
   const freedKey = 'agentTandem.storageFreed';
   // Totals only add what a run actually removed, so failed or partial runs never inflate them.
@@ -272,7 +279,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, extensionStorage, storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaCycleStarts: quotaHistoryStore.cycleStarts, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, usageWindow, extensionStorage, storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaCycleStarts: quotaHistoryStore.cycleStarts, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day', statusBar: readStatusBarPreferences(config) }, activeProvider: state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex' };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
@@ -398,6 +405,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         if (!disposed && !abort.signal.aborted) {
           usageConversationTitles = titles;
           usageState = { status: 'ready', data };
+          await updateUsageWindow();
           await recordQuotaHistory(data);
         }
       } catch {
@@ -997,6 +1005,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (answer !== 'Delete token history') return;
     await usageHistory.purgeRetained();
     await refreshUsageDashboard();
+  });
+  register('agentTandem.usageWindow', async value => {
+    const request = value as { from?: unknown; to?: unknown } | null | undefined;
+    if (!request) { usageWindowRequest = usageWindow = undefined; settings.update(); return; }
+    const { from, to } = request;
+    if (typeof from !== 'number' || typeof to !== 'number' || !Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 8 * 86400000) throw new Error('Invalid usage window.');
+    usageWindowRequest = { from, to }; await updateUsageWindow(); settings.update();
   });
   register('agentTandem.usageAttribution', async value => {
     if (attributionBusy) throw new Error('Wait for the history assignment to finish.');

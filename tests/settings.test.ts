@@ -393,20 +393,20 @@ describe('Settings usage dashboard', () => {
     document.querySelector<HTMLButtonElement>('#account-save')!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'accountAction', value: { action: 'importCurrent', provider: 'Cursor' } });
     const search = document.querySelector<HTMLInputElement>('#account-search')!; search.value = 'no-match'; search.dispatchEvent(new Event('input')); expect(document.querySelectorAll('.managed-account')).toHaveLength(0); expect(document.querySelector('.account-empty')?.textContent).toContain('No matching accounts');
   });
-  it('defaults to account groups, opens a saved account with its own quota, and can show All accounts', () => {
+  it('shows account cards, opens a saved account with its own quota, and returns to all accounts', () => {
     const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
     const one = { signedIn: true, email: 'one@test', method: 'ChatGPT', plan: 'plus' }, two = { ...one, email: 'two@test' };
     const first = { ...row('2026-10-13', 'Codex', 'model', 100), account: usageAccount('Codex', one)! }, second = { ...row('2026-10-13', 'Codex', 'model', 200), account: usageAccount('Codex', two)! };
     const status = (identity: typeof one, usedPercent: number) => ({ status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent, resetsAt: now + 3600000 }] } });
     render({ ...value, data: { ...value.data!, days: [first, second] }, accounts: { Codex: status(one, 20) }, managedAccounts: [{ id: '11111111-1111-4111-8111-111111111111', provider: 'Codex', label: 'Work', identity: two, createdAt: now, status: status(two, 60) }] });
-    expect(document.querySelector<HTMLSelectElement>('#dashboard-view')!.value).toBe('accounts');
-    expect(document.querySelector<HTMLElement>('#dashboard-detail')!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(true);
     expect(document.querySelectorAll('.account-group')).toHaveLength(2);
     const work = [...document.querySelectorAll('.account-group')].find(row => row.textContent?.includes('Work'))!;
     expect(work.textContent).toContain('40% left'); work.querySelector<HTMLButtonElement>('button')!.click();
     expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe(second.account.id);
-    expect(document.querySelector<HTMLElement>('#dashboard-detail')!.hidden).toBe(false);
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('200');
+    expect(document.querySelector('#summary strong')!.getAttribute('title')).toBe('200');
     expect(document.querySelector('#accounts')!.textContent).toContain('two@test');
     expect(document.querySelector('#accounts')!.textContent).toContain('40% left');
     expect(document.querySelector('#accounts')!.textContent).not.toContain('80% left');
@@ -416,11 +416,81 @@ describe('Settings usage dashboard', () => {
     document.querySelector<HTMLButtonElement>('#account-detail-back')!.click();
     expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe('');
     expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(false);
-    expect(document.querySelector<HTMLElement>('#dashboard-detail')!.hidden).toBe(true);
-    [...document.querySelectorAll('.account-group')].find(row => row.textContent?.includes('Work'))!.querySelector<HTMLButtonElement>('button')!.click();
-    choose('dashboard-view', 'all'); expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(true);
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('300');
-    expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe('');
+  });
+  it('switches dashboard tabs by click and arrow keys, and opens history assignment in Details', () => {
+    render();
+    const tab = (name: string) => document.querySelector<HTMLButtonElement>(`#tab-${name}`)!, panel = (name: string) => document.querySelector<HTMLElement>(`#panel-${name}`)!;
+    expect(tab('overview').getAttribute('aria-selected')).toBe('true'); expect(panel('quota').hidden).toBe(true);
+    tab('quota').click();
+    expect(panel('quota').hidden).toBe(false); expect(panel('overview').hidden).toBe(true); expect(tab('quota').tabIndex).toBe(0); expect(tab('overview').tabIndex).toBe(-1);
+    tab('quota').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(panel('conversations').hidden).toBe(false); expect(document.activeElement).toBe(tab('conversations'));
+    tab('conversations').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })); expect(panel('details').hidden).toBe(false);
+    tab('details').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); expect(panel('overview').hidden).toBe(false);
+    tab('overview').click();
+    const unknown = [...document.querySelectorAll<HTMLElement>('.account-group')].find(row => row.textContent?.includes('Unknown account'));
+    unknown?.querySelector<HTMLButtonElement>('.account-group button.quiet:not(.account-group-open)')?.click();
+    if (unknown) { expect(panel('details').hidden).toBe(false); expect(document.querySelector<HTMLDetailsElement>('#usage-attribution')!.open).toBe(true); }
+  });
+  it('mirrors the date range in chips and offers quota cycles', () => {
+    render();
+    const chips = [...document.querySelectorAll<HTMLButtonElement>('#range-chips [data-range]')];
+    expect(chips.map(chip => chip.dataset.range)).toEqual(['today', 'yesterday', 'week', 'month', 'year', 'all', 'custom', 'cycle-5h', 'cycle-weekly']);
+    expect(chips.find(chip => chip.getAttribute('aria-pressed') === 'true')!.dataset.range).toBe('today');
+    chips.find(chip => chip.dataset.range === 'month')!.click();
+    expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe('month');
+    expect(chips.find(chip => chip.dataset.range === 'month')!.getAttribute('aria-pressed')).toBe('true');
+    choose('filter-range', 'week'); expect(chips.find(chip => chip.dataset.range === 'week')!.getAttribute('aria-pressed')).toBe('true');
+    expect(document.querySelector<HTMLElement>('#cycle-bar')!.hidden).toBe(true);
+  });
+  it('follows one account through its recorded quota cycles with usage the host windows', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identity = { signedIn: true, email: 'cycle@test', method: 'ChatGPT', plan: 'plus' }, account = usageAccount('Codex', identity)!;
+    const reset = now + 2 * 3600000, previousReset = now - 3 * 3600000;
+    const tick = (resetsAt: number, at: number, usedPercent: number) => ({ provider: 'Codex' as const, accountId: account.id, plan: 'plus', windowId: '5h', label: '5h', resetsAt, at, usedPercent });
+    const quotaTicks = [tick(previousReset, previousReset - 3600000, 40), tick(reset + 1000, now - 600000, 10), tick(reset, now - 60000, 12)];
+    const fixture: UsageDashboardState = { ...value, activeProvider: 'Codex', quotaTicks, accounts: { Codex: { status: 'ready', updatedAt: now, account: identity, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 12, resetsAt: reset }] } } } };
+    render(fixture); postMessage.mockClear();
+    choose('filter-range', 'cycle-5h');
+    const request = postMessage.mock.calls.find(call => call[0].type === 'usageWindow')![0].value;
+    expect(request).toEqual({ from: reset - 5 * 3600000, to: reset });
+    expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe(account.id);
+    expect(document.querySelector<HTMLSelectElement>('#filter-provider')!.value).toBe('Codex');
+    expect(document.querySelector<HTMLSelectElement>('#filter-group')!.disabled).toBe(true);
+    expect(document.querySelector<HTMLElement>('#cycle-bar')!.hidden).toBe(false);
+    expect(document.querySelector('#cycle-meta')!.textContent).toContain('Current · resets in 2h');
+    expect(document.querySelector('#summary .skeleton')).not.toBeNull();
+    const hour = (offset: number) => { const at = new Date(now + offset * 3600000); return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')} ${String(at.getHours()).padStart(2, '0')}:00`; };
+    const days = [{ ...row(hour(-1), 'Codex', 'model', 500), account }, { ...row(hour(0), 'Codex', 'model', 100) }];
+    render({ ...fixture, usageWindow: { ...request, bucket: 'hour', days, conversations: [{ key: 'Codex:c', id: 'c', provider: 'Codex', firstAt: now - 3600000, lastAt: now, days }] } });
+    const summary = document.querySelector('#summary')!;
+    expect(summary.querySelector('strong')!.getAttribute('title')).toBe('500');
+    expect(summary.textContent).toContain('12%'); expect(summary.textContent).toContain('Unknown account');
+    expect(summary.querySelector('[data-unknown=true] strong')!.getAttribute('title')).toBe('100');
+    // Assignments cover whole days, wider than the cycle.
+    expect(summary.querySelector('[data-unknown=true] button')).toBeNull();
+    expect(document.querySelectorAll('#usage-chart .chart-column').length).toBeGreaterThanOrEqual(3);
+    expect(document.querySelector('#period-title')!.textContent).toBe('Hourly breakdown by model');
+    expect(document.querySelectorAll('#conversation-breakdown tbody tr')).toHaveLength(1);
+    postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#cycle-prev')!.click();
+    expect(postMessage.mock.calls.find(call => call[0].type === 'usageWindow')![0].value).toEqual({ from: previousReset - 5 * 3600000, to: reset - 5 * 3600000 });
+    expect(document.querySelector('#cycle-meta')!.textContent).toContain('2 of 2 recorded');
+    expect(document.querySelector<HTMLButtonElement>('#cycle-prev')!.disabled).toBe(true);
+    document.querySelector<HTMLButtonElement>('#cycle-current')!.click(); expect(document.querySelector('#cycle-meta')!.textContent).toContain('Current');
+    postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#account-detail-back')!.click();
+    expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe('today');
+    expect(postMessage).toHaveBeenCalledWith({ type: 'usageWindow', value: null });
+    expect(document.querySelector<HTMLElement>('#cycle-bar')!.hidden).toBe(true);
+  });
+  it('explains when a cycle has no account or no recorded cycles', () => {
+    render({ ...value, accounts: {} }); choose('filter-range', 'cycle-weekly');
+    expect(document.querySelector('#cycle-title')!.textContent).toBe('No account for Weekly cycles');
+    const identity = { signedIn: true, email: 'none@test', method: 'ChatGPT' };
+    render({ ...value, activeProvider: 'Codex', accounts: { Codex: { status: 'ready', account: identity } } });
+    expect(document.querySelector('#cycle-title')!.textContent).toBe('No Weekly cycles recorded yet');
+    expect(document.querySelector('#summary strong')!.getAttribute('title')).toBe('0');
   });
   it('opens conversation usage details, respects dashboard filters and safely renders native titles', () => {
     const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);

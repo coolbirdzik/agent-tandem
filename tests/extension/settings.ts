@@ -39,6 +39,21 @@ export async function run() {
   assert.equal(state.data.recent?.length, 3, 'Quota receives recent deduplicated timestamp/token metadata');
   assert.equal(state.data.days.reduce((sum, row) => sum + (row.cost?.unpricedTokens ?? 0), 0), 110, 'Unknown model usage stays unpriced');
   assert.ok(Math.abs(state.data.days.reduce((sum, row) => sum + (row.cost?.usd ?? 0), 0) - .00239625) < 1e-10, 'API equivalent prices both providers and cache categories once');
+  // A quota cycle's usage is windowed on the host, and kept current across usage refreshes.
+  const windowStart = Date.now() - 3600000, windowEnd = Date.now() + 3600000;
+  await vscode.commands.executeCommand('agentTandem.usageWindow', { from: windowStart, to: windowEnd });
+  let windowed = api.usageDashboard().usageWindow;
+  assert.equal(windowed?.bucket, 'hour'); assert.equal(windowed?.from, windowStart);
+  assert.equal(windowed?.days.reduce((sum, row) => sum + row.total, 0), 770, 'The window counts the same deduplicated usage');
+  assert.ok(windowed?.days.every(row => /^\d{4}-\d{2}-\d{2} \d{2}:00$/.test(row.day)), 'Short windows use local hourly buckets');
+  windowed = (await vscode.commands.executeCommand<typeof state>('agentTandem.refreshUsageDashboard')).usageWindow;
+  assert.equal(windowed?.days.reduce((sum, row) => sum + row.total, 0), 770, 'A usage refresh recomputes the requested window');
+  await vscode.commands.executeCommand('agentTandem.usageWindow', { from: windowEnd, to: windowEnd + 3600000 });
+  assert.equal(api.usageDashboard().usageWindow?.days.length, 0, 'Usage outside the window is excluded');
+  await assert.rejects(Promise.resolve(vscode.commands.executeCommand('agentTandem.usageWindow', { from: windowEnd, to: windowStart })));
+  await assert.rejects(Promise.resolve(vscode.commands.executeCommand('agentTandem.usageWindow', { from: 0, to: 9 * 86400000 })));
+  await vscode.commands.executeCommand('agentTandem.usageWindow', null);
+  assert.equal(api.usageDashboard().usageWindow, undefined, 'Leaving cycle mode clears the window');
   const tabs = () => vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.label === 'AgentTandem Settings');
   const started = Date.now();
   while (!tabs().length) {

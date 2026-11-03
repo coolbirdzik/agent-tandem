@@ -37,7 +37,10 @@ export interface UsageHistoryData {
   conversations?: UsageConversation[];
   assignments?: import('./usage-attribution-store').UsageAssignment[];
 }
+/** Usage inside one time window, such as a quota cycle. `days` holds hourly ('YYYY-MM-DD HH:00') or daily buckets. */
+export interface UsageWindowData { from: number; to: number; bucket: 'hour' | 'day'; days: UsageDay[]; conversations: UsageConversation[] }
 export interface UsageDashboardState {
+  usageWindow?: UsageWindowData;
   quotaTicks?: import('./quota-pace').QuotaTick[];
   managedAccounts?: Array<import('./account-profiles').AccountProfile & { status?: ProviderAccountStatus; active?: boolean }>;
   accountsBusy?: boolean; accountsRefreshing?: boolean; accountsError?: string; accountsNotice?: string;

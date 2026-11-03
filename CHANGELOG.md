@@ -10,6 +10,8 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Added
 
+- Dashboard: filter usage by **5h cycle** or **Weekly cycle** of one account, between its quota resets. Step through recorded cycles, see hourly or daily activity, quota used in the cycle and the provider's unattributed tokens in the same window.
+
 - Usage: attribute Codex and Claude responses without account evidence to the one account whose quota rose around them. Matches are saved under **Matched from quota changes** and never replace native evidence or a user assignment. Responses that match no account or several stay **Unknown account**.
 
 - Usage: keep token counts after a transcript is deleted, whether by conversation cleanup or a CLI's own retention. The conversation stays in the dashboard marked **Transcript deleted, tokens kept**, and only **Delete kept token history…** removes the counts, after a confirmation.
@@ -17,6 +19,8 @@ Historical version dates and boundaries are reconstructed from package version c
 - Storage: confirm the conversation count and active filters before permanent deletion, including any subagent history deleted with its parent. Pause on deletion errors with **Skip**, **Skip All** for the same provider and error, or **Cancel**. Cancellation stops remaining deletions and reports the work already completed.
 
 ### Changed
+
+- Dashboard: replace the long page with date chips, a summary of tokens, API-equivalent cost, quota and unknown-account tokens, and **Overview**, **Quota**, **Conversations** and **Details** tabs. **View usage** on an account card now filters the whole dashboard; the separate **By account** / **All accounts** view selector is gone.
 
 - Agent sidebar tab: remove the 900px maximum width so the chat fills the available width.
 

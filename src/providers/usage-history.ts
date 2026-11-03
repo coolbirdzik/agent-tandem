@@ -9,7 +9,7 @@ import * as zlib from 'node:zlib';
 // Use the package's ESM build so esbuild can bundle its relative imports into VSIX.
 import { visit } from 'jsonc-parser/lib/esm/main.js';
 import type { ConversationProvider } from './conversations';
-import { addTotals, emptyTotals, localDay, type TokenTotals, type UsageDay, type UsageHistoryData, type RecentUsage, type UsageConversation } from '../core/usage-dashboard';
+import { addTotals, emptyTotals, localDay, type TokenTotals, type UsageDay, type UsageHistoryData, type RecentUsage, type UsageConversation, type UsageWindowData } from '../core/usage-dashboard';
 import { addApiCost, apiCost, emptyApiCost } from '../core/api-pricing';
 import type { UsageAccountStore } from '../core/usage-account-store';
 import { claudeHistoryOwner, type UsageAccount } from '../core/usage-account';
@@ -240,6 +240,7 @@ async function historyFiles(directory: string, signal?: AbortSignal): Promise<{ 
 export class UsageHistory {
   private cache = new Map<string, ParsedFile>();
   private retainedCache = new Map<string, UsageRecord[]>();
+  private counted: UsageRecord[] = [];
   readStats?: UsageReadStats;
   constructor(private homes = { codex: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claude: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude') }, private accounts?: Pick<UsageAccountStore, 'read'>, private cacheDirectory?: string,
     private attribution?: { store: Pick<UsageAttributionStore, 'read'>; knownAccounts: () => Promise<KnownUsageAccount[]>; quotaSamples?: () => QuotaTick[]; quotaMatches?: Pick<UsageAccountStore, 'read' | 'recordMany'> }) {}
@@ -403,12 +404,10 @@ export class UsageHistory {
       if (account && this.attribution?.quotaMatches) newMatches.push({ key: row.id, account });
       return account;
     };
-    const aggregateStart = performance.now();
-    const days = new Map<string, UsageDay>(), recent: RecentUsage[] = [], conversations = new Map<string, UsageConversation & { buckets: Map<string, UsageDay>; live: boolean }>(), now = Date.now();
-    let aggregated = 0, retainedTokens = 0;
-    const retainedConversations = new Set<string>();
+    const aggregateStart = performance.now(), recent: RecentUsage[] = [], counted: UsageRecord[] = [], now = Date.now();
+    let attributed = 0;
     for (const row of records.values()) {
-      if (++aggregated % 2000 === 0) { signal?.throwIfAborted(); await setImmediate(); }
+      if (++attributed % 2000 === 0) { signal?.throwIfAborted(); await setImmediate(); }
       if (row.kind === 'legacy' && row.equivalent && nativeAliases.has(row.equivalent)) { duplicates++; continue; }
       const day = localDay(row.timestamp);
       if (!row.account) {
@@ -422,23 +421,46 @@ export class UsageHistory {
           if (row.account) row.accountSource = 'inferred';
         }
       }
-      const key = `${day}\0${row.provider}\0${row.model}\0${row.account?.id ?? ''}\0${row.accountSource ?? ''}`;
-      const attribution = { ...(row.account ? { account: row.account } : {}), ...(row.accountSource ? { accountSource: row.accountSource } : {}) };
-      const value = days.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...attribution };
-      addTotals(value, row); addApiCost(value.cost!, apiCost(row.provider, row.model, row)); days.set(key, value);
-      const id = row.conversationId || 'unknown', conversationKey = `${row.provider}:${id}`;
-      const conversation = conversations.get(conversationKey) ?? { key: conversationKey, id, provider: row.provider, project: row.project, firstAt: row.timestamp, lastAt: row.timestamp, days: [], buckets: new Map<string, UsageDay>(), live: false };
-      conversation.firstAt = Math.min(conversation.firstAt, row.timestamp); conversation.lastAt = Math.max(conversation.lastAt, row.timestamp);
-      if (row.retained) { retainedTokens += row.total; retainedConversations.add(conversationKey); } else conversation.live = true;
-      const bucket = conversation.buckets.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...attribution };
-      addTotals(bucket, row); addApiCost(bucket.cost!, apiCost(row.provider, row.model, row)); conversation.buckets.set(key, bucket); conversations.set(conversationKey, conversation);
+      counted.push(row);
       // Retain only timestamps/provider/token counts for current quota windows.
       if (row.timestamp >= now - 7 * 86400000 && row.timestamp <= now) recent.push({ timestamp: row.timestamp, provider: row.provider, total: row.total, ...(row.account ? { accountId: row.account.id } : {}), ...(row.accountSource ? { accountSource: row.accountSource } : {}) });
     }
+    this.counted = counted;
     // Unsaved matches are found again on the next read while their samples remain.
     if (newMatches.length) await this.attribution?.quotaMatches?.recordMany(newMatches).catch(() => undefined);
+    const { days, conversations, retained } = await aggregateUsage(counted, row => localDay(row.timestamp), signal);
     stats.aggregateMs = performance.now() - aggregateStart; this.readStats = stats;
-    return { days: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)), conversations: [...conversations.values()].map(({ buckets, live, ...row }) => ({ ...row, days: [...buckets.values()], ...(live ? {} : { transcriptDeleted: true }) })).sort((a, b) => b.lastAt - a.lastAt), recent: recent.sort((a, b) => a.timestamp - b.timestamp), updatedAt: now, files: files.length, unreadableFiles,
-      malformedLines, undatedRecords, oversizedLines, duplicates, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...(assignments ? { assignments } : {}), ...(retainedTokens ? { retained: { conversations: retainedConversations.size, tokens: retainedTokens } } : {}) };
+    return { days, conversations, recent: recent.sort((a, b) => a.timestamp - b.timestamp), updatedAt: now, files: files.length, unreadableFiles,
+      malformedLines, undatedRecords, oversizedLines, duplicates, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...(assignments ? { assignments } : {}), ...(retained ? { retained } : {}) };
   }
+  /** Usage from `from` up to `to`, with the latest read's attribution. Windows up to 36 hours use hourly buckets, longer ones daily. */
+  async windowUsage(from: number, to: number): Promise<UsageWindowData> {
+    const hourly = to - from <= 36 * 3600000;
+    const { days, conversations } = await aggregateUsage(this.counted.filter(row => row.timestamp >= from && row.timestamp < to), row => hourly ? localHour(row.timestamp) : localDay(row.timestamp));
+    return { from, to, bucket: hourly ? 'hour' : 'day', days, conversations };
+  }
+}
+const localHour = (timestamp: number) => `${localDay(timestamp)} ${String(new Date(timestamp).getHours()).padStart(2, '0')}:00`;
+/** Totals per bucket, provider, model and attribution, and per conversation. */
+async function aggregateUsage(rows: UsageRecord[], bucketOf: (row: UsageRecord) => string, signal?: AbortSignal) {
+  const days = new Map<string, UsageDay>(), conversations = new Map<string, UsageConversation & { buckets: Map<string, UsageDay>; live: boolean }>();
+  let aggregated = 0, retainedTokens = 0;
+  const retainedConversations = new Set<string>();
+  for (const row of rows) {
+    if (++aggregated % 2000 === 0) { signal?.throwIfAborted(); await setImmediate(); }
+    const day = bucketOf(row), cost = apiCost(row.provider, row.model, row);
+    const key = `${day}\0${row.provider}\0${row.model}\0${row.account?.id ?? ''}\0${row.accountSource ?? ''}`;
+    const attribution = { ...(row.account ? { account: row.account } : {}), ...(row.accountSource ? { accountSource: row.accountSource } : {}) };
+    const value = days.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...attribution };
+    addTotals(value, row); addApiCost(value.cost!, cost); days.set(key, value);
+    const id = row.conversationId || 'unknown', conversationKey = `${row.provider}:${id}`;
+    const conversation = conversations.get(conversationKey) ?? { key: conversationKey, id, provider: row.provider, project: row.project, firstAt: row.timestamp, lastAt: row.timestamp, days: [], buckets: new Map<string, UsageDay>(), live: false };
+    conversation.firstAt = Math.min(conversation.firstAt, row.timestamp); conversation.lastAt = Math.max(conversation.lastAt, row.timestamp);
+    if (row.retained) { retainedTokens += row.total; retainedConversations.add(conversationKey); } else conversation.live = true;
+    const bucket = conversation.buckets.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...attribution };
+    addTotals(bucket, row); addApiCost(bucket.cost!, cost); conversation.buckets.set(key, bucket); conversations.set(conversationKey, conversation);
+  }
+  return { days: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
+    conversations: [...conversations.values()].map(({ buckets, live, ...row }) => ({ ...row, days: [...buckets.values()], ...(live ? {} : { transcriptDeleted: true }) })).sort((a, b) => b.lastAt - a.lastAt),
+    retained: retainedTokens ? { conversations: retainedConversations.size, tokens: retainedTokens } : undefined };
 }
