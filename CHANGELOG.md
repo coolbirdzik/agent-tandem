@@ -12,6 +12,10 @@ Historical version dates and boundaries are reconstructed from package version c
 
 - Storage: confirm the conversation count and active filters before permanent deletion, including any subagent history deleted with its parent. Pause on deletion errors with **Skip**, **Skip All** for the same provider and error, or **Cancel**. Cancellation stops remaining deletions and reports the work already completed.
 
+### Changed
+
+- Agent sidebar tab: remove the 900px maximum width so the chat fills the available width.
+
 ### Fixed
 
 - Match quota burn-down chart legends to the visible chart lines.
