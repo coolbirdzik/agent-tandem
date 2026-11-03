@@ -545,10 +545,8 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .burn-tooltip[data-side=right] { transform: translateX(10px); }
 .burn-tooltip[data-side=left] { transform: translateX(calc(-100% - 10px)); }
 .burn-axis-labels { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
-.burn-legend i { width: 14px; height: 0; border-radius: 0; border-top: 2px solid var(--muted); }
-.burn-legend .burn-key-actual { border-top-color: var(--vscode-foreground); }
-.burn-legend .burn-key-ideal { border-top-style: dashed; }
-.burn-legend .burn-key-projection { border-top-style: dotted; border-top-color: var(--vscode-foreground); }
+.burn-legend { margin-top: 10px; }
+.burn-legend svg { width: 24px; height: 8px; overflow: visible; flex: none; }
 .conversation-link { background: transparent; color: var(--vscode-textLink-foreground); padding: 2px 0; font-size: 12px; max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .conversation-link:hover { background: transparent; text-decoration: underline; }
 .conversation-detail { margin-top: 24px; padding: 20px; background: var(--surface); border-left: 2px solid var(--vscode-focusBorder); }

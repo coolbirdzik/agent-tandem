@@ -696,6 +696,14 @@ function renderQuotaPace() {
     plot.onpointerleave = () => { cross.hidden = tip.hidden = true; };
     const axis = node('div', undefined, 'burn-axis-labels'); axis.append(node('span', measured ? burnTime(burn.start, long) : `Since ${burnTime(burn.start, long)}`), node('span', `Reset ${burnTime(burn.end, long)}`));
     item.append(plot, axis);
+    const legend = node('div', undefined, 'chart-legend burn-legend'); legend.setAttribute('aria-hidden', 'true');
+    for (const [label, style, visible] of [['Remaining', 'burn-actual', true], ['Even pace', 'burn-ideal', measured], ['Projection', 'burn-projection', !!rate && rate > 0]] as const) {
+      if (!visible) continue;
+      const key = node('span'), sample = svgNode('svg', { viewBox: '0 0 24 8' });
+      sample.append(svgNode('line', { x1: 1, y1: 4, x2: 23, y2: 4, class: style }));
+      key.append(sample, document.createTextNode(label)); legend.append(key);
+    }
+    item.append(legend);
     if (burn.stale) item.append(node('small', 'Quota sample is older than 5 minutes', 'muted'));
     root.append(item);
   }
@@ -1244,9 +1252,10 @@ function renderNativeDialog(value: UsageDashboardState['conversationCleanup']) {
     const failures = result?.failures ?? [], skipped = result?.skipped ?? [];
     status = failures.length ? 'error' : removed ? (kept.length || skipped.length ? 'warning' : 'success') : 'empty';
     icon = failures.length ? 'error' : removed ? (status === 'warning' ? 'warning' : 'check') : 'info';
-    title = failures.length ? 'Cleanup finished with problems' : removed ? 'Cleanup complete' : 'Nothing was deleted';
+    title = result?.cancelled ? 'Cleanup cancelled' : failures.length ? 'Cleanup finished with problems' : removed ? 'Cleanup complete' : 'Nothing was deleted';
     summary = [removed ? `Deleted ${plural(removed, 'conversation')} and freed ${fileSize(result!.bytes)}.` : 'No conversation could be deleted.',
       kept.length + skipped.length ? `${plural(kept.length + skipped.length, 'conversation')} kept.` : '', failures.length ? `${plural(failures.length, 'problem')} reported.` : ''].filter(Boolean).join(' ');
+    if (result?.cancelled) summary = `${removed ? summary : 'Nothing was deleted.'} Remaining deletions were cancelled.`;
     section('failures', 'Problems', failures.map(failure => ({ title: failure })), true);
     section('kept', 'Kept', [...kept.map(row => ({ title: row.title, detail: row.reason })), ...skipped.map(key => ({ title: titles[key] ?? key, detail: 'Changed or became protected during cleanup.' }))], !removed || kept.length + skipped.length <= 5);
     section('removed', 'Deleted', (result?.removed ?? []).map(key => ({ title: titles[key] ?? key })));

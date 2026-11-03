@@ -163,10 +163,36 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
     await writeFile(newest.file, '#!/bin/sh\nexit 1\n');
     expect((await resolver.resolve('Codex', {})).cli.executable).toBe(old.file);
   });
-  it('reports missing Codex and leaves Claude discovery unchanged', async () => {
+  async function claudeExtension(version: string, base = path.join(root, '.vscode', 'extensions')) {
+    const installation = path.join(base, `anthropic.claude-code-${version}-${process.platform}-${process.arch}`);
+    const file = await executable(path.join(installation, 'resources', 'native-binary', 'claude'), `${version} (Claude Code)`);
+    await writeFile(path.join(installation, 'package.json'), JSON.stringify({ version }));
+    return { installation, file };
+  }
+  it('reports missing CLIs and keeps each provider to its own extension', async () => {
     await expect(resolver.resolve('Codex', {})).rejects.toThrow('No usable Codex CLI');
+    await expect(resolver.resolve('Claude', {})).rejects.toThrow('No usable Claude CLI');
     await extension('1.10.0');
-    await expect(resolver.resolve('Claude', {})).rejects.toThrow('claude was not found');
+    await expect(resolver.resolve('Claude', {})).rejects.toThrow('No usable Claude CLI');
+  });
+  it('falls back to the newest Claude Code extension binary without writing the registry', async () => {
+    await claudeExtension('2.1.9'); const newest = await claudeExtension('2.1.10');
+    const before = await store.read(), result = await resolver.resolve('Claude', {});
+    expect(result.source).toBe('extension'); expect(result.cli.executable).toBe(newest.file);
+    expect(result.entry).toBeUndefined(); expect(await store.read()).toEqual(before);
+  });
+  it('prefers a Claude CLI on PATH over the extension binary', async () => {
+    await claudeExtension('2.1.10');
+    const bin = path.join(root, 'bin'); const terminal = await executable(path.join(bin, 'claude'), '2.0.0 (Claude Code)');
+    vi.stubEnv('PATH', bin);
+    const registry = await store.read();
+    await store.add(registry.revision, { provider: 'Claude', name: 'Terminal', executable: terminal, version: '2.0.0 (Claude Code)' });
+    const result = await resolver.resolve('Claude', {});
+    expect(result.cli.executable).toBe(terminal); expect(result.source).toBe('default');
+  });
+  it('rejects a non-Claude binary in the Claude extension folder', async () => {
+    const bad = await claudeExtension('2.1.10'); await writeFile(bad.file, '#!/bin/sh\necho 1.0.0\n', { mode: 0o755 });
+    await expect(resolver.resolve('Claude', {})).rejects.toThrow('No usable Claude CLI');
   });
   it('does not resolve or mutate anything when cancelled before the operation', async () => {
     await extension('1.10.0'); const abort = new AbortController(); abort.abort();

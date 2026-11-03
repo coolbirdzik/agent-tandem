@@ -2,7 +2,7 @@ import { stat } from 'node:fs/promises';
 import type { CLIStore } from '../core/cli-store';
 import type { ConversationProvider } from './conversations';
 import { allowedCLI, cliPathKey, defaultCLI, type CLIActive, type CLIEntry, type CLIRegistry } from './cli-registry';
-import { cliInfo, findExecutable, latestExtensionCodexCLI, type CLIInfo } from './probe';
+import { cliInfo, findExecutable, latestExtensionClaudeCLI, latestExtensionCodexCLI, type CLIInfo } from './probe';
 
 export type CLISelection =
   | { type: 'automatic' }
@@ -15,6 +15,7 @@ export interface CLIConfiguration {
   id?: string;
   executable?: string;
   codexExtensionPaths?: readonly string[];
+  claudeExtensionPaths?: readonly string[];
 }
 
 export interface ResolvedCLI { cli: CLIInfo; entry?: CLIEntry; source: CLIActive['source'] }
@@ -72,7 +73,7 @@ export class ManagedCLIResolver {
     if (!registry.initialized) throw new Error('Initialize the managed CLI list before resolving a CLI.');
     const selection = intent(registry, provider, config);
     const generation = this.generations[provider];
-    const key = `${provider}:${JSON.stringify([generation, registry.revision, selection, config.codexExtensionPaths, process.env.PATH])}`;
+    const key = `${provider}:${JSON.stringify([generation, registry.revision, selection, config.codexExtensionPaths, config.claudeExtensionPaths, process.env.PATH])}`;
     const cached = this.cache.get(key);
     if (cached) {
       try {
@@ -111,17 +112,19 @@ export class ManagedCLIResolver {
       const entry = known(executable, true);
       return { cli: await cliInfo(name, executable), entry, source: selection.type === 'managed' ? selection.source : selection.type === 'path' ? 'path' : 'project' };
     }
+    const codex = provider === 'Codex';
     let terminal: string | undefined;
-    try { terminal = await findExecutable(name); } catch (error) { if (provider !== 'Codex') throw error; }
+    try { terminal = await findExecutable(name); } catch { /* Fall back to the editor extension below. */ }
     if (terminal) {
-      const entry = known(terminal, provider !== 'Codex');
+      const entry = known(terminal, !codex);
       try {
         const cli = await cliInfo(name, terminal);
-        if (provider !== 'Codex' || /^codex-cli\s+/i.test(cli.version)) return { cli, entry, source: provider === 'Codex' ? 'automatic-path' : 'default' };
-      } catch (error) { if (provider !== 'Codex') throw error; }
+        if (!codex || /^codex-cli\s+/i.test(cli.version)) return { cli, entry, source: codex ? 'automatic-path' : 'default' };
+      } catch (error) { if (!codex) throw error; }
     }
-    const cli = await latestExtensionCodexCLI(config.codexExtensionPaths, undefined, executable => { known(executable, false); });
-    if (!cli) throw new Error('No usable Codex CLI was found on PATH or in the current editor extension. Install Codex or choose an executable in Manage CLIs.');
+    const verify = (executable: string) => { known(executable, false); };
+    const cli = codex ? await latestExtensionCodexCLI(config.codexExtensionPaths, undefined, verify) : await latestExtensionClaudeCLI(config.claudeExtensionPaths, undefined, verify);
+    if (!cli) throw new Error(`No usable ${provider} CLI was found on PATH or in the current editor extension. Install ${provider} or choose an executable in Manage CLIs.`);
     return { cli, entry: known(cli.executable, false), source: 'extension' };
   }
 }

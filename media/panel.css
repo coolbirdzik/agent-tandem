@@ -69,7 +69,7 @@ body.vscode-dark .provider-icon[data-provider=Codex],body.vscode-high-contrast .
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;padding:0;background:var(--tandem-bg);color:var(--vscode-foreground);font:13px/1.5 var(--vscode-font-family,system-ui)}
-main{height:100%;max-width:900px;margin:auto;display:flex;flex-direction:column;min-height:0}
+main{height:100%;display:flex;flex-direction:column;min-height:0}
 button,input,select{font:inherit}
 button{cursor:pointer;transition:background-color 160ms var(--tandem-ease),color 160ms var(--tandem-ease);border:0;border-radius:6px}
 button:disabled{opacity:.45;cursor:default}

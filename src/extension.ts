@@ -68,6 +68,7 @@ import { spawn as launchDesktopProcess } from 'node:child_process';
 import { withStorageLock } from './core/storage-lock';
 import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeletionPlan, type StorageProgress } from './core/storage';
 import { ConversationCleanup, type ConversationCleanupState, type DeletionProgress } from './core/conversation-cleanup';
+import { conversationCleanupPrompts } from './host/conversation-cleanup-prompts';
 import { deleteCodexThread } from './providers/codex-history-mutation';
 import { addFreed, storageFreed } from './core/storage-freed';
 import { shouldWarnStorage, storageSize, storageWarningBytes, type ExtensionStorageUsage } from './core/storage-usage';
@@ -117,6 +118,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     return extension ? `${extension.extensionUri.toString()}@${extension.packageJSON.version}` : '';
   };
   let codexExtensionRevision = codexExtensionIdentity();
+  const claudeExtensionIdentity = () => {
+    const extension = vscode.extensions.getExtension('anthropic.claude-code');
+    return extension ? `${extension.extensionUri.toString()}@${extension.packageJSON.version}` : '';
+  };
+  let claudeExtensionRevision = claudeExtensionIdentity();
   const contextStore = new ContextStore(path.join(context.globalStorageUri.fsPath, 'context'));
   let cliInit: Promise<CLIRegistry> | undefined;
   let cliManaging = false;
@@ -417,8 +423,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const cliIdKey = (provider: ConversationProvider) => provider === 'Codex' ? 'codexCLIId' : 'claudeCLIId';
   async function discoverCLIs(providers: ConversationProvider[]): Promise<CLIRegistration[]> {
     const results = await Promise.allSettled(providers.map(async provider => {
-      const codexExtension = provider === 'Codex' ? vscode.extensions.getExtension('openai.chatgpt') : undefined;
-      const files = await installedCLIs(provider === 'Codex' ? 'codex' : 'claude', codexExtension ? [codexExtension.extensionPath] : []);
+      const extension = vscode.extensions.getExtension(provider === 'Codex' ? 'openai.chatgpt' : 'anthropic.claude-code');
+      const files = await installedCLIs(provider === 'Codex' ? 'codex' : 'claude', extension ? [extension.extensionPath] : []);
       for (const folder of vscode.workspace.workspaceFolders ?? []) {
         const configured = vscode.workspace.getConfiguration('agentTandem', folder.uri).get<string>(cliKey(provider));
         if (configured && !files.some(file => cliPathKey(file.executable) === cliPathKey(configured))) {
@@ -446,9 +452,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const config = vscode.workspace.getConfiguration('agentTandem', project ? vscode.Uri.file(project) : undefined);
     const terminal = config.get<string>(cliModeKey(provider)) === 'terminal';
     const codexExtension = provider === 'Codex' ? vscode.extensions.getExtension('openai.chatgpt') : undefined;
+    const claudeExtension = provider === 'Claude' ? vscode.extensions.getExtension('anthropic.claude-code') : undefined;
     return cliResolver.resolve(provider, {
       terminal, id: config.get<string>(cliIdKey(provider)), executable: config.get<string>(cliKey(provider)),
       codexExtensionPaths: codexExtension ? [codexExtension.extensionPath] : [],
+      claudeExtensionPaths: claudeExtension ? [claudeExtension.extensionPath] : [],
     }, signal);
   }
   async function refreshCLIManager() {
@@ -824,9 +832,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.scanConversationCleanup', () => conversationCleanupAction(async () => { conversationCleanup.cancel(); return conversationCleanup.inspect(); }));
   register('agentTandem.previewConversationCleanup', value => conversationCleanupAction(() => conversationCleanup.preview((value as { keys?: unknown } | undefined)?.keys)));
   register('agentTandem.deleteConversations', async value => {
-    // Clicking Delete selected/all matching authorizes the selected keys or the filters, with their date cutoff.
     const request = value as { token?: unknown; keys?: unknown; before?: unknown; filter?: unknown } | undefined;
     const progress: DeletionProgress = {
+      ...conversationCleanupPrompts(request ?? {}),
       signal: conversationCleanupDisposed.signal,
       dates: dates => { conversationCleanupState = { ...conversationCleanupState, dates }; settings.update(); },
       deleting: (done, total) => { conversationCleanupState = { ...conversationCleanupState, dates: undefined, done, total }; settings.update(); }
@@ -835,7 +843,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       ? conversationCleanup.deleteMatching(request.filter, progress)
       : request?.keys !== undefined
         ? conversationCleanup.deleteSelected(request.keys, request.before, progress)
-        : conversationCleanup.delete(request?.token, progress.deleting)), true);
+        : conversationCleanup.delete(request?.token, progress)), true);
     const deleted = conversationCleanupState.result;
     if (deleted) await recordFreed({ bytes: deleted.bytes, conversations: deleted.removed.length });
     await syncConversations().catch(report);
@@ -1623,6 +1631,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   };
   context.subscriptions.push({ dispose: () => { disposed = true; externalWatcher?.dispose(); clearTimeout(externalTimer); chatAbort?.abort(); usageAbort?.abort(); for (const job of modelJobs.values()) job.abort.abort(); for (const job of accountJobs.values()) job.abort.abort(); generation++; selectionGeneration++; clearInterval(timer); clearInterval(accountTimer); clearInterval(storageUsageTimer); clearTimeout(storageUsageStartup); } },
     vscode.extensions.onDidChange(() => {
+      const claudeRevision = claudeExtensionIdentity();
+      if (claudeRevision !== claudeExtensionRevision) {
+        claudeExtensionRevision = claudeRevision; cliResolver.invalidate('Claude');
+        modelJobs.get('Claude')?.abort.abort(); modelJobs.delete('Claude');
+        state.modelCatalogs = { ...state.modelCatalogs, Claude: undefined };
+        void refreshCLIManager(); void loadModels('Claude', true); void loadAccount('Claude', true);
+      }
       const revision = codexExtensionIdentity();
       if (revision === codexExtensionRevision) return;
       codexExtensionRevision = revision; cliResolver.invalidate('Codex');
