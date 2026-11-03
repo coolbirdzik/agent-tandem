@@ -18,6 +18,7 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Fixed
 
+- Claude: find the CLI bundled with the Claude Code editor extension when no `claude` is on PATH, instead of failing with "claude was not found". A PATH CLI still takes precedence, and the bundled CLI appears in Manage CLIs.
 - Match quota burn-down chart legends to the visible chart lines.
 
 ## [0.1.35] - 2026-10-27

@@ -762,7 +762,7 @@
         "agentTandem.claudeExecutable": {
           "type": "string",
           "default": "",
-          "description": "Optional absolute path to an enabled Claude executable in Manage CLIs. A managed project entry ID takes precedence.",
+          "description": "Optional absolute path to an enabled Claude executable in Manage CLIs. Uses the managed default when empty; automatic selection tries a valid PATH Claude, then the current VS Code host's Claude Code extension. A managed project entry ID takes precedence.",
           "scope": "resource"
         },
         "agentTandem.codexCLISelection": {

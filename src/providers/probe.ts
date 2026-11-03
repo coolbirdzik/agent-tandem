@@ -107,6 +107,61 @@ async function vscodeExtensionCodexExecutables(extensionPaths: readonly string[]
   return files;
 }
 
+/** The Claude Code VS Code extension bundles one native CLI per platform build. */
+async function vscodeExtensionClaudeExecutables(extensionPaths: readonly string[], scan = true, currentHostOnly = false): Promise<string[]> {
+  const home = process.platform === 'win32' ? process.env.USERPROFILE : os.homedir();
+  const editorRoots = new Set([
+    ...(home && !(currentHostOnly && extensionPaths.length) ? ['.vscode', '.vscode-insiders', '.cursor'].map(editor => path.join(home, editor, 'extensions')) : []),
+    ...extensionPaths.map(installation => path.dirname(installation)),
+  ]);
+  const installations = new Set(extensionPaths);
+  for (const editorRoot of scan ? editorRoots : []) {
+    const extensions = await readdir(editorRoot).catch(() => []);
+    for (const extension of extensions.filter(entry => entry.startsWith('anthropic.claude-code-'))) installations.add(path.join(editorRoot, extension));
+  }
+  const executable = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const files: string[] = [];
+  for (const installation of installations) {
+    const native = path.join(installation, 'resources', 'native-binary', executable);
+    if (await exists(native)) files.push(native);
+  }
+  return files;
+}
+
+/** Fallback when no terminal Claude exists: newest working CLI bundled with the editor extension. */
+export async function latestExtensionClaudeCLI(extensionPaths: readonly string[] = [], signal?: AbortSignal, beforeVerify?: (executable: string) => void): Promise<CLIInfo | undefined> {
+  const verify = async (executable: string) => {
+    signal?.throwIfAborted();
+    beforeVerify?.(executable);
+    try {
+      const info = await cliInfo('claude', executable, signal);
+      return /\(Claude Code\)/i.test(info.version) ? info : undefined;
+    } catch (error) { if (signal?.aborted) throw error; return undefined; }
+  };
+  const current = await vscodeExtensionClaudeExecutables(extensionPaths, false);
+  for (const executable of current) {
+    const info = await verify(executable);
+    if (info) return info;
+  }
+  const files = (await vscodeExtensionClaudeExecutables(extensionPaths, true, true)).filter(file => !current.includes(file));
+  const candidates = await Promise.all(files.map(async executable => {
+    const installation = path.resolve(executable, '../../..');
+    let version = path.basename(installation).replace(/^anthropic\.claude-code-/, '').replace(/-(?:linux|darwin|win32|alpine)-(?:x64|arm64|armhf|ia32)$/, '');
+    try {
+      const manifest = JSON.parse(await readFile(path.join(installation, 'package.json'), 'utf8'));
+      if (typeof manifest.version === 'string') version = manifest.version;
+    } catch { /* Platform suffixes can be removed from older installation names. */ }
+    return { executable, version: valid(version) };
+  }));
+  const ordered = candidates.filter((candidate): candidate is { executable: string; version: string } => !!candidate.version);
+  ordered.sort((a, b) => rcompare(a.version, b.version));
+  for (const candidate of ordered) {
+    const info = await verify(candidate.executable);
+    if (info) return info;
+  }
+  return undefined;
+}
+
 /** Prefer the current extension host; scan its siblings only as a fallback. */
 export async function latestExtensionCodexCLI(extensionPaths: readonly string[] = [], signal?: AbortSignal, beforeVerify?: (executable: string) => void): Promise<CLIInfo | undefined> {
   const verify = async (executable: string) => {
@@ -143,7 +198,7 @@ export async function latestExtensionCodexCLI(extensionPaths: readonly string[] 
 }
 
 /** Choices are explicit; alternate installations never affect terminal detection. */
-export async function installedCLIExecutables(name: 'codex' | 'claude', codexExtensionPaths: readonly string[] = []): Promise<string[]> {
+export async function installedCLIExecutables(name: 'codex' | 'claude', extensionPaths: readonly string[] = []): Promise<string[]> {
   const files = new Set<string>();
   try { files.add(await findExecutable(name)); } catch { /* A manual choice can repair discovery. */ }
   for (const folder of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
@@ -167,7 +222,8 @@ export async function installedCLIExecutables(name: 'codex' | 'claude', codexExt
       }
     }
   }
-  if (name === 'codex') for (const file of await vscodeExtensionCodexExecutables(codexExtensionPaths)) files.add(file);
+  if (name === 'codex') for (const file of await vscodeExtensionCodexExecutables(extensionPaths)) files.add(file);
+  if (name === 'claude') for (const file of await vscodeExtensionClaudeExecutables(extensionPaths)) files.add(file);
   if (name === 'codex' && process.platform === 'win32') {
     const home = process.env.CODEX_HOME || (process.env.USERPROFILE && path.join(process.env.USERPROFILE, '.codex'));
     if (home) {
@@ -187,8 +243,8 @@ export async function installedCLIExecutables(name: 'codex' | 'claude', codexExt
   return [...unique.values()];
 }
 
-export async function installedCLIs(name: 'codex' | 'claude', codexExtensionPaths: readonly string[] = []): Promise<CLIInfo[]> {
-  const files = await installedCLIExecutables(name, codexExtensionPaths);
+export async function installedCLIs(name: 'codex' | 'claude', extensionPaths: readonly string[] = []): Promise<CLIInfo[]> {
+  const files = await installedCLIExecutables(name, extensionPaths);
   const results = await Promise.allSettled(files.map(file => cliInfo(name, file)));
   return results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
 }
