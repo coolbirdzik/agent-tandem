@@ -2,8 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, appendFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { zstdCompressSync } from 'node:zlib';
-import { UsageHistory, UsageParser } from '../src/providers/usage-history';
+import { constants as zlibConstants, createZstdCompress, zstdCompressSync } from 'node:zlib';
+import { UsageHistory, UsageParser, assertCompleteZstd } from '../src/providers/usage-history';
 import { usageBreakdown } from '../src/core/usage-dashboard';
 import { UsageAccountStore } from '../src/core/usage-account-store';
 import { usageAccount, UNKNOWN_ACCOUNT } from '../src/core/usage-account';
@@ -18,6 +18,26 @@ const event = (input: number, output: number, lastInput = input, lastOutput = ou
 const claude = (id: string, output = 20) => ({ timestamp: stamp, type: 'assistant', uuid: 'uuid', message: { id, model: 'claude-model', usage: {
   input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 200, output_tokens: output } } });
 const jsonl = (rows: unknown[]) => rows.map(row => JSON.stringify(row)).join('\n') + '\n';
+
+describe('Checking compressed history is complete', () => {
+  const text = Buffer.from('{"a":1}\n'.repeat(4000));
+  const check = async (data: Buffer) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-zstd-frame-')), file = path.join(root, 'r.jsonl.zst');
+    try { await writeFile(file, data); await assertCompleteZstd(file); return 'complete'; } catch (error) { return (error as Error).message; } finally { await rm(root, { recursive: true, force: true }); }
+  };
+  it('accepts concatenated, checksummed and skippable frames, and frames with and without a content size', async () => {
+    const plain = zstdCompressSync(text), checksummed = zstdCompressSync(text, { params: { [zlibConstants.ZSTD_c_checksumFlag]: 1 } });
+    const skippable = Buffer.concat([Buffer.from([0x50, 0x2a, 0x4d, 0x18, 3, 0, 0, 0]), Buffer.from('abc')]);
+    const streamed = await new Promise<Buffer>((resolve, reject) => { const chunks: Buffer[] = []; const encoder = createZstdCompress(); encoder.on('data', chunk => chunks.push(chunk)).on('end', () => resolve(Buffer.concat(chunks))).on('error', reject); encoder.end(text); });
+    for (const data of [plain, checksummed, Buffer.concat([plain, checksummed]), Buffer.concat([skippable, plain]), streamed, Buffer.alloc(0)]) expect(await check(data)).toBe('complete');
+  });
+  it('rejects a frame cut anywhere, trailing bytes and data that is not Zstandard', async () => {
+    const data = zstdCompressSync(text, { params: { [zlibConstants.ZSTD_c_checksumFlag]: 1 } });
+    for (const cut of [1, 4, 5, 8, data.length - 8, data.length - 1]) expect(await check(data.subarray(0, cut))).toMatch(/truncated|not a Zstandard/);
+    expect(await check(Buffer.concat([data, Buffer.from([0x28])]))).toMatch(/truncated/);
+    expect(await check(Buffer.from('not a zstandard frame'))).toMatch(/not a Zstandard/);
+  });
+});
 
 describe('Keeping tokens of deleted transcripts', () => {
   const rollout = (id: string, response: string, input: number, output: number) => jsonl([{ ...meta, payload: { id, cwd: 'L:/project' } }, turn,
@@ -118,17 +138,17 @@ describe('Native usage accounting', () => {
       await writeFile(path.join(sessions, 'swap.jsonl'), rollout('swap', 'r-swap', 400, 80));
       await writeFile(path.join(sessions, 'swap.jsonl.zst'), zstdCompressSync(Buffer.from(rollout('swap', 'r-swap', 400, 80))));
       await writeFile(path.join(archived, 'corrupt.jsonl.zst'), 'not a zstandard frame');
-      // zlib ends a truncated frame without an error; only complete decoded lines count, and a finished write changes the signature.
+      // Some Node versions decode a truncated frame as empty output without an error; it must still be reported, on every version.
       await writeFile(path.join(archived, 'truncated.jsonl.zst'), zstdCompressSync(Buffer.from(rollout('truncated', 'r-truncated', 999, 999))).subarray(0, -8));
       await writeFile(path.join(archived, 'other.zst'), zstdCompressSync(Buffer.from(rollout('other', 'r-other', 999, 999))));
       const history = new UsageHistory(homes, undefined, cache), first = await history.read();
       expect(usageBreakdown(first.days, { grouping: 'day' }).totals.total).toBe(1200);
       expect(first.conversations!.map(row => row.id).sort()).toEqual(['archived', 'live', 'old', 'swap']);
       expect(first.conversations!.find(row => row.id === 'old')!.project).toBe('L:/Dự án');
-      expect(first.unreadableFiles).toBe(1); expect(first.files).toBe(7);
+      expect(first.unreadableFiles).toBe(2); expect(first.files).toBe(7);
       const reload = new UsageHistory(homes, undefined, cache), second = await reload.read();
       expect(second.conversations).toEqual(first.conversations);
-      expect(reload.readStats!.diskHits).toBe(6); expect(second.unreadableFiles).toBe(1);
+      expect(reload.readStats!.diskHits).toBe(5); expect(second.unreadableFiles).toBe(2);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('groups deduplicated tokens by conversation across models/accounts and retains metadata in the token-only cache', async () => {

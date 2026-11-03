@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, writeFile, rename, unlink, readdir, stat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, unlink, readdir, stat, open } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
@@ -160,6 +160,33 @@ function mayContainUsage(prefix: string, provider: ConversationProvider): boolea
   return ['session_meta', 'turn_context', 'token_usage_record'].includes(type);
 }
 /** Codex compresses older rollouts in place; decode them as a stream without unpacking into the session store. */
+/** Walks Zstandard frame and block headers (RFC 8878) to the end of the file. Some Node versions
+ * decode a truncated frame as empty output without an error, which would hide its usage. */
+export async function assertCompleteZstd(file: string) {
+  const handle = await open(file, 'r');
+  try {
+    const size = (await handle.stat()).size, header = Buffer.alloc(18);
+    const read = async (at: number, length: number) => {
+      if (at + length > size) throw new Error('Compressed history is truncated.');
+      await handle.read(header, 0, length, at); return header;
+    };
+    let at = 0;
+    while (at < size) {
+      const magic = (await read(at, 4)).readUInt32LE(0);
+      if ((magic & 0xfffffff0) === 0x184d2a50) { at += 8 + (await read(at + 4, 4)).readUInt32LE(0); continue; }
+      if (magic !== 0xfd2fb528) throw new Error('Compressed history is not a Zstandard frame.');
+      const descriptor = (await read(at + 4, 1))[0]!, single = (descriptor & 0x20) !== 0, contentSize = descriptor >> 6;
+      at += 5 + (single ? 0 : 1) + [0, 1, 2, 4][descriptor & 3]! + (contentSize ? [0, 2, 4, 8][contentSize]! : single ? 1 : 0);
+      for (let last = false; !last;) {
+        const block = (await read(at, 3)).readUIntLE(0, 3), type = (block >> 1) & 3;
+        if (type === 3) throw new Error('Compressed history has an invalid block.');
+        last = (block & 1) === 1; at += 3 + (type === 1 ? 1 : block >>> 3);
+      }
+      if (descriptor & 4) at += 4;
+    }
+    if (at !== size) throw new Error('Compressed history is truncated.');
+  } finally { await handle.close(); }
+}
 function historyText(file: string, signal?: AbortSignal): AsyncIterable<unknown> {
   if (!file.endsWith('.zst')) return createReadStream(file, { encoding: 'utf8', highWaterMark: 256 * 1024, signal });
   if (typeof zlib.createZstdDecompress !== 'function') throw new Error('This extension host does not support Zstandard.');
@@ -173,6 +200,7 @@ async function parseFile(file: string, provider: ConversationProvider, signature
   const parser = new UsageParser(provider);
   let pending = '', discarding = false, largeUsageLine = false, malformed = 0, oversized = 0, lines = 0;
   // Bound huge image/tool lines without loading whole conversations into Extension Host memory.
+  if (file.endsWith('.zst')) await assertCompleteZstd(file);
   for await (const chunk of historyText(file, signal)) {
     const pieces = String(chunk).split('\n');
     for (let i = 0; i < pieces.length; i++) {
