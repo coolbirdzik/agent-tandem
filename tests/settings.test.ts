@@ -107,7 +107,7 @@ describe('Settings usage dashboard', () => {
     render({ ...value, conversationCleanup: { ...base, conversations: [], result: { removed: ['Codex:a'], bytes: 2048, skipped: [], failures: [], titles: { 'Codex:a': 'Old chat' },
       kept: [{ key: 'Codex:b', title: 'Parent chat', reason: 'Has subagent history newer than the cutoff.' }] } } });
     expect(document.querySelector('#native-cleanup-title')!.textContent).toBe('Cleanup complete');
-    expect(document.querySelector('#native-cleanup-summary')!.textContent).toBe('Deleted 1 conversation and freed 2.0 KB. 1 conversation kept.');
+    expect(document.querySelector('#native-cleanup-summary')!.textContent).toBe('Deleted 1 conversation and freed 2.0 KB. Their token counts stay in the usage dashboard. 1 conversation kept.');
     expect(document.querySelector('[data-kind="kept"]')!.textContent).toContain('Parent chatHas subagent history newer');
     expect(document.querySelector('[data-kind="removed"]')!.textContent).toContain('Old chat');
     expect(dialog.dataset.status).toBe('warning'); expect(document.querySelector('#native-cleanup-close')!.textContent).toBe('Done');
@@ -246,13 +246,14 @@ describe('Settings usage dashboard', () => {
   });
   it('previews explicit history scopes, labels inferred usage and sends reversible assignments', () => {
     const account = usageAccount('Codex', { signedIn: true, email: 'history@test.invalid', method: 'ChatGPT' })!;
-    const days = [{ ...row('2026-10-14', 'Codex', 'model', 200), account, accountSource: 'inferred' as const }, row('2026-10-14', 'Codex', 'model', 300)];
+    const days = [{ ...row('2026-10-14', 'Codex', 'model', 200), account, accountSource: 'inferred' as const }, { ...row('2026-10-14', 'Codex', 'model', 50), account, accountSource: 'matched' as const }, row('2026-10-14', 'Codex', 'model', 300)];
     const fixture: UsageDashboardState = { ...value, accounts: { Codex: { status: 'ready', account: { signedIn: true, email: account.email, method: 'ChatGPT' } } }, data: { ...value.data!, days,
       conversations: [{ key: 'Codex:session', id: 'session', provider: 'Codex', firstAt: 1, lastAt: 2, days }], assignments: [{ id: 'saved', provider: 'Codex', conversationId: 'session', account }] } };
     render(fixture); choose('filter-range', 'all');
     expect(document.querySelector('#account-groups')!.textContent).toContain('Inferred from session evidence: 200 tokens');
+    expect(document.querySelector('#account-groups')!.textContent).toContain('Matched from quota changes: 50 tokens');
     choose('attribution-conversation', 'session'); choose('attribution-account', account.id);
-    expect(document.querySelector('#attribution-preview')!.textContent).toContain('500 tokens');
+    expect(document.querySelector('#attribution-preview')!.textContent).toContain('550 tokens');
     expect((document.querySelector('#attribution-save') as HTMLButtonElement).disabled).toBe(false);
     document.querySelector<HTMLFormElement>('#attribution-form')!.dispatchEvent(new Event('submit', { cancelable: true }));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'usageAttribution', value: { action: 'assign', scope: { provider: 'Codex', conversationId: 'session', from: undefined, to: undefined }, accountId: account.id } });
@@ -978,6 +979,18 @@ describe('Settings usage dashboard', () => {
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard' } }));
     expect(document.getElementById('dashboard')!.hidden).toBe(false);
     document.getElementById('refresh')!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'refresh', value: undefined });
+  });
+  it('offers to delete kept token history only when some exists, and marks conversations whose transcript is gone', () => {
+    render(value); choose('filter-range', 'all');
+    expect(document.querySelector('#usage-coverage')!.textContent).not.toContain('Delete kept token history');
+    const days = [row('2026-10-14', 'Codex', 'model', 200)];
+    render({ ...value, data: { ...value.data!, days, retained: { conversations: 2, tokens: 1234 }, conversations: [{ key: 'Codex:gone', id: 'gone', provider: 'Codex', firstAt: 1, lastAt: 2, days, transcriptDeleted: true }] } });
+    expect(document.querySelector('#usage-coverage')!.textContent).toContain('1,234 tokens from 2 conversations');
+    postMessage.mockClear();
+    [...document.querySelectorAll<HTMLButtonElement>('#usage-coverage button')].find(button => button.textContent === 'Delete kept token history…')!.click();
+    expect(postMessage.mock.calls.at(-1)![0]).toMatchObject({ type: 'purgeRetainedUsage' });
+    document.querySelector<HTMLButtonElement>('#conversation-breakdown .conversation-link')!.click();
+    expect(document.querySelector('#conversation-meta')!.textContent).toContain('Transcript deleted, tokens kept');
   });
   it('renders empty/error/incomplete states, never treats model/account text as HTML, and pages long periods', () => {
     render({ ...value, status: 'error', error: 'History unavailable', data: { ...value.data!, days: [], unreadableFiles: 1 } });

@@ -9,10 +9,10 @@ export class UsageAccountStore {
   private rows = new Map<string, UsageAccount | null>();
   private loaded?: Promise<void>;
   private queue: Promise<void> = Promise.resolve();
-  constructor(readonly directory: string) {}
+  constructor(readonly directory: string, private filename = 'accounts.jsonl') {}
   private async load() {
     let content: string;
-    try { content = await readFile(path.join(this.directory, 'accounts.jsonl'), 'utf8'); }
+    try { content = await readFile(path.join(this.directory, this.filename), 'utf8'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
     for (const line of content.split('\n')) {
       try {
@@ -27,21 +27,24 @@ export class UsageAccountStore {
     }
   }
   private validKey(key: unknown): key is string { return typeof key === 'string' && /^(Codex|Claude):[^\x00-\x1f]{1,512}$/.test(key); }
-  record(key: string, account: UsageAccount): Promise<void> {
-    // Rebuild the allowlist rather than persisting arbitrary fields supplied by callers.
-    const clean = usageAccount(account.provider, { signedIn: true, id: account.nativeAccountId, email: account.email, organization: account.organization, method: account.method });
-    if (!clean || !['Codex', 'Claude'].includes(account.provider)) return Promise.resolve();
-    account = clean;
+  record(key: string, account: UsageAccount): Promise<void> { return this.recordMany([{ key, account }]); }
+  recordMany(entries: Array<{ key: string; account: UsageAccount }>): Promise<void> {
     const job = this.queue.then(async () => {
       await (this.loaded ??= this.load());
-      if (!this.validKey(key) || !key.startsWith(`${account.provider}:`)) return;
-      const previous = this.rows.get(key);
-      if (previous === null || previous?.id === account.id) return;
-      // Conflicting evidence stays unknown rather than moving old tokens to a new login.
-      const value = previous ? null : account;
+      const added = new Map<string, UsageAccount | null>();
+      for (const { key, account } of entries) {
+        // Rebuild the allowlist rather than persisting arbitrary fields supplied by callers.
+        const clean = usageAccount(account.provider, { signedIn: true, id: account.nativeAccountId, email: account.email, organization: account.organization, method: account.method });
+        if (!clean || !['Codex', 'Claude'].includes(account.provider) || !this.validKey(key) || !key.startsWith(`${account.provider}:`)) continue;
+        const previous = added.has(key) ? added.get(key) : this.rows.get(key);
+        if (previous === null || previous?.id === clean.id) continue;
+        // Conflicting evidence stays unknown rather than moving old tokens to a new login.
+        added.set(key, previous ? null : clean);
+      }
+      if (!added.size) return;
       await mkdir(this.directory, { recursive: true });
-      await appendFile(path.join(this.directory, 'accounts.jsonl'), JSON.stringify({ key, account: value }) + '\n', 'utf8');
-      this.rows.set(key, value);
+      await appendFile(path.join(this.directory, this.filename), [...added].map(([key, account]) => JSON.stringify({ key, account }) + '\n').join(''), 'utf8');
+      for (const [key, account] of added) this.rows.set(key, account);
     });
     this.queue = job.catch(() => undefined); return job;
   }

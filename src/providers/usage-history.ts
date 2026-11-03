@@ -3,7 +3,9 @@ import { mkdir, readFile, writeFile, rename, unlink, readdir, stat } from 'node:
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import { pipeline } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
+import * as zlib from 'node:zlib';
 // Use the package's ESM build so esbuild can bundle its relative imports into VSIX.
 import { visit } from 'jsonc-parser/lib/esm/main.js';
 import type { ConversationProvider } from './conversations';
@@ -13,11 +15,13 @@ import type { UsageAccountStore } from '../core/usage-account-store';
 import { claudeHistoryOwner, type UsageAccount } from '../core/usage-account';
 import { matchingAssignment, type KnownUsageAccount, type UsageAttributionStore } from '../core/usage-attribution-store';
 import type { UsageAccountSource } from '../core/usage-dashboard';
+import { quotaRiseAccount, quotaRises } from '../core/quota-attribution';
+import type { QuotaTick } from '../core/quota-pace';
 
 const obj = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const count = (value: unknown): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const text = (value: unknown): string | undefined => typeof value === 'string' && value ? value : undefined;
-interface UsageRecord extends TokenTotals { id: string; provider: ConversationProvider; model: string; timestamp: number; conversationId?: string; project?: string; accountKey?: string; cacheWrite1h?: number; kind?: 'modern' | 'legacy'; equivalent?: string; account?: UsageAccount; accountConflict?: boolean; creatorAccountId?: string; creatorConflict?: boolean; accountSource?: UsageAccountSource }
+interface UsageRecord extends TokenTotals { id: string; provider: ConversationProvider; model: string; timestamp: number; conversationId?: string; project?: string; accountKey?: string; cacheWrite1h?: number; kind?: 'modern' | 'legacy'; equivalent?: string; account?: UsageAccount; accountConflict?: boolean; creatorAccountId?: string; creatorConflict?: boolean; accountSource?: UsageAccountSource; retained?: boolean }
 function totals(value: unknown, provider: ConversationProvider): TokenTotals & { cacheWrite1h?: number } {
   const u = obj(value), cacheRead = count(u.cache_read_input_tokens ?? u.cached_input_tokens ?? u.cachedInputTokens);
   const cacheWrite = count(u.cache_creation_input_tokens ?? u.cache_write_input_tokens ?? u.cacheWriteInputTokens);
@@ -155,12 +159,21 @@ function mayContainUsage(prefix: string, provider: ConversationProvider): boolea
   if (type === 'event_msg') return !eventType || eventType === 'token_count' || eventType === 'model_rerouted';
   return ['session_meta', 'turn_context', 'token_usage_record'].includes(type);
 }
+/** Codex compresses older rollouts in place; decode them as a stream without unpacking into the session store. */
+function historyText(file: string, signal?: AbortSignal): AsyncIterable<unknown> {
+  if (!file.endsWith('.zst')) return createReadStream(file, { encoding: 'utf8', highWaterMark: 256 * 1024, signal });
+  if (typeof zlib.createZstdDecompress !== 'function') throw new Error('This extension host does not support Zstandard.');
+  const decoder = zlib.createZstdDecompress({ chunkSize: 256 * 1024 });
+  decoder.setEncoding('utf8');
+  // A read, decode or abort error destroys both streams and rejects the reader below.
+  pipeline(createReadStream(file, { highWaterMark: 256 * 1024, signal }), decoder, () => undefined);
+  return decoder;
+}
 async function parseFile(file: string, provider: ConversationProvider, signature: string, signal?: AbortSignal): Promise<ParsedFile> {
   const parser = new UsageParser(provider);
   let pending = '', discarding = false, largeUsageLine = false, malformed = 0, oversized = 0, lines = 0;
   // Bound huge image/tool lines without loading whole conversations into Extension Host memory.
-  const stream = createReadStream(file, { encoding: 'utf8', highWaterMark: 256 * 1024, signal });
-  for await (const chunk of stream) {
+  for await (const chunk of historyText(file, signal)) {
     const pieces = String(chunk).split('\n');
     for (let i = 0; i < pieces.length; i++) {
       if (!discarding) {
@@ -190,7 +203,7 @@ async function historyFiles(directory: string, signal?: AbortSignal): Promise<{ 
     try {
       for (const entry of await readdir(folder, { withFileTypes: true })) {
         if (entry.isDirectory()) queue.push(path.join(folder, entry.name));
-        else if (entry.isFile() && entry.name.endsWith('.jsonl')) result.push(path.join(folder, entry.name));
+        else if (entry.isFile() && /\.jsonl(?:\.zst)?$/.test(entry.name)) result.push(path.join(folder, entry.name));
       }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') unreadable++; }
   }
@@ -198,9 +211,10 @@ async function historyFiles(directory: string, signal?: AbortSignal): Promise<{ 
 }
 export class UsageHistory {
   private cache = new Map<string, ParsedFile>();
+  private retainedCache = new Map<string, UsageRecord[]>();
   readStats?: UsageReadStats;
   constructor(private homes = { codex: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claude: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude') }, private accounts?: Pick<UsageAccountStore, 'read'>, private cacheDirectory?: string,
-    private attribution?: { store: Pick<UsageAttributionStore, 'read'>; knownAccounts: () => Promise<KnownUsageAccount[]> }) {}
+    private attribution?: { store: Pick<UsageAttributionStore, 'read'>; knownAccounts: () => Promise<KnownUsageAccount[]>; quotaSamples?: () => QuotaTick[]; quotaMatches?: Pick<UsageAccountStore, 'read' | 'recordMany'> }) {}
   private cacheFile(file: string, provider: ConversationProvider) {
     const source = process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
     return path.join(this.cacheDirectory!, `${createHash('sha256').update(`${provider}:${source}`).digest('hex')}.json`);
@@ -227,6 +241,44 @@ export class UsageHistory {
     } catch { /* An optional cache must never hide otherwise readable usage. */ }
     finally { await unlink(temporary).catch(() => undefined); }
   }
+  private async historySources(signal?: AbortSignal) {
+    const roots: Array<[ConversationProvider, string]> = [['Codex', path.join(this.homes.codex, 'sessions')], ['Codex', path.join(this.homes.codex, 'archived_sessions')], ['Claude', path.join(this.homes.claude, 'projects')]];
+    return Promise.all(roots.map(async ([provider, root]) => ({ provider, ...await historyFiles(root, signal) })));
+  }
+  /** Cache files whose transcript has left the disk: the user's cleanup, or a CLI's own retention. */
+  private async retainedFiles(sources: Array<{ provider: ConversationProvider; files: string[] }>) {
+    if (!this.cacheDirectory) return [];
+    const live = new Set(sources.flatMap(source => source.files.map(file => path.basename(this.cacheFile(file, source.provider)))));
+    return (await readdir(this.cacheDirectory).catch(() => [] as string[])).filter(name => name.endsWith('.json') && !live.has(name));
+  }
+  private async retainedRecords(sources: Array<{ provider: ConversationProvider; files: string[] }>) {
+    const names = await this.retainedFiles(sources), present = new Set(names), rows: UsageRecord[][] = [];
+    for (const name of this.retainedCache.keys()) if (!present.has(name)) this.retainedCache.delete(name);
+    for (const name of names) {
+      let records = this.retainedCache.get(name);
+      if (!records) {
+        records = [];
+        // These counts have no transcript left to reparse, so they outlive cacheVersion: a row format change must migrate them.
+        try {
+          const filename = path.join(this.cacheDirectory!, name);
+          if ((await stat(filename)).size <= 64 * 1024 * 1024) {
+            const data = JSON.parse(await readFile(filename, 'utf8'));
+            if (data.provider === 'Codex' || data.provider === 'Claude') records = cachedRecords(data.records, data.provider) ?? [];
+          }
+        } catch { /* A corrupt cache file carries no counts. */ }
+        this.retainedCache.set(name, records);
+      }
+      rows.push(records);
+    }
+    return rows;
+  }
+  /** Permanently forgets the kept counts. Caches of transcripts still on disk stay. */
+  async purgeRetained() {
+    const names = await this.retainedFiles(await this.historySources());
+    for (const name of names) await unlink(path.join(this.cacheDirectory!, name)).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
+    this.retainedCache.clear();
+    return names.length;
+  }
   async read(signal?: AbortSignal): Promise<UsageHistoryData> {
     const start = performance.now(), stats: UsageReadStats = { discoveryMs: 0, parseMs: 0, aggregateMs: 0, parsedFiles: 0, memoryHits: 0, diskHits: 0 };
     const accounts = await this.accounts?.read();
@@ -236,14 +288,18 @@ export class UsageHistory {
       const key = `${entry.account.provider}:${id}`, previous = creators.get(key);
       creators.set(key, previous === null || (previous && previous.id !== entry.account.id) ? null : entry.account);
     }
-    const roots: Array<[ConversationProvider, string]> = [['Codex', path.join(this.homes.codex, 'sessions')], ['Codex', path.join(this.homes.codex, 'archived_sessions')], ['Claude', path.join(this.homes.claude, 'projects')]];
-    const lists = await Promise.all(roots.map(async ([provider, root]) => ({ provider, ...await historyFiles(root, signal) })));
+    const lists = await this.historySources(signal);
     let unreadableFiles = lists.reduce((sum, list) => sum + list.unreadable, 0), malformedLines = 0, oversizedLines = 0, undatedRecords = 0, duplicates = 0;
     const files = lists.flatMap(list => list.files.map(file => ({ file, provider: list.provider }))), present = new Set(files.map(row => row.file));
     for (const file of this.cache.keys()) if (!present.has(file)) this.cache.delete(file);
     stats.discoveryMs = performance.now() - start;
     const parseStart = performance.now();
     const records = new Map<string, UsageRecord>(), nativeAliases = new Set<string>();
+    const evidenceFor = (row: UsageRecord) => {
+      const evidence = accounts?.get(row.id) ?? (row.accountKey ? accounts?.get(row.accountKey) : undefined);
+      const conflict = accounts?.get(row.id) === null || (!!row.accountKey && accounts?.get(row.accountKey) === null);
+      return { conflict, account: conflict ? undefined : evidence ?? undefined };
+    };
     for (let offset = 0; offset < files.length; offset += 4) {
       const parsed = await Promise.all(files.slice(offset, offset + 4).map(async ({ file, provider }) => {
         try {
@@ -264,10 +320,7 @@ export class UsageHistory {
         malformedLines += file.malformed; oversizedLines += file.oversized; undatedRecords += file.undated;
         for (const row of file.records) {
           if (row.kind === 'modern' && row.equivalent) nativeAliases.add(row.equivalent);
-          const existing = records.get(row.id);
-          const evidence = accounts?.get(row.id) ?? (row.accountKey ? accounts?.get(row.accountKey) : undefined);
-          const conflict = accounts?.get(row.id) === null || (!!row.accountKey && accounts?.get(row.accountKey) === null);
-          const account = conflict ? undefined : evidence ?? undefined;
+          const existing = records.get(row.id), { account, conflict } = evidenceFor(row);
           if (!existing) { records.set(row.id, { ...row, account, accountConflict: conflict }); continue; }
           if (row.creatorAccountId && existing.creatorAccountId && row.creatorAccountId !== existing.creatorAccountId) existing.creatorConflict = true;
           else existing.creatorAccountId ??= row.creatorAccountId;
@@ -282,6 +335,13 @@ export class UsageHistory {
         }
       }
       await setImmediate();
+    }
+    // A live transcript wins: compressing or archiving a rollout also leaves its old path's cache behind.
+    for (const rows of await this.retainedRecords(lists)) for (const row of rows) {
+      if (records.has(row.id)) continue;
+      if (row.kind === 'modern' && row.equivalent) nativeAliases.add(row.equivalent);
+      const { account, conflict } = evidenceFor(row);
+      records.set(row.id, { ...row, account, accountConflict: conflict, retained: true });
     }
     stats.parseMs = performance.now() - parseStart;
     // Claude sessions outside the extension can use consistent owner/sole-account evidence.
@@ -305,16 +365,29 @@ export class UsageHistory {
         (row.account && owner && row.account.id !== owner.id) || (previous && evidence && previous.id !== evidence.id)) claudeSessions.set(row.conversationId, null);
       else if (previous !== null && evidence) claudeSessions.set(row.conversationId, evidence);
     }
+    // Quota samples expire, so a match is saved when found. It never outranks native evidence or a user's choice.
+    const quotaMatches = await this.attribution?.quotaMatches?.read(), rises = quotaRises(this.attribution?.quotaSamples?.() ?? []);
+    const knownById = new Map((known ?? []).map(entry => [entry.account.id, entry.account])), newMatches: Array<{ key: string; account: UsageAccount }> = [];
+    const quotaMatch = (row: UsageRecord) => {
+      const saved = quotaMatches?.get(row.id);
+      if (saved !== undefined) return saved ?? undefined;
+      const id = quotaRiseAccount(rises.get(row.provider), row.timestamp), account = id ? knownById.get(id) : undefined;
+      if (account && this.attribution?.quotaMatches) newMatches.push({ key: row.id, account });
+      return account;
+    };
     const aggregateStart = performance.now();
-    const days = new Map<string, UsageDay>(), recent: RecentUsage[] = [], conversations = new Map<string, UsageConversation & { buckets: Map<string, UsageDay> }>(), now = Date.now();
-    let aggregated = 0;
+    const days = new Map<string, UsageDay>(), recent: RecentUsage[] = [], conversations = new Map<string, UsageConversation & { buckets: Map<string, UsageDay>; live: boolean }>(), now = Date.now();
+    let aggregated = 0, retainedTokens = 0;
+    const retainedConversations = new Set<string>();
     for (const row of records.values()) {
       if (++aggregated % 2000 === 0) { signal?.throwIfAborted(); await setImmediate(); }
       if (row.kind === 'legacy' && row.equivalent && nativeAliases.has(row.equivalent)) { duplicates++; continue; }
       const day = localDay(row.timestamp);
       if (!row.account) {
         const assignment = matchingAssignment(assignments ?? [], row.provider, row.conversationId, day, row.id);
+        const matched = assignment || row.accountConflict ? undefined : quotaMatch(row);
         if (assignment) { row.account = assignment.account ?? undefined; row.accountSource = 'manual'; }
+        else if (matched) { row.account = matched; row.accountSource = 'matched'; }
         else if (row.provider === 'Claude' && !row.accountConflict && !row.creatorConflict) {
           const session = row.provider === 'Claude' && row.conversationId ? claudeSessions.get(row.conversationId) : undefined;
           if (session !== null) row.account = (row.creatorAccountId ? creators.get(`${row.provider}:${row.creatorAccountId}`) : session ?? soleAccounts.get(row.provider)) ?? undefined;
@@ -326,15 +399,18 @@ export class UsageHistory {
       const value = days.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...attribution };
       addTotals(value, row); addApiCost(value.cost!, apiCost(row.provider, row.model, row)); days.set(key, value);
       const id = row.conversationId || 'unknown', conversationKey = `${row.provider}:${id}`;
-      const conversation = conversations.get(conversationKey) ?? { key: conversationKey, id, provider: row.provider, project: row.project, firstAt: row.timestamp, lastAt: row.timestamp, days: [], buckets: new Map<string, UsageDay>() };
+      const conversation = conversations.get(conversationKey) ?? { key: conversationKey, id, provider: row.provider, project: row.project, firstAt: row.timestamp, lastAt: row.timestamp, days: [], buckets: new Map<string, UsageDay>(), live: false };
       conversation.firstAt = Math.min(conversation.firstAt, row.timestamp); conversation.lastAt = Math.max(conversation.lastAt, row.timestamp);
+      if (row.retained) { retainedTokens += row.total; retainedConversations.add(conversationKey); } else conversation.live = true;
       const bucket = conversation.buckets.get(key) ?? { ...emptyTotals(), day, provider: row.provider, model: row.model, cost: emptyApiCost(), ...attribution };
       addTotals(bucket, row); addApiCost(bucket.cost!, apiCost(row.provider, row.model, row)); conversation.buckets.set(key, bucket); conversations.set(conversationKey, conversation);
       // Retain only timestamps/provider/token counts for current quota windows.
       if (row.timestamp >= now - 7 * 86400000 && row.timestamp <= now) recent.push({ timestamp: row.timestamp, provider: row.provider, total: row.total, ...(row.account ? { accountId: row.account.id } : {}), ...(row.accountSource ? { accountSource: row.accountSource } : {}) });
     }
+    // Unsaved matches are found again on the next read while their samples remain.
+    if (newMatches.length) await this.attribution?.quotaMatches?.recordMany(newMatches).catch(() => undefined);
     stats.aggregateMs = performance.now() - aggregateStart; this.readStats = stats;
-    return { days: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)), conversations: [...conversations.values()].map(({ buckets, ...row }) => ({ ...row, days: [...buckets.values()] })).sort((a, b) => b.lastAt - a.lastAt), recent: recent.sort((a, b) => a.timestamp - b.timestamp), updatedAt: now, files: files.length, unreadableFiles,
-      malformedLines, undatedRecords, oversizedLines, duplicates, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...(assignments ? { assignments } : {}) };
+    return { days: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)), conversations: [...conversations.values()].map(({ buckets, live, ...row }) => ({ ...row, days: [...buckets.values()], ...(live ? {} : { transcriptDeleted: true }) })).sort((a, b) => b.lastAt - a.lastAt), recent: recent.sort((a, b) => a.timestamp - b.timestamp), updatedAt: now, files: files.length, unreadableFiles,
+      malformedLines, undatedRecords, oversizedLines, duplicates, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...(assignments ? { assignments } : {}), ...(retainedTokens ? { retained: { conversations: retainedConversations.size, tokens: retainedTokens } } : {}) };
   }
 }

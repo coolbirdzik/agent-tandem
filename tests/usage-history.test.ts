@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, readFile, appendFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, appendFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { zstdCompressSync } from 'node:zlib';
 import { UsageHistory, UsageParser } from '../src/providers/usage-history';
 import { usageBreakdown } from '../src/core/usage-dashboard';
 import { UsageAccountStore } from '../src/core/usage-account-store';
@@ -18,7 +19,118 @@ const claude = (id: string, output = 20) => ({ timestamp: stamp, type: 'assistan
   input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 200, output_tokens: output } } });
 const jsonl = (rows: unknown[]) => rows.map(row => JSON.stringify(row)).join('\n') + '\n';
 
+describe('Keeping tokens of deleted transcripts', () => {
+  const rollout = (id: string, response: string, input: number, output: number) => jsonl([{ ...meta, payload: { id, cwd: 'L:/project' } }, turn,
+    { ...token(response, input, output), payload: { ...token(response, input, output).payload, thread_id: id } }]);
+  const setup = async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-retained-usage-'));
+    const homes = { codex: path.join(root, 'codex'), claude: path.join(root, 'claude') }, cache = path.join(root, 'cache');
+    await mkdir(path.join(homes.codex, 'sessions'), { recursive: true });
+    return { root, homes, cache, sessions: path.join(homes.codex, 'sessions') };
+  };
+  const total = (data: Awaited<ReturnType<UsageHistory['read']>>) => usageBreakdown(data.days, { grouping: 'day' }).totals.total;
+  it('keeps counting a deleted transcript across reloads until the kept counts are purged', async () => {
+    const f = await setup();
+    try {
+      await writeFile(path.join(f.sessions, 'kept.jsonl'), rollout('kept', 'r-kept', 100, 20));
+      await writeFile(path.join(f.sessions, 'live.jsonl'), rollout('live', 'r-live', 200, 40));
+      const history = new UsageHistory(f.homes, undefined, f.cache);
+      const before = await history.read(); expect(total(before)).toBe(360); expect(before.retained).toBeUndefined();
+      await rm(path.join(f.sessions, 'kept.jsonl'));
+      const after = await history.read();
+      expect(total(after)).toBe(360); expect(after.files).toBe(1);
+      expect(after.retained).toEqual({ conversations: 1, tokens: 120 });
+      expect(after.conversations!.find(row => row.id === 'kept')).toMatchObject({ transcriptDeleted: true, project: 'L:/project' });
+      expect(after.conversations!.find(row => row.id === 'live')!.transcriptDeleted).toBeUndefined();
+      const reload = await new UsageHistory(f.homes, undefined, f.cache).read();
+      expect(total(reload)).toBe(360); expect(reload.conversations).toEqual(after.conversations);
+      expect(await history.purgeRetained()).toBe(1);
+      const purged = await history.read();
+      expect(total(purged)).toBe(240); expect(purged.retained).toBeUndefined(); expect(purged.conversations!.map(row => row.id)).toEqual(['live']);
+      expect((await new UsageHistory(f.homes, undefined, f.cache).read()).conversations!.map(row => row.id)).toEqual(['live']);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+  it('does not count a compressed or archived rollout twice or report it as deleted', async () => {
+    const f = await setup();
+    try {
+      const file = path.join(f.sessions, 'moved.jsonl');
+      await writeFile(file, rollout('moved', 'r-moved', 100, 20));
+      const history = new UsageHistory(f.homes, undefined, f.cache); await history.read();
+      await writeFile(`${file}.zst`, zstdCompressSync(await readFile(file))); await rm(file);
+      const data = await history.read();
+      expect(total(data)).toBe(120); expect(data.retained).toBeUndefined();
+      expect(data.conversations![0]!.transcriptDeleted).toBeUndefined();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+  it('keeps counts written by an older cache format and ignores corrupt or foreign cache files', async () => {
+    const f = await setup();
+    try {
+      const file = path.join(f.sessions, 'old.jsonl');
+      await writeFile(file, rollout('old', 'r-old', 100, 20));
+      await new UsageHistory(f.homes, undefined, f.cache).read();
+      const [name] = await readdir(f.cache);
+      const cached = JSON.parse(await readFile(path.join(f.cache, name!), 'utf8'));
+      await writeFile(path.join(f.cache, name!), JSON.stringify({ ...cached, version: 1 }));
+      await writeFile(path.join(f.cache, 'corrupt.json'), 'not json');
+      await writeFile(path.join(f.cache, 'foreign.json'), JSON.stringify({ provider: 'Other', records: [] }));
+      await rm(file);
+      const data = await new UsageHistory(f.homes, undefined, f.cache).read();
+      expect(total(data)).toBe(120); expect(data.retained).toEqual({ conversations: 1, tokens: 120 });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+  it('applies saved account evidence to kept tokens', async () => {
+    const f = await setup();
+    try {
+      const account = usageAccount('Codex', { signedIn: true, email: 'kept@test.invalid', id: 'kept', method: 'ChatGPT' })!;
+      const ledger = new UsageAccountStore(path.join(f.root, 'usage')); await ledger.record('Codex:r-kept', account);
+      const file = path.join(f.sessions, 'kept.jsonl'); await writeFile(file, rollout('kept', 'r-kept', 100, 20));
+      const history = new UsageHistory(f.homes, ledger, f.cache); await history.read(); await rm(file);
+      expect((await history.read()).days[0]).toMatchObject({ total: 120, account });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+  it('has nothing to keep or purge without a cache and leaves live caches in place', async () => {
+    const f = await setup();
+    try {
+      await writeFile(path.join(f.sessions, 'live.jsonl'), rollout('live', 'r-live', 100, 20));
+      const uncached = new UsageHistory(f.homes); await uncached.read();
+      expect(await uncached.purgeRetained()).toBe(0);
+      const history = new UsageHistory(f.homes, undefined, f.cache); await history.read();
+      expect(await history.purgeRetained()).toBe(0);
+      const reload = new UsageHistory(f.homes, undefined, f.cache); await reload.read();
+      expect(reload.readStats!.diskHits).toBe(1);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+});
+
 describe('Native usage accounting', () => {
+  it('counts compressed Codex rollouts once, reports corrupt ones as unreadable and reuses the token-only cache', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-compressed-usage-'));
+    try {
+      const homes = { codex: path.join(root, 'codex'), claude: path.join(root, 'claude') }, cache = path.join(root, 'cache');
+      const sessions = path.join(homes.codex, 'sessions'), archived = path.join(homes.codex, 'archived_sessions');
+      await mkdir(sessions, { recursive: true }); await mkdir(archived, { recursive: true });
+      const rollout = (id: string, response: string, input: number, output: number) => jsonl([{ ...meta, payload: { id, cwd: 'L:/Dự án' } }, turn,
+        { ...token(response, input, output), payload: { ...token(response, input, output).payload, thread_id: id } }]);
+      await writeFile(path.join(sessions, 'live.jsonl'), rollout('live', 'r-live', 100, 20));
+      await writeFile(path.join(sessions, 'old.jsonl.zst'), zstdCompressSync(Buffer.from(rollout('old', 'r-old', 200, 40))));
+      await writeFile(path.join(archived, 'archived.jsonl.zst'), zstdCompressSync(Buffer.from(rollout('archived', 'r-archived', 300, 60))));
+      // Compression can leave both forms of one rollout on disk during the swap.
+      await writeFile(path.join(sessions, 'swap.jsonl'), rollout('swap', 'r-swap', 400, 80));
+      await writeFile(path.join(sessions, 'swap.jsonl.zst'), zstdCompressSync(Buffer.from(rollout('swap', 'r-swap', 400, 80))));
+      await writeFile(path.join(archived, 'corrupt.jsonl.zst'), 'not a zstandard frame');
+      // zlib ends a truncated frame without an error; only complete decoded lines count, and a finished write changes the signature.
+      await writeFile(path.join(archived, 'truncated.jsonl.zst'), zstdCompressSync(Buffer.from(rollout('truncated', 'r-truncated', 999, 999))).subarray(0, -8));
+      await writeFile(path.join(archived, 'other.zst'), zstdCompressSync(Buffer.from(rollout('other', 'r-other', 999, 999))));
+      const history = new UsageHistory(homes, undefined, cache), first = await history.read();
+      expect(usageBreakdown(first.days, { grouping: 'day' }).totals.total).toBe(1200);
+      expect(first.conversations!.map(row => row.id).sort()).toEqual(['archived', 'live', 'old', 'swap']);
+      expect(first.conversations!.find(row => row.id === 'old')!.project).toBe('L:/Dự án');
+      expect(first.unreadableFiles).toBe(1); expect(first.files).toBe(7);
+      const reload = new UsageHistory(homes, undefined, cache), second = await reload.read();
+      expect(second.conversations).toEqual(first.conversations);
+      expect(reload.readStats!.diskHits).toBe(6); expect(second.unreadableFiles).toBe(1);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('groups deduplicated tokens by conversation across models/accounts and retains metadata in the token-only cache', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-conversation-usage-'));
     try {
@@ -72,7 +184,9 @@ describe('Native usage accounting', () => {
         expect(fresh.readStats!.parsedFiles).toBe(1);
       }
       await rm(file);
-      expect((await reload.read()).days).toEqual([]); expect(reload.readStats!.parsedFiles).toBe(0);
+      expect(usageBreakdown((await reload.read()).days, { grouping: 'day' }).totals.total).toBe(330); expect(reload.readStats!.parsedFiles).toBe(0);
+      await reload.purgeRetained();
+      expect((await reload.read()).days).toEqual([]);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('keeps usage available when the optional cache directory cannot be written', async () => {

@@ -10,6 +10,8 @@ import { usageBreakdown } from '../src/core/usage-dashboard';
 import { knownUsageAccounts } from '../src/providers/usage-account-identities';
 import { AccountProfiles } from '../src/core/account-profiles';
 import { quotaEstimates } from '../src/core/quota-estimate';
+import { quotaRiseAccount, quotaRises } from '../src/core/quota-attribution';
+import type { QuotaTick } from '../src/core/quota-pace';
 
 const one = usageAccount('Codex', { signedIn: true, email: 'one@test.invalid', id: 'workspace-one', method: 'ChatGPT' })!;
 const two = usageAccount('Codex', { signedIn: true, email: 'two@test.invalid', id: 'workspace-two', method: 'ChatGPT' })!;
@@ -305,5 +307,100 @@ describe('Restoring historical account attribution', () => {
     const account = { status: 'ready' as const, updatedAt: now, account: { signedIn: true, email: one.email, id: one.nativeAccountId, method: one.method }, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 25, resetsAt: now + 3600000 }] } };
     expect(quotaEstimates('Codex', account, data, now)[0]?.observedTokens).toBe(100);
     expect(quotaEstimates('Codex', account, data, now, 'Device')[0]?.observedTokens).toBe(600);
+  });
+  describe('matching responses to quota rises', () => {
+    const at = Date.parse(stamp), minute = 60000;
+    const tick = (account: typeof one, offset: number, usedPercent: number, provider: 'Codex' | 'Claude' = 'Codex', windowId = '5h'): QuotaTick => ({ provider, accountId: account.id, plan: 'plus', windowId, label: windowId, resetsAt: at + 3600000, at: at + offset * minute, usedPercent });
+    // Samples long before and after the response keep it inside the settled range.
+    const rising = (account: typeof one, idle: typeof one) => [tick(account, -60, 10), tick(idle, -60, 40), tick(account, -1, 10), tick(account, 1, 11), tick(idle, -1, 40), tick(idle, 1, 40), tick(account, 60, 11), tick(idle, 60, 40)];
+    const matched = (f: Awaited<ReturnType<typeof fixture>>, samples: QuotaTick[]) => {
+      const quotaMatches = new UsageAccountStore(f.store.directory, 'quota-matches.jsonl');
+      return { quotaMatches, history: new UsageHistory(f.homes, f.ledger, f.cache, { ...f.options, quotaSamples: () => samples, quotaMatches }) };
+    };
+    it('finds the one rising account and keeps the match after its samples expire', async () => {
+      const f = await fixture(); await f.write('thread', 'creator-two');
+      expect((await matched(f, rising(one, two)).history.read()).days[0]).toMatchObject({ total: 110, account: one, accountSource: 'matched' });
+      expect((await matched(f, []).history.read()).days[0]).toMatchObject({ account: one, accountSource: 'matched' });
+      expect(await readFile(path.join(f.store.directory, 'quota-matches.jsonl'), 'utf8')).not.toContain('accounts.jsonl');
+      expect((await f.ledger.read()).size).toBe(0);
+    });
+    it('leaves a response unknown when several accounts rise, none rises or samples are too sparse', async () => {
+      const f = await fixture(); await f.write('thread', 'creator-one');
+      const both = [...rising(one, two), tick(two, 0, 41), tick(two, 60, 41)];
+      expect((await matched(f, both).history.read()).days[0]?.account).toBeUndefined();
+      const none = rising(one, two).map(row => ({ ...row, usedPercent: 10 }));
+      expect((await matched(f, none).history.read()).days[0]?.account).toBeUndefined();
+      const sparse = [tick(one, -60, 10), tick(one, 60, 11), tick(two, -60, 40), tick(two, 60, 40)];
+      expect((await matched(f, sparse).history.read()).days[0]?.account).toBeUndefined();
+      await expect(readFile(path.join(f.store.directory, 'quota-matches.jsonl'), 'utf8')).rejects.toThrow();
+    });
+    it('does not decide before later samples or at the edge of expiring samples', () => {
+      const samples = rising(one, two);
+      expect(quotaRiseAccount(quotaRises(samples).get('Codex'), at)).toBe(one.id);
+      expect(quotaRiseAccount(quotaRises(samples.filter(row => row.at <= at + minute)).get('Codex'), at)).toBeUndefined();
+      expect(quotaRiseAccount(quotaRises(samples.filter(row => row.at >= at - minute)).get('Codex'), at)).toBeUndefined();
+    });
+    it('waits for every account before saving, because a lagging account can still show a rise', async () => {
+      const f = await fixture(); await f.write('thread', 'creator-two');
+      const file = path.join(f.store.directory, 'quota-matches.jsonl');
+      const risen = [tick(one, -60, 10), tick(one, -1, 10), tick(one, 1, 11), tick(one, 60, 11)], before = [tick(two, -60, 40), tick(two, -1, 40)];
+      expect((await matched(f, [...risen, ...before]).history.read()).days[0]?.account).toBeUndefined();
+      await expect(readFile(file, 'utf8')).rejects.toThrow();
+      // The lagging account rose too, so neither read may have saved the first account.
+      expect((await matched(f, [...risen, ...before, tick(two, 1, 41), tick(two, 60, 41)]).history.read()).days[0]?.account).toBeUndefined();
+      await expect(readFile(file, 'utf8')).rejects.toThrow();
+      // It stayed flat, so only now is the first account the one match.
+      expect((await matched(f, [...risen, ...before, tick(two, 1, 40), tick(two, 60, 40)]).history.read()).days[0]).toMatchObject({ account: one, accountSource: 'matched' });
+      expect(await readFile(file, 'utf8')).toContain(JSON.stringify('Codex:thread'));
+    });
+    it('does not wait for an account that stopped reporting long before the response', async () => {
+      const f = await fixture(); await f.write('thread', 'creator-two');
+      const samples = [tick(one, -60, 10), tick(one, -1, 10), tick(one, 1, 11), tick(one, 60, 11), tick(two, -60, 40), tick(two, -30, 40)];
+      expect((await matched(f, samples).history.read()).days[0]).toMatchObject({ account: one, accountSource: 'matched' });
+    });
+    it('keeps quota matches out of account estimates, as with other inferred history', () => {
+      const now = Date.parse(stamp), from = now - 3600000;
+      const data = { days: [], updatedAt: now, files: 1, unreadableFiles: 0, malformedLines: 0, oversizedLines: 0, undatedRecords: 0, duplicates: 0, timezone: 'UTC', recent: [
+        { provider: 'Codex' as const, timestamp: from, total: 100, accountId: one.id },
+        { provider: 'Codex' as const, timestamp: from, total: 200, accountId: one.id, accountSource: 'matched' as const },
+      ] };
+      const account = { status: 'ready' as const, updatedAt: now, account: { signedIn: true, email: one.email, id: one.nativeAccountId, method: one.method }, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 25, resetsAt: now + 3600000 }] } };
+      expect(quotaEstimates('Codex', account, data, now)[0]?.observedTokens).toBe(100);
+      expect(quotaEstimates('Codex', account, data, now, 'Device')[0]?.observedTokens).toBe(300);
+    });
+    it('never replaces native evidence or a user assignment, including for later reads', async () => {
+      const f = await fixture(); await f.write('native', 'creator-two'); await f.write('assigned', 'creator-two'); await f.write('kept', 'creator-two');
+      await f.ledger.record('Codex:native', two);
+      const assignment = await f.store.assign({ provider: 'Codex', conversationId: 'assigned' }, two);
+      await f.store.assign({ provider: 'Codex', conversationId: 'kept' }, null);
+      const days = (await matched(f, rising(one, two)).history.read()).conversations!;
+      const source = (id: string) => days.find(row => row.id === id)!.days[0]!;
+      expect(source('native')).toMatchObject({ account: two }); expect(source('native').accountSource).toBeUndefined();
+      expect(source('assigned')).toMatchObject({ account: two, accountSource: 'manual' });
+      expect(source('kept').account).toBeUndefined();
+      await f.store.remove(assignment.id);
+      expect((await matched(f, rising(one, two)).history.read()).conversations!.find(row => row.id === 'assigned')!.days[0]).toMatchObject({ account: one, accountSource: 'matched' });
+    });
+    it('matches Claude responses per provider, ignoring Codex quota rises at the same time', async () => {
+      const f = await fixture();
+      const file = path.join(f.homes.claude, 'projects', 'one.jsonl'); await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, JSON.stringify({ type: 'assistant', timestamp: stamp, sessionId: 'claude', message: { id: 'c1', model: 'sonnet', usage: { input_tokens: 100, output_tokens: 10 } } }));
+      const claudeOne = usageAccount('Claude', { signedIn: true, email: one.email, method: 'Claude account', organization: 'org-one' })!, claudeTwo = usageAccount('Claude', { signedIn: true, email: one.email, method: 'Claude account', organization: 'org-two' })!;
+      const samples = [...rising(one, two), ...rising(claudeTwo, claudeOne).map(row => ({ ...row, provider: 'Claude' as const }))];
+      const quotaMatches = new UsageAccountStore(f.store.directory, 'quota-matches.jsonl');
+      const history = new UsageHistory(f.homes, f.ledger, f.cache, { store: f.store, knownAccounts: async () => [{ account: claudeOne, nativeAccountIds: [] }, { account: claudeTwo, nativeAccountIds: [] }], quotaSamples: () => samples, quotaMatches });
+      expect((await history.read()).days[0]).toMatchObject({ provider: 'Claude', account: claudeTwo, accountSource: 'matched' });
+    });
+  });
+});
+describe('Saving usage account evidence in batches', () => {
+  it('appends one row per key, keeps conflicts unknown and survives a reload', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-account-batch-')); roots.push(root);
+    const store = new UsageAccountStore(root, 'matches.jsonl');
+    await store.recordMany([{ key: 'Codex:a', account: one }, { key: 'Codex:a', account: one }, { key: 'Codex:b', account: one }, { key: 'Codex:b', account: two }, { key: 'Claude:wrong', account: one }]);
+    expect((await store.read()).get('Codex:a')?.id).toBe(one.id); expect((await store.read()).get('Codex:b')).toBeNull(); expect((await store.read()).has('Claude:wrong')).toBe(false);
+    const reloaded = new UsageAccountStore(root, 'matches.jsonl');
+    expect((await reloaded.read()).get('Codex:a')?.id).toBe(one.id); expect((await reloaded.read()).get('Codex:b')).toBeNull();
+    expect((await readFile(path.join(root, 'matches.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(2);
   });
 });

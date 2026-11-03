@@ -220,7 +220,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     async (command, selected) => vscode.commands.executeCommand(command, selected), report);
   const attributionStore = new UsageAttributionStore(path.join(context.globalStorageUri.fsPath, 'usage'));
   const quotaBar = new QuotaStatusBar(async () => { await accountManager.refresh(undefined, true); }), trackingBar = new TrackingStatusBar(), usageHistory = new UsageHistory(undefined, usageAccounts, path.join(context.globalStorageUri.fsPath, 'usage', 'history-cache'),
-    { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts) });
+    { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts), quotaSamples: () => savedQuotaTicks, quotaMatches: new UsageAccountStore(attributionStore.directory, 'quota-matches.jsonl') });
   const storage = new StorageManager(context.globalStorageUri.fsPath);
   let storageState: StorageState = { status: 'idle', root: storage.root }, cleanupPlan: CleanupPlan | undefined;
   let extensionStorage: ExtensionStorageUsage = { status: 'idle', warningBytes: storageWarningBytes(vscode.workspace.getConfiguration('agentTandem').get('storageWarningMB', 1024)) };
@@ -833,6 +833,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.previewConversationCleanup', value => conversationCleanupAction(() => conversationCleanup.preview((value as { keys?: unknown } | undefined)?.keys)));
   register('agentTandem.deleteConversations', async value => {
     const request = value as { token?: unknown; keys?: unknown; before?: unknown; filter?: unknown } | undefined;
+    // Token counts outlive the transcripts, so cache the latest turns before they go.
+    await usageHistory.read().catch(() => undefined);
     const progress: DeletionProgress = {
       ...conversationCleanupPrompts(request ?? {}),
       signal: conversationCleanupDisposed.signal,
@@ -988,6 +990,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     await Promise.all([loadAccount('Codex', true), loadAccount('Claude', true)]); await recordQuotaHistory(); await refreshUsageDashboard(); return dashboardState();
   });
   register('agentTandem.openVSCodeSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`));
+  register('agentTandem.purgeRetainedUsage', async () => {
+    const retained = usageState.data?.retained;
+    if (!retained) return;
+    const answer = await vscode.window.showWarningMessage(`Permanently delete token history for ${retained.conversations} conversation${retained.conversations === 1 ? '' : 's'} whose transcripts are gone?`, { modal: true, detail: `${retained.tokens.toLocaleString()} tokens will leave the usage dashboard and cannot be recovered. Conversations still on disk are not affected.` }, 'Delete token history');
+    if (answer !== 'Delete token history') return;
+    await usageHistory.purgeRetained();
+    await refreshUsageDashboard();
+  });
   register('agentTandem.usageAttribution', async value => {
     if (attributionBusy) throw new Error('Wait for the history assignment to finish.');
     attributionBusy = true; attributionError = undefined; attributionNotice = undefined; settings.update();

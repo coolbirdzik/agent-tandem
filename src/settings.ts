@@ -139,7 +139,7 @@ function renderAttribution() {
   renderAttributionPreview();
 }
 function attributionCaption(days: NonNullable<UsageDashboardState['data']>['days'], filters: UsageFilters) {
-  return ([['inferred', 'Inferred from session evidence'], ['manual', 'User confirmed']] as const).flatMap(([source, label]) => {
+  return ([['matched', 'Matched from quota changes'], ['inferred', 'Inferred from session evidence'], ['manual', 'User confirmed']] as const).flatMap(([source, label]) => {
     const total = usageBreakdown(days.filter(row => row.accountSource === source), filters).totals.total;
     return total ? [`${label}: ${compact(total)} tokens`] : [];
   }).join(' · ');
@@ -732,6 +732,7 @@ function renderConversations(filters: UsageFilters) {
   el('conversation-meta').textContent = `${conversation.project || conversation.id} · ${new Date(conversation.firstAt).toLocaleString()} → ${new Date(conversation.lastAt).toLocaleString()}`;
   const source = attributionCaption(conversation.days, filters);
   if (source) el('conversation-meta').append(node('span', ` · ${source}`));
+  if (conversation.transcriptDeleted) el('conversation-meta').append(node('span', ' · Transcript deleted, tokens kept'));
   const assign = node('button', 'Assign this conversation', 'quiet'); assign.disabled = conversation.id === 'unknown' || !!state?.attributionBusy;
   assign.onclick = () => openAttribution(conversation.provider, conversation.id); el('conversation-meta').append(assign);
   el('conversation-totals').replaceChildren(metric('Tokens', t.total, `${number(t.requests)} requests`), metric('Input', t.input, `${compact(t.cacheRead)} cache read`), metric('Output', t.output, `${compact(t.reasoning)} reasoning`), metric('API cost', result.cost.usd, 'Estimate'));
@@ -1253,7 +1254,7 @@ function renderNativeDialog(value: UsageDashboardState['conversationCleanup']) {
     status = failures.length ? 'error' : removed ? (kept.length || skipped.length ? 'warning' : 'success') : 'empty';
     icon = failures.length ? 'error' : removed ? (status === 'warning' ? 'warning' : 'check') : 'info';
     title = result?.cancelled ? 'Cleanup cancelled' : failures.length ? 'Cleanup finished with problems' : removed ? 'Cleanup complete' : 'Nothing was deleted';
-    summary = [removed ? `Deleted ${plural(removed, 'conversation')} and freed ${fileSize(result!.bytes)}.` : 'No conversation could be deleted.',
+    summary = [removed ? `Deleted ${plural(removed, 'conversation')} and freed ${fileSize(result!.bytes)}. Their token counts stay in the usage dashboard.` : 'No conversation could be deleted.',
       kept.length + skipped.length ? `${plural(kept.length + skipped.length, 'conversation')} kept.` : '', failures.length ? `${plural(failures.length, 'problem')} reported.` : ''].filter(Boolean).join(' ');
     if (result?.cancelled) summary = `${removed ? summary : 'Nothing was deleted.'} Remaining deletions were cancelled.`;
     section('failures', 'Problems', failures.map(failure => ({ title: failure })), true);
@@ -1481,6 +1482,10 @@ function render(value: UsageDashboardState) {
   if (value.data) {
     const d = value.data, skipped = d.unreadableFiles + d.malformedLines + d.oversizedLines + d.undatedRecords;
     coverage.append(node('div', `${number(d.files)} history files · ${number(d.duplicates)} repeated response records counted once${skipped ? ` · Incomplete coverage: ${d.unreadableFiles} unreadable files, ${d.malformedLines} malformed lines, ${d.oversizedLines} oversized lines, ${d.undatedRecords} undated usage records` : ''}`));
+    if (d.retained) {
+      const kept = node('div', `Kept after their transcripts were deleted: ${number(d.retained.tokens)} tokens from ${number(d.retained.conversations)} conversation${d.retained.conversations === 1 ? '' : 's'}. `);
+      const purge = node('button', 'Delete kept token history…', 'quiet'); purge.onclick = () => send('purgeRetainedUsage'); kept.append(purge); coverage.append(kept);
+    }
   }
   page(currentPage);
 }

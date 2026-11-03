@@ -30,6 +30,7 @@ export class SettingsView implements vscode.Disposable {
         if (data.type === 'ready') { this.update(true); if (this.page !== 'dashboard') await webview.postMessage({ type: 'page', page: this.page, ...(this.storagePage ? { storagePage: this.storagePage } : {}) }); return; }
         const commands: Record<string, string> = { usageAttribution: 'agentTandem.usageAttribution', accountAction: 'agentTandem.accountAction', refresh: 'agentTandem.refreshUsageDashboard', preferences: 'agentTandem.setDashboardPreferences', chat: 'agentTandem.open', clis: 'agentTandem.manageCLIs', vscodeSettings: 'agentTandem.openVSCodeSettings', storage: 'agentTandem.refreshStorage', previewCleanup: 'agentTandem.previewStorageCleanup', cleanup: 'agentTandem.cleanupStorage', revealStorage: 'agentTandem.revealStorage', previewHistoryDeletion: 'agentTandem.previewHistoryDeletion', previewCleanAll: 'agentTandem.previewCleanAll', scanConversations: 'agentTandem.scanConversationCleanup', previewConversationCleanup: 'agentTandem.previewConversationCleanup', deleteConversations: 'agentTandem.deleteConversations', deleteHistory: 'agentTandem.deleteHistory' };
         commands.previewReviewCleanup = 'agentTandem.previewReviewCleanup';
+        commands.purgeRetainedUsage = 'agentTandem.purgeRetainedUsage';
         if (!Object.hasOwn(commands, data.type)) throw new Error('Unsupported settings request.');
         await this.invoke(commands[data.type]!, data.value);
       } catch (error) { this.report(error); }

@@ -24,13 +24,15 @@ export function dashboardAccountGroups(days: UsageDay[], filters: UsageFilters, 
   }
   return [...groups.values()].sort((a, b) => Number(!!b.active) - Number(!!a.active) || b.totals.total - a.totals.total);
 }
-export type UsageAccountSource = 'inferred' | 'manual';
+export type UsageAccountSource = 'inferred' | 'manual' | 'matched';
 export interface UsageDay extends TokenTotals { day: string; provider: ConversationProvider; model: string; cost?: ApiCost; account?: UsageAccount; accountSource?: UsageAccountSource }
 export interface RecentUsage { timestamp: number; provider: ConversationProvider; total: number; accountId?: string; accountSource?: UsageAccountSource }
-export interface UsageConversation { key: string; id: string; provider: ConversationProvider; project?: string; firstAt: number; lastAt: number; days: UsageDay[] }
+export interface UsageConversation { key: string; id: string; provider: ConversationProvider; project?: string; firstAt: number; lastAt: number; days: UsageDay[]; transcriptDeleted?: boolean }
 export interface UsageHistoryData {
   days: UsageDay[]; updatedAt: number; files: number; unreadableFiles: number; malformedLines: number;
   undatedRecords: number; duplicates: number; oversizedLines: number; timezone: string;
+  /** Tokens still counted after their transcripts left the disk, until the user deletes them. */
+  retained?: { conversations: number; tokens: number };
   recent?: RecentUsage[];
   conversations?: UsageConversation[];
   assignments?: import('./usage-attribution-store').UsageAssignment[];

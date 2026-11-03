@@ -10,6 +10,10 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Added
 
+- Usage: attribute Codex and Claude responses without account evidence to the one account whose quota rose around them. Matches are saved under **Matched from quota changes** and never replace native evidence or a user assignment. Responses that match no account or several stay **Unknown account**.
+
+- Usage: keep token counts after a transcript is deleted, whether by conversation cleanup or a CLI's own retention. The conversation stays in the dashboard marked **Transcript deleted, tokens kept**, and only **Delete kept token history…** removes the counts, after a confirmation.
+
 - Storage: confirm the conversation count and active filters before permanent deletion, including any subagent history deleted with its parent. Pause on deletion errors with **Skip**, **Skip All** for the same provider and error, or **Cancel**. Cancellation stops remaining deletions and reports the work already completed.
 
 ### Changed
@@ -17,6 +21,8 @@ Historical version dates and boundaries are reconstructed from package version c
 - Agent sidebar tab: remove the 900px maximum width so the chat fills the available width.
 
 ### Fixed
+
+- Usage: count compressed Codex history. Rollouts Codex stored as `.jsonl.zst` were skipped, so their tokens and conversations were missing from the dashboard and could not be assigned. Compressed files are decoded as a stream and cached; files that cannot be decoded are reported as unreadable.
 
 - Claude: find the CLI bundled with the Claude Code editor extension when no `claude` is on PATH, instead of failing with "claude was not found". A PATH CLI still takes precedence, and the bundled CLI appears in Manage CLIs.
 - Match quota burn-down chart legends to the visible chart lines.
