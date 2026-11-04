@@ -10,31 +10,25 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Added
 
-- Earned Codex resets are listed with title, expiry date and time left (for example `Full reset (Weekly + 5 hr) · Expires 11/7/2026, 6:27:32 AM · 2d 18h left`), soonest first. The status-bar hover shows them under **Reset usage**; Settings and dashboard account cards show a compact **Banked resets: N available** line that opens the list in a popover on hover, focus or click.
+- Earned Codex resets are listed with title, expiry and time left, soonest first. The status-bar hover shows them under **Reset usage**; Settings and dashboard account cards show a **Banked resets: N available** line that opens the list on hover, focus or click.
 
 ### Changed
 
-- Popovers and dropdown menus (account filter, model and account pickers, review menu, banked resets) now have a blurred translucent background, falling back to opaque in high-contrast and reduced-transparency modes.
-- The sidebar and editor-tab **⋯** actions (Open in tab, Settings, Change tracking…, Getting started, Manage CLIs, Diagnostics, plus Stop demo while running) now use VS Code's native overflow menu in the view or editor title bar instead of a custom in-panel menu. **AgentTandem: Diagnostics** is a new command.
-- Dashboard tabs (Overview, Quota, Conversations, Details) now show an icon beside each label.
-- The Dashboard, Accounts and Storage tab bars now share one style and stay pinned below the Settings header while you scroll.
-- The Accounts app filter (All apps, Codex, Claude Code, …) now uses the same underlined tab style as the dashboard sections, keeping the app icons.
-- Account picker groups each quota period's percentage left with its reset countdown and omits exact reset times.
-- Show five-hour and weekly quota labels as flat, filled badges with transparent **5h** and **7d** lettering across the status bar, quota hover, account picker, chat, account cards and dashboard. Updates no longer leave these badges blank because of a cached font. Status-bar Text style keeps plain labels.
-- Dashboard account filter is now a sticky picker in the top-right corner. Each account shows its provider logo, email, provider name and account details; **View usage** on an account card still selects it there. The "All accounts" back bar under the account view is removed — pick "All accounts" in the picker instead.
-- Rename "Settings & dashboard", "Open dashboard" and the "Open Settings and Usage Dashboard" command to "Settings" / "Open settings" across the panel menu, status bar hover, account popup and docs.
-- Settings tab bar now scrolls horizontally at medium widths instead of wrapping onto a second line.
-- Dashboard period chips (Today, This week, 5h cycle, …) now scroll horizontally in narrow panels instead of wrapping onto multiple rows.
-- Dashboard hides the Provider filter while a specific account is selected, since the account already determines the provider.
-- Account popup now has a single **Open settings** entry with a cog icon; the separate **Manage accounts** button and menu item are removed.
-- Settings pages no longer show a small label above the title, and each page title now matches its tab name (Dashboard, Accounts, Preferences, Storage).
+- The sidebar and editor-tab **⋯** actions now use VS Code's native overflow menu instead of a custom in-panel menu. **AgentTandem: Diagnostics** is a new command.
+- Popovers and dropdown menus now have a blurred translucent background, falling back to opaque in high-contrast and reduced-transparency modes.
+- Five-hour and weekly quota labels are now flat filled **5h** and **7d** badges across the status bar, hover, account picker, chat, account cards and dashboard. Status-bar Text style keeps plain labels.
+- The Dashboard, Accounts and Storage tab bars share one style and stay pinned below the Settings header; dashboard tabs show icons, and the Accounts app filter uses the same underlined tabs.
+- Dashboard account filter is now a sticky top-right picker showing each account's provider logo, email and details, replacing the "All accounts" back bar. The Provider filter is hidden while an account is selected.
+- Settings tab bar and dashboard period chips scroll horizontally in narrow panels instead of wrapping.
+- "Settings & dashboard" and "Open dashboard" are now "Settings" / "Open settings", and the account popup has a single **Open settings** entry instead of **Manage accounts**.
+- Account picker shows each quota period's percentage left with its reset countdown, without exact reset times.
+- Settings page titles match their tab names and no longer show a small label above.
 
 ### Fixed
 
-- Settings search boxes, date pickers, dropdowns and expandable sections now use the same themed styling as the rest of the UI instead of browser defaults.
-- The quota status-bar item now turns warning (orange) at 25% or less left and error (red) when exhausted, matching the colors in its hover, instead of waiting until 10% left.
-- Status-bar quota hover opens immediately instead of waiting for the account refresh to finish.
-- Date fields (From / To) and their calendar popup now follow the VS Code light or dark theme instead of always rendering light.
+- Settings search boxes, date pickers, dropdowns and expandable sections use the themed styling, and date fields and their calendar follow the VS Code light or dark theme.
+- The quota status-bar item turns warning at 25% or less left and error when exhausted, matching its hover.
+- Status-bar quota hover opens immediately instead of waiting for the account refresh.
 
 ## [0.1.41] - 2026-11-03
 
