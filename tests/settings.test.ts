@@ -400,7 +400,6 @@ describe('Settings usage dashboard', () => {
     const status = (identity: typeof one, usedPercent: number) => ({ status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent, resetsAt: now + 3600000 }] } });
     render({ ...value, data: { ...value.data!, days: [first, second] }, accounts: { Codex: status(one, 20) }, managedAccounts: [{ id: '11111111-1111-4111-8111-111111111111', provider: 'Codex', label: 'Work', identity: two, createdAt: now, status: status(two, 60) }] });
     expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(false);
-    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(true);
     expect(document.querySelectorAll('.account-group')).toHaveLength(2);
     const work = [...document.querySelectorAll('.account-group')].find(row => row.textContent?.includes('Work'))!;
     expect(work.textContent).toContain('40% left'); work.querySelector<HTMLButtonElement>('button')!.click();
@@ -411,12 +410,12 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#accounts')!.textContent).toContain('40% left');
     expect(document.querySelector('#accounts')!.textContent).not.toContain('80% left');
     expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(true);
-    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(false);
-    expect(document.querySelector('#account-detail-title')!.textContent).toBe('Work');
-    document.querySelector<HTMLButtonElement>('#account-detail-back')!.click();
+    expect(document.querySelector('#account-detail-bar')).toBeNull();
+    expect(document.querySelector('#account-picker-trigger')!.textContent).toContain('Work');
+    expect(document.querySelector('#account-picker-trigger')!.textContent).toContain('Codex');
+    document.querySelector<HTMLButtonElement>('#account-picker-menu [data-value=""]')!.click();
     expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe('');
     expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(false);
-    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(true);
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('300');
   });
   it('switches dashboard tabs by click and arrow keys, and opens history assignment in Details', () => {
@@ -479,7 +478,7 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#cycle-meta')!.textContent).toContain('2 of 2 recorded');
     expect(document.querySelector<HTMLButtonElement>('#cycle-prev')!.disabled).toBe(true);
     document.querySelector<HTMLButtonElement>('#cycle-current')!.click(); expect(document.querySelector('#cycle-meta')!.textContent).toContain('Current');
-    postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#account-detail-back')!.click();
+    postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#account-picker-menu [data-value=""]')!.click();
     expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe('today');
     expect(postMessage).toHaveBeenCalledWith({ type: 'usageWindow', value: null });
     expect(document.querySelector<HTMLElement>('#cycle-bar')!.hidden).toBe(true);
@@ -893,9 +892,9 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#account-breakdown')!.textContent).toContain('Unknown account');
     const quotaBefore = document.querySelector('#quota-estimates')!.textContent;
     choose('filter-account', one.id);
-    expect(document.querySelector('#account-detail-title')!.textContent).toBe('one@test.invalid');
-    expect(document.querySelector('#account-detail-meta')!.textContent).toContain('Codex');
-    expect(document.querySelector('#account-detail-meta')!.textContent).not.toContain('Unattributed history');
+    expect(document.querySelector('#account-picker-trigger strong')!.textContent).toBe('one@test.invalid');
+    expect(document.querySelector('#account-picker-trigger small')!.textContent).toContain('Codex');
+    expect(document.querySelector('#account-picker-trigger small')!.textContent).not.toContain('Unattributed history');
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('200');
     expect(document.querySelector('#period-breakdown')!.textContent).toContain('one-model');
     expect(document.querySelector('#period-breakdown')!.textContent).not.toContain('two-model');

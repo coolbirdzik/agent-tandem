@@ -7,7 +7,7 @@ import type { ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
 import { PRICING_CHECKED_AT, PRICING_SOURCES, type ApiCost } from './core/api-pricing';
 import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates, quotaMeters, sameQuotaCycle, quotaObservations, quotaTrends } from './core/quota-estimate';
-import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-account';
+import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel, type UsageAccount } from './core/usage-account';
 import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
 import { bankedResetDetails } from './core/banked-resets';
@@ -40,6 +40,8 @@ const costLabel = (cost: ApiCost) => !cost.pricedTokens && cost.unpricedTokens ?
 let state: UsageDashboardState | undefined, initialized = false, currentPage = 'dashboard';
 let currentStoragePage = 'conversations', nativeScanRequested = false;
 let periodLimit = 60, modelSignature = '', accountSignature = '';
+interface AccountChoice { provider?: ConversationProvider; title: string; info: string }
+let accountChoices = new Map<string, AccountChoice>();
 const collapsedPeriods = new Set<string>(); let periodsCollapsed = false, modelSlots = new Map<string, number>();
 let conversationLimit = 20, selectedUsageConversation: string | undefined;
 let accountPlatform: AccountProvider | '' = '';
@@ -306,12 +308,6 @@ el('attribution-form').onsubmit = event => {
   const scope = assignmentScope(), accountId = el<HTMLSelectElement>('attribution-account').value;
   if (!state?.attributionBusy && validAssignmentScope(scope) && accountId) send('usageAttribution', { action: 'assign', scope, accountId: accountId === UNKNOWN_ACCOUNT ? null : accountId });
 };
-el('account-detail-back').onclick = () => {
-  for (const id of ['filter-account', 'filter-provider', 'filter-model']) el<HTMLSelectElement>(id).value = '';
-  // A cycle belongs to one account, so all accounts return to a calendar range.
-  if (cycleWindow()) el<HTMLSelectElement>('filter-range').value = 'today';
-  renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); el('dashboard').scrollIntoView?.({ block: 'start' });
-};
 el('storage-refresh').onclick = () => send('storage'); el('storage-reveal').onclick = () => send('revealStorage');
 el('storage-preview').onclick = () => send('previewCleanup'); el('storage-cancel').onclick = () => send('storage');
 el('storage-clean').onclick = () => { if (state?.storage?.plan) send('cleanup', { token: state.storage.plan.token }); };
@@ -441,6 +437,9 @@ el<HTMLSelectElement>('default-grouping').onchange = () => {
 };
 for (const id of ['filter-provider', 'filter-account', 'filter-model', 'filter-range', 'filter-group', 'filter-from', 'filter-to']) el(id).onchange = () => {
   if (['filter-provider', 'filter-account', 'filter-range'].includes(id)) cycleIndex = 0;
+  if (id === 'filter-account') el<HTMLSelectElement>('filter-provider').value = '';
+  // A cycle belongs to one account, so all accounts return to a calendar range.
+  if (id === 'filter-account' && !el<HTMLSelectElement>(id).value && cycleWindow()) el<HTMLSelectElement>('filter-range').value = 'today';
   periodLimit = 60; renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
 };
 el('reset-filters').onclick = () => {
@@ -528,6 +527,38 @@ function renderApiActivity(filters: UsageFilters) {
   } else root.append(node('p', 'No API daily buckets were reported for the selected range. Local token usage below shows recorded activity on this device.', 'muted'));
   details.append(node('p', 'Claude: local token history, native API quota.', 'muted'));
 }
+const syncHeaderHeight = () => document.documentElement.style.setProperty('--settings-header-h', `${document.querySelector<HTMLElement>('.settings-header')?.offsetHeight ?? 0}px`);
+syncHeaderHeight(); window.addEventListener('resize', syncHeaderHeight); if (typeof ResizeObserver !== 'undefined') new ResizeObserver(syncHeaderHeight).observe(document.querySelector('.settings-header')!);
+const providerLabel = (provider: ConversationProvider) => provider === 'Claude' ? 'Claude Code' : provider;
+function accountPickerItem(choice: AccountChoice | undefined, element: 'button' | 'span' = 'span') {
+  const item = node(element, undefined, 'account-picker-item');
+  item.append(choice?.provider ? providerIcon(choice.provider) : node('span', undefined, `codicon ${choice ? 'codicon-question' : 'codicon-account'} account-picker-mark`));
+  const text = node('span', undefined, 'account-picker-text');
+  text.append(node('strong', choice?.title ?? 'All accounts'), node('small', choice ? [choice.provider && providerLabel(choice.provider), choice.info].filter(Boolean).join(' · ') : 'Every provider and account', 'muted'));
+  item.append(text); return item;
+}
+function setAccountMenu(open: boolean) {
+  const menu = el('account-picker-menu'), trigger = el('account-picker-trigger');
+  menu.hidden = !open; trigger.setAttribute('aria-expanded', String(open));
+  if (open) (menu.querySelector<HTMLElement>('[aria-selected=true]') ?? menu.querySelector<HTMLElement>('[role=option]'))?.focus();
+}
+function renderAccountPicker(ids: string[]) {
+  const select = el<HTMLSelectElement>('filter-account'), trigger = el('account-picker-trigger'), menu = el('account-picker-menu');
+  trigger.replaceChildren(accountPickerItem(accountChoices.get(select.value) ?? (select.value ? { title: 'Unknown account', info: '' } : undefined)), node('span', undefined, 'codicon codicon-chevron-down account-picker-caret'));
+  menu.replaceChildren(...[''].concat(ids).map(id => {
+    const option = accountPickerItem(id ? accountChoices.get(id) : undefined, 'button'); option.setAttribute('role', 'option'); option.dataset.value = id;
+    option.setAttribute('aria-selected', String(id === select.value)); option.tabIndex = -1;
+    option.onclick = () => { setAccountMenu(false); trigger.focus(); if (select.value !== id) { select.value = id; select.dispatchEvent(new Event('change')); } };
+    return option;
+  }));
+}
+el('account-picker-trigger').onclick = () => setAccountMenu(el('account-picker-menu').hidden);
+el('account-picker-menu').onkeydown = event => {
+  const options = [...el('account-picker-menu').querySelectorAll<HTMLElement>('[role=option]')], at = options.indexOf(document.activeElement as HTMLElement);
+  if (event.key === 'Escape') { event.preventDefault(); setAccountMenu(false); el('account-picker-trigger').focus(); }
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); options[(at + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); }
+};
+document.addEventListener('click', event => { if (!el('account-picker').contains(event.target as Node)) setAccountMenu(false); });
 function providerIcon(provider: ConversationProvider) {
   const image = node('img', undefined, 'provider-icon'); image.alt = ''; image.dataset.provider = provider;
   image.src = document.body.dataset[`${provider.toLowerCase()}Icon`] ?? ''; return image;
@@ -618,13 +649,7 @@ function currentQuotaCycleStarts(provider: ConversationProvider, account = dashb
 }
 function renderAccountGroups(filters: UsageFilters) {
   const selected = !!filters.accountId;
-  el('account-overview').hidden = selected; el('account-detail-bar').hidden = !selected;
-  if (selected) {
-    const group = dashboardGroups(filters).find(row => (!filters.provider || row.provider === filters.provider) && row.account?.id === filters.accountId);
-    const provider = group?.provider ?? filters.provider;
-    el('account-detail-title').textContent = group?.label || group?.account?.email || 'Unknown account';
-    el('account-detail-meta').textContent = `${provider === 'Claude' ? 'Claude Code' : provider ?? ''} · ${group?.account ? usageAccountLabel(group.account) : 'Unattributed history'}`;
-  }
+  el('account-overview').hidden = selected;
   const root = el('account-groups'); root.replaceChildren();
   for (const group of dashboardGroups(filters)) {
     const id = group.account?.id ?? UNKNOWN_ACCOUNT, item = node('article', undefined, 'account-group'); item.dataset.provider = group.provider;
@@ -1090,19 +1115,25 @@ function renderUsage() {
   const window = cycleWindow(), target = window ? cycleAccount() : undefined;
   if (target) el<HTMLSelectElement>('filter-provider').value = target.provider;
   el<HTMLSelectElement>('filter-group').disabled = !!window;
-  const provider = el<HTMLSelectElement>('filter-provider').value as ConversationProvider | '', modelSelect = el<HTMLSelectElement>('filter-model');
+  // A specific account already implies its provider, so the Provider filter is hidden and must not narrow the account list.
+  const pickedAccount = el<HTMLSelectElement>('filter-account').value, accountPinned = !!pickedAccount && pickedAccount !== UNKNOWN_ACCOUNT;
+  el('filter-provider').parentElement!.hidden = accountPinned;
+  const provider = (accountPinned && !window ? '' : el<HTMLSelectElement>('filter-provider').value) as ConversationProvider | '', modelSelect = el<HTMLSelectElement>('filter-model');
   const accountSelect = el<HTMLSelectElement>('filter-account'), previousAccount = accountSelect.value;
-  const accounts = new Map<string, string>();
+  const accounts = new Map<string, string>(), choices = new Map<string, AccountChoice>();
+  const choice = (account: UsageAccount, title = account.email): AccountChoice => ({ provider: account.provider, title, info: account.organization || account.nativeAccountId || (title === account.email ? account.method : account.email) });
   for (const row of state.data?.days ?? []) if (!provider || row.provider === provider) {
-    accounts.set(row.account?.id ?? UNKNOWN_ACCOUNT, row.account ? `${usageAccountLabel(row.account)} · ${row.provider}` : 'Unknown account');
+    const id = row.account?.id ?? UNKNOWN_ACCOUNT;
+    accounts.set(id, row.account ? `${usageAccountLabel(row.account)} · ${row.provider}` : 'Unknown account');
+    choices.set(id, row.account ? choice(row.account) : { title: 'Unknown account', info: 'Unattributed history' });
   }
   for (const agent of ['Codex', 'Claude'] as const) if (!provider || agent === provider) {
     const account = usageAccount(agent, state.accounts?.[agent]?.account);
-    if (account) accounts.set(account.id, `${usageAccountLabel(account)} · ${agent}`);
+    if (account) { accounts.set(account.id, `${usageAccountLabel(account)} · ${agent}`); choices.set(account.id, choice(account)); }
   }
   for (const profile of state.managedAccounts ?? []) if (isChatAccount(profile.provider) && (!provider || profile.provider === provider)) {
     const account = usageAccount(profile.provider, profile.status?.account || profile.identity);
-    if (account) accounts.set(account.id, `${profile.label} · ${usageAccountLabel(account)} · ${profile.provider}`);
+    if (account) { accounts.set(account.id, `${profile.label} · ${usageAccountLabel(account)} · ${profile.provider}`); choices.set(account.id, choice(account, profile.label)); }
   }
   const accountOptions = [...accounts].sort((a, b) => a[1].localeCompare(b[1])), nextAccountSignature = JSON.stringify(accountOptions);
   if (accountSignature !== nextAccountSignature) {
@@ -1113,6 +1144,7 @@ function renderUsage() {
   }
   if (target && accounts.has(target.id)) accountSelect.value = target.id;
   const accountId = accountSelect.value;
+  accountChoices = choices; renderAccountPicker(accountOptions.map(([id]) => id));
   const models = [...new Set(state.data?.days.filter(row => (!provider || row.provider === provider) && (!accountId || (row.account?.id ?? UNKNOWN_ACCOUNT) === accountId)).map(row => row.model) ?? [])].sort();
   const signature = JSON.stringify(models);
   if (modelSignature !== signature) {
