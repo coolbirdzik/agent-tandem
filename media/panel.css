@@ -72,7 +72,7 @@ html,body{height:100%}
 body{margin:0;padding:0;background:var(--tandem-bg);color:var(--vscode-foreground);font:13px/1.5 var(--vscode-font-family,system-ui)}
 main{height:100%;display:flex;flex-direction:column;min-height:0}
 button,input,select{font:inherit}
-button{cursor:pointer;transition:background-color 160ms var(--tandem-ease),color 160ms var(--tandem-ease);border:0;border-radius:6px}
+button{cursor:pointer;transition:background-color 160ms var(--tandem-ease),color 160ms var(--tandem-ease);border:0;border-radius:6px;background:transparent;color:inherit}
 button:disabled{opacity:.45;cursor:default}
 button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}
 button.secondary{background:transparent;color:var(--vscode-foreground);padding:6px 10px;font-size:11px;white-space:nowrap}
@@ -87,12 +87,6 @@ button.secondary:hover{background:var(--tandem-hover)}
 #root-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .header-actions{display:flex;align-items:center;gap:1px;flex:none}
 .stop-button{color:var(--vscode-errorForeground)}
-.more-menu{position:relative;z-index:2}
-.more-menu summary{list-style:none}
-.more-menu summary::-webkit-details-marker{display:none}
-.menu-items{position:absolute;right:0;top:35px;width:190px;padding:6px;background:var(--vscode-menu-background,var(--tandem-surface));border:1px solid var(--tandem-line);border-radius:10px;box-shadow:none}
-.menu-items button{width:100%;padding:8px;display:flex;align-items:center;gap:9px;background:transparent;color:var(--vscode-foreground);text-align:left;font-size:12px}
-.menu-items button:hover{background:var(--tandem-hover)}
 .scroll-area{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 .scroll-body{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
 .message-nav{position:absolute;right:14px;bottom:12px;z-index:4;display:flex;align-items:center;gap:2px;padding:2px 4px;border:1px solid var(--tandem-line);border-radius:999px;background:var(--vscode-editorWidget-background,var(--tandem-bg));box-shadow:0 2px 8px var(--vscode-widget-shadow,transparent)}
@@ -120,7 +114,7 @@ button.secondary:hover{background:var(--tandem-hover)}
 .account-quota-summary{display:flex;align-items:center;gap:6px;min-width:0;font-size:10px;color:var(--tandem-muted)}
 .account-quota-summary>span{white-space:nowrap;max-width:100%}
 .account-quota-summary [data-low=true]{color:var(--vscode-editorWarning-foreground,#cca700)}
-.account-popover{position:fixed;z-index:6;width:320px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:12px;border:1px solid var(--tandem-line);border-radius:8px;background:var(--vscode-menu-background,var(--tandem-surface));color:var(--vscode-foreground)}
+.account-popover{position:fixed;z-index:6;width:320px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:12px;border:1px solid var(--tandem-line);border-radius:8px;background:color-mix(in srgb,var(--vscode-menu-background,var(--tandem-surface)) var(--tandem-popover-opacity),transparent);backdrop-filter:var(--tandem-popover-filter);-webkit-backdrop-filter:var(--tandem-popover-filter);color:var(--vscode-foreground)}
 .account-popover-heading{display:flex;align-items:center;gap:4px;margin-bottom:8px;font-size:12px}
 .account-popover-heading>strong{flex:1;min-width:0}
 .account-detail-identity{font-size:12px;overflow-wrap:anywhere}
@@ -326,7 +320,7 @@ textarea:focus-visible{outline-color:var(--vscode-focusBorder)}
 .compact-access{min-width:0;flex:0 1 auto;max-width:110px}
 #chat-access{width:100%;min-width:0;height:26px;border:0;border-radius:5px;padding:3px 1px;background:transparent;color:var(--tandem-muted);font:inherit;font-size:11px}
 #chat-access option,#chat-provider option{background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground)}
-.model-popover{position:fixed;z-index:4;width:260px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:9px 11px 12px;border:1px solid var(--tandem-line);border-radius:9px;background:var(--vscode-menu-background,var(--tandem-surface));box-shadow:none}
+.model-popover{position:fixed;z-index:4;width:260px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:9px 11px 12px;border:1px solid var(--tandem-line);border-radius:9px;background:color-mix(in srgb,var(--vscode-menu-background,var(--tandem-surface)) var(--tandem-popover-opacity),transparent);backdrop-filter:var(--tandem-popover-filter);-webkit-backdrop-filter:var(--tandem-popover-filter);box-shadow:none}
 .model-popover-heading{display:flex;align-items:center;gap:3px;margin-bottom:10px}
 .model-popover-heading #chat-provider{flex:1;max-width:none;font-size:12px;color:var(--vscode-foreground)}
 .model-popover-heading .icon-button{width:24px;height:24px}
@@ -347,7 +341,7 @@ textarea:focus-visible{outline-color:var(--vscode-focusBorder)}
 .dropdown-trigger>.codicon{flex:none;font-size:12px;color:var(--tandem-muted)}
 .dropdown-trigger:hover,.dropdown-trigger[aria-expanded=true]{background:var(--tandem-hover)}
 .dropdown-trigger:disabled{opacity:.5}
-.dropdown-menu{position:fixed;z-index:5;overflow:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--tandem-line);border-radius:8px;background:var(--vscode-menu-background,var(--tandem-surface));color:var(--vscode-foreground);font-size:12px;box-shadow:0 3px 12px #00000014}
+.dropdown-menu{position:fixed;z-index:5;overflow:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--tandem-line);border-radius:8px;background:color-mix(in srgb,var(--vscode-menu-background,var(--tandem-surface)) var(--tandem-popover-opacity),transparent);backdrop-filter:var(--tandem-popover-filter);-webkit-backdrop-filter:var(--tandem-popover-filter);color:var(--vscode-foreground);font-size:12px;box-shadow:0 3px 12px #00000014}
 .dropdown-menu:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
 .dropdown-option{display:flex;align-items:center;gap:7px;min-height:29px;padding:5px 7px;border-radius:4px;cursor:pointer}
 .dropdown-option[data-active=true]{background:var(--tandem-hover)}
@@ -421,7 +415,7 @@ select:disabled{cursor:default}
 .cli-add-form input,.cli-edit-form input,.cli-selections select{transition:background-color 160ms var(--tandem-ease),border-color 160ms var(--tandem-ease)}
 .agent-prompt input,.agent-prompt select{border-radius:6px}
 @media(min-width:440px){.cli-selections{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:310px){.tandem-header{padding:0 10px;gap:3px}.header-actions{gap:0}.header-actions>.icon-button,.more-menu>summary{width:26px}#conversation{padding-inline:16px}.thread-heading{padding-inline:16px}.cli-group{margin-inline:16px}.cli-intro,.cli-manager-status{margin-inline:16px}.cli-group-heading .secondary{padding-inline:6px}.composer-actions{gap:5px}#chat-status{font-size:9px}.pending-changes{margin-inline:12px}}
+@media(max-width:310px){.tandem-header{padding:0 10px;gap:3px}.header-actions{gap:0}.header-actions>.icon-button#conversation{padding-inline:16px}.thread-heading{padding-inline:16px}.cli-group{margin-inline:16px}.cli-intro,.cli-manager-status{margin-inline:16px}.cli-group-heading .secondary{padding-inline:6px}.composer-actions{gap:5px}#chat-status{font-size:9px}.pending-changes{margin-inline:12px}}
 @media(prefers-reduced-motion:reduce){#chat-form,.cli-add-form input,.cli-edit-form input,.cli-selections select{transition:none}}
 @media(forced-colors:active){.model-popover,.model-popover-field select{border:1px solid CanvasText}:root{--tandem-line:CanvasText;--tandem-control:Canvas;--tandem-hover:Highlight}#chat-form,.history-search,.cli-selections select,.cli-add-form input,.cli-edit-form input{border:1px solid CanvasText}#chat-form:focus-within{border-color:Highlight}.icon-button:hover,button:enabled:active{color:HighlightText}}
 
@@ -510,10 +504,6 @@ html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-w
 @media (forced-colors: active) { .scrollbar-thumb { background: CanvasText; } }
 
 body[data-editor-tab="false"] .tandem-header{height:28px;padding:0 10px}
-body[data-editor-tab="false"] #more-menu{display:none}
-body[data-editor-tab="false"] #more-menu[open]{display:block;z-index:20}
-body[data-editor-tab="false"] #more-menu>summary{display:none}
-body[data-editor-tab="false"] #more-menu .menu-items{position:fixed;top:4px;right:8px;max-width:calc(100vw - 16px);max-height:calc(100vh - 8px);overflow-y:auto;box-sizing:border-box;z-index:20}
 
 body[data-editor-tab="true"] .scroll-body>section{min-height:100%}
 body[data-editor-tab="true"] #screen-changes,
