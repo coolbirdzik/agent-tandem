@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { UsageDashboardState } from '../core/usage-dashboard';
 import type { ConversationProvider } from '../providers/conversations';
 import { profileIdentityKey } from '../core/account-profiles';
+import { bankedResetCountdown } from '../core/banked-resets';
 import { compactCountdown, resetClock, resetSummary } from '../core/quota-status';
 import { storageSize, storageUsageLevel } from '../core/storage-usage';
 import { uniqueQuotaWindows } from '../core/quota-windows';
@@ -58,6 +59,12 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
       ? `${color('$(gift)', 'blue')} ${link('Reset usage', 'agentTandem.resetCodexUsage')} ${color(`· uses 1 of ${count} earned resets`, 'muted')}`
       : color(`$(gift) Reset usage · ${count === undefined ? 'refresh to check earned resets' : count ? `${count} earned resets available` : 'no earned resets available'}`, 'muted');
     md.appendMarkdown(table(row(`<td>${reset}</td>`, `<td align="right">${count && expires ? color(`expires ${compactCountdown(expires)}`, 'muted') : ''}</td>`)));
+    // One line per earned reset, soonest expiry first, so each expiry stays readable.
+    const credits = (status?.quota?.bankedResets?.credits ?? []).slice().sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity));
+    if (count && credits.length) {
+      md.appendMarkdown(table(...credits.slice(0, 5).map(credit => row(`<td>${color(`${escape(credit.title || 'Banked reset')} · ${credit.expiresAt ? `Expires ${escape(new Date(credit.expiresAt).toLocaleString())} · ${escape(bankedResetCountdown(credit.expiresAt))}` : 'Expiry unavailable'}`, 'muted')}</td>`))));
+      if (credits.length > 5 || credits.length < count) md.appendMarkdown(block(`<div>${color(credits.length > 5 ? `+${credits.length - 5} more earned resets` : 'Expiry details shown for some resets', 'muted')}</div>`));
+    }
   }
   const currentId = profileIdentityKey(provider, account);
   const profiles = uniqueAccountProfiles((state.managedAccounts ?? []).filter(row => row.provider === provider)

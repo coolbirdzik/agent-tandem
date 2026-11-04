@@ -30,6 +30,18 @@ const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => {
   const value = document.createElement(tag); if (text !== undefined) value.textContent = text; if (className) value.className = className; return value;
 };
+/** Compact "Banked resets" summary; the per-reset expiry lines open in a popover on hover, focus or click. */
+function bankedResetPopover(resets: Parameters<typeof bankedResetDetails>[0]): HTMLElement | undefined {
+  const [summary, ...lines] = bankedResetDetails(resets); if (!summary) return undefined;
+  const wrap = node('div', undefined, 'banked-reset');
+  if (!lines.length) { wrap.append(node('span', summary, 'muted')); return wrap; }
+  const trigger = node('button', summary, 'banked-reset-trigger quiet'); trigger.type = 'button'; trigger.setAttribute('aria-haspopup', 'true'); trigger.setAttribute('aria-expanded', 'false');
+  const panel = node('div', undefined, 'banked-reset-popover'); panel.setAttribute('role', 'tooltip');
+  for (const line of lines) panel.append(node('p', line));
+  trigger.onclick = () => { const open = wrap.dataset.open !== 'true'; wrap.dataset.open = String(open); trigger.setAttribute('aria-expanded', String(open)); };
+  wrap.onkeydown = event => { if (event.key === 'Escape' && wrap.dataset.open === 'true') { wrap.dataset.open = 'false'; trigger.setAttribute('aria-expanded', 'false'); trigger.focus(); event.stopPropagation(); } };
+  wrap.append(trigger, panel); return wrap;
+}
 const numberFormat = new Intl.NumberFormat();
 const compactFormat = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 const moneyFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
@@ -614,7 +626,7 @@ function renderAccounts() {
       row.append(label, meter); if (window.resetsAt) row.append(node('span', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
       windows.append(row);
     }
-    for (const line of bankedResetDetails(status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
+    { const banked = bankedResetPopover(status?.quota?.bankedResets); if (banked) windows.append(banked); }
     if (!windows.children.length) windows.append(node('span', status?.quota?.detail || status?.error || 'Quota unavailable', 'muted'));
     if (status?.status === 'loading') windows.append(node('span', 'Updating…', 'muted'));
     item.append(windows); const reset = codexResetControls(provider, status); if (reset) item.append(reset); root.append(item);
@@ -681,7 +693,7 @@ function renderAccountGroups(filters: UsageFilters) {
       if (window.resetsAt) row.append(node('small', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
       windows.append(row);
     }
-    for (const line of bankedResetDetails(group.status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
+    { const banked = bankedResetPopover(group.status?.quota?.bankedResets); if (banked) windows.append(banked); }
     if (!windows.children.length) windows.append(node('small', group.account ? group.status?.quota?.detail || 'No quota snapshot' : 'Quota cannot be assigned to unknown history', 'muted'));
     item.append(windows);
     const reset = group.active && codexResetControls(group.provider, group.status); if (reset) item.append(reset);
@@ -755,7 +767,7 @@ function renderManagedAccounts() {
       if (tick) { const pace = quotaPace(state?.quotaTicks ?? [], tick); if (pace.percentPerHour !== undefined) row.append(node('small', `${number(Math.round(pace.percentPerHour * 10) / 10)}% / hour`, 'muted')); }
       windows.append(row);
     }
-    for (const line of bankedResetDetails(profile.status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
+    { const banked = bankedResetPopover(profile.status?.quota?.bankedResets); if (banked) windows.append(banked); }
     const reset = profile.active && codexResetControls(profile.provider, profile.status); if (reset) windows.append(reset);
     if (!windows.children.length) windows.append(node('p', profile.status?.error || (isChatAccount(profile.provider) ? profile.status?.quota?.detail || 'Refresh to check sign-in and quota' : 'Sign-in saved locally · quota in app'), 'muted'));
     item.append(windows);

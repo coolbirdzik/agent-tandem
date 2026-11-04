@@ -8,6 +8,10 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ## [Unreleased]
 
+### Added
+
+- Earned Codex resets are listed with title, expiry date and time left (for example `Full reset (Weekly + 5 hr) · Expires 11/7/2026, 6:27:32 AM · 2d 18h left`), soonest first. The status-bar hover shows them under **Reset usage**; Settings and dashboard account cards show a compact **Banked resets: N available** line that opens the list in a popover on hover, focus or click.
+
 ### Changed
 
 - Dashboard account filter is now a sticky picker in the top-right corner. Each account shows its provider logo, email, provider name and account details; **View usage** on an account card still selects it there. The "All accounts" back bar under the account view is removed — pick "All accounts" in the picker instead.
@@ -20,6 +24,7 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Fixed
 
+- Status-bar quota hover opens immediately instead of waiting for the account refresh to finish.
 - Date fields (From / To) and their calendar popup now follow the VS Code light or dark theme instead of always rendering light.
 
 ## [0.1.41] - 2026-11-03

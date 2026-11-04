@@ -33,7 +33,8 @@ export class QuotaStatusBar implements vscode.Disposable {
         if (this.refreshSaved && 'tooltip2' in item) {
           try {
             (item as vscode.StatusBarItem & { tooltip2: (token: vscode.CancellationToken) => Promise<vscode.MarkdownString | string | undefined> }).tooltip2 = async token => {
-              if (!token.isCancellationRequested) await this.refreshSaved!().catch(() => undefined);
+              // Show the cached hover immediately; a slow refresh must not delay it. Fresh data replaces the tooltip on the next update.
+              if (!token.isCancellationRequested) void this.refreshSaved!().catch(() => undefined);
               return item.tooltip;
             };
           } catch { /* Proposal not enabled in this host. */ }

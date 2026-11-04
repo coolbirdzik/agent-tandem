@@ -770,3 +770,10 @@ html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-w
 @media (max-width: 600px) { .filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .filter-bar, .cycle-bar { padding: 12px; } .summary-strip { gap: 10px; } .summary-card { padding: 12px; } }
 @media (max-width: 380px) { .summary-card { padding: 10px; } .summary-card strong { font-size: 20px; } .summary-card small { font-size: 10px; } .cycle-copy { min-width: 0; } }
 @media (forced-colors: active) { .range-chip[aria-pressed=true], .dashboard-tabs [role=tab][aria-selected=true] { forced-color-adjust: none; background: Highlight; color: HighlightText; } }
+
+.banked-reset { position: relative; }
+.banked-reset-trigger { color: var(--muted); font-size: 12px; padding: 2px 0; background: transparent; border: 0; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.banked-reset-popover { display: none; position: absolute; z-index: 20; left: 0; bottom: calc(100% + 6px); width: max-content; max-width: min(380px, 80vw); padding: 8px 10px; background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background)); color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground)); border: 1px solid var(--vscode-editorHoverWidget-border, var(--line)); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, #0004); }
+.banked-reset-popover p { margin: 0; padding: 3px 0; font-size: 12px; color: var(--muted); }
+.banked-reset:hover .banked-reset-popover, .banked-reset:focus-within .banked-reset-popover, .banked-reset[data-open=true] .banked-reset-popover { display: block; }
+.banked-reset[data-open=false] .banked-reset-popover { display: none; }
