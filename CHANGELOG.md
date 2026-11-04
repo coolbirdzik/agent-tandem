@@ -12,6 +12,7 @@ Historical version dates and boundaries are reconstructed from package version c
 
 - Rename "Settings & dashboard", "Open dashboard" and the "Open Settings and Usage Dashboard" command to "Settings" / "Open settings" across the panel menu, status bar hover, account popup and docs.
 - Settings tab bar now scrolls horizontally at medium widths instead of wrapping onto a second line.
+- Settings pages no longer show a small label above the title, and each page title now matches its tab name (Dashboard, Accounts, Preferences, Storage).
 
 ## [0.1.41] - 2026-11-03
 
