@@ -123,7 +123,7 @@ button.danger:hover { filter: brightness(.9); }
 .native-search input { width: 100%; border: 0; background: transparent; padding: 8px 8px 8px 0; font-size: 12px; }
 .native-search:focus-within { outline: 1px solid var(--vscode-focusBorder); }
 .native-search input:focus-visible { outline: 0; }
-.native-provider select { font-size: 12px; padding: 8px; width: 136px; }
+.native-provider select { font-size: 12px; padding: 8px 28px 8px 8px; width: 136px; }
 .native-custom-filters { margin-top: 12px; font-size: 12px; color: var(--muted); }
 .native-custom-filters summary { width: fit-content; cursor: pointer; padding-block: 4px; }
 .native-custom-filters .storage-history-tools { margin: 12px 0 16px; }
@@ -204,6 +204,19 @@ body, input, select { color-scheme: light; }
 body.vscode-dark, body.vscode-dark input, body.vscode-dark select,
 body.vscode-high-contrast:not(.vscode-high-contrast-light), body.vscode-high-contrast:not(.vscode-high-contrast-light) input, body.vscode-high-contrast:not(.vscode-high-contrast-light) select { color-scheme: dark; }
 input[type=date] { accent-color: var(--vscode-button-background); }
+input:focus-visible, select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+input::placeholder { color: var(--vscode-input-placeholderForeground, var(--muted)); }
+input[type=search] { appearance: none; }
+input[type=search]::-webkit-search-decoration, input[type=search]::-webkit-search-cancel-button { appearance: none; display: none; }
+input[type=date]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .7; border-radius: 3px; }
+input[type=date]::-webkit-calendar-picker-indicator:hover { opacity: 1; background: var(--vscode-list-hoverBackground); }
+select { appearance: none; cursor: pointer; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+select:disabled { opacity: .6; cursor: default; }
+summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: ""; flex: none; width: 5px; height: 5px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 150ms; margin-right: 3px; }
+details[open] > summary::before { transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) { summary::before { transition: none; } }
 .settings-header { display: flex; align-items: center; gap: 32px; padding: 12px 28px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--vscode-editor-background); z-index: 2; flex-wrap: wrap; }
 .settings-brand { display: flex; align-items: center; gap: 9px; }
 .settings-brand > span:last-child { color: var(--muted); font-size: 12px; }
@@ -223,7 +236,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 24px clamp(16px, 3vw, 32px); 
 .account-picker-text strong, .account-picker-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-picker-text strong { font-size: 13px; font-weight: 600; }
 .account-picker-text small { font-size: 11px; }
-.account-picker-menu { position: absolute; right: 0; top: calc(100% + 4px); width: 100%; max-height: min(420px, 60vh); overflow: auto; padding: 4px; background: var(--vscode-dropdown-background, var(--vscode-editor-background)); border: 1px solid var(--vscode-dropdown-border, var(--line)); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, #0004); }
+.account-picker-menu { position: absolute; right: 0; top: calc(100% + 4px); width: 100%; max-height: min(420px, 60vh); overflow: auto; padding: 4px; background: color-mix(in srgb, var(--vscode-dropdown-background, var(--vscode-editor-background)) var(--tandem-popover-opacity), transparent); backdrop-filter: var(--tandem-popover-filter); -webkit-backdrop-filter: var(--tandem-popover-filter); border: 1px solid var(--vscode-dropdown-border, var(--line)); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, #0004); }
 .account-picker-menu .account-picker-item { width: 100%; justify-content: flex-start; padding: 7px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-foreground); text-align: left; }
 .account-picker-menu .account-picker-item:hover, .account-picker-menu .account-picker-item:focus-visible { background: var(--vscode-list-hoverBackground); }
 .account-picker-menu .account-picker-item[aria-selected=true] { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
@@ -328,7 +341,7 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .quota-cycle-charts .quota-history-chart { margin-top: 18px; }
 .quota-chart-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; color: var(--muted); }
 .quota-chart-control { display: flex; align-items: center; gap: 6px; font-size: 10px; }
-.quota-chart-control select { min-width: 0; max-width: 100%; padding: 3px 5px; font-size: 11px; }
+.quota-chart-control select { min-width: 0; max-width: 100%; padding: 3px 22px 3px 5px; background-position: calc(100% - 11px) 50%, calc(100% - 6px) 50%; font-size: 11px; }
 .quota-chart-viewport { overflow-x: auto; margin-top: 10px; padding-bottom: 5px; }
 .quota-cycle-plot { position: relative; padding-left: 45px; width: var(--quota-plot-width); }
 .quota-cycle-plot svg { display: block; width: 100%; height: 170px; overflow: visible; }
@@ -774,7 +787,7 @@ html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-w
 
 .banked-reset { position: relative; }
 .banked-reset-trigger { color: var(--muted); font-size: 12px; padding: 2px 0; background: transparent; border: 0; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
-.banked-reset-popover { display: none; position: absolute; z-index: 20; left: 0; bottom: calc(100% + 6px); width: max-content; max-width: min(380px, 80vw); padding: 8px 10px; background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background)); color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground)); border: 1px solid var(--vscode-editorHoverWidget-border, var(--line)); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, #0004); }
+.banked-reset-popover { display: none; position: absolute; z-index: 20; left: 0; bottom: calc(100% + 6px); width: max-content; max-width: min(380px, 80vw); padding: 8px 10px; background: color-mix(in srgb, var(--vscode-editorHoverWidget-background, var(--vscode-editor-background)) var(--tandem-popover-opacity), transparent); backdrop-filter: var(--tandem-popover-filter); -webkit-backdrop-filter: var(--tandem-popover-filter); color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground)); border: 1px solid var(--vscode-editorHoverWidget-border, var(--line)); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, #0004); }
 .banked-reset-popover p { margin: 0; padding: 3px 0; font-size: 12px; color: var(--muted); }
 .banked-reset:hover .banked-reset-popover, .banked-reset:focus-within .banked-reset-popover, .banked-reset[data-open=true] .banked-reset-popover { display: block; }
 .banked-reset[data-open=false] .banked-reset-popover { display: none; }

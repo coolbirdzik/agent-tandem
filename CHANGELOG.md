@@ -14,6 +14,8 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Changed
 
+- Popovers and dropdown menus (account filter, model and account pickers, review menu, banked resets) now have a blurred translucent background, falling back to opaque in high-contrast and reduced-transparency modes.
+- The sidebar and editor-tab **⋯** actions (Open in tab, Settings, Change tracking…, Getting started, Manage CLIs, Diagnostics, plus Stop demo while running) now use VS Code's native overflow menu in the view or editor title bar instead of a custom in-panel menu. **AgentTandem: Diagnostics** is a new command.
 - Dashboard tabs (Overview, Quota, Conversations, Details) now show an icon beside each label.
 - The Dashboard, Accounts and Storage tab bars now share one style and stay pinned below the Settings header while you scroll.
 - The Accounts app filter (All apps, Codex, Claude Code, …) now uses the same underlined tab style as the dashboard sections, keeping the app icons.
@@ -29,6 +31,7 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Fixed
 
+- Settings search boxes, date pickers, dropdowns and expandable sections now use the same themed styling as the rest of the UI instead of browser defaults.
 - The quota status-bar item now turns warning (orange) at 25% or less left and error (red) when exhausted, matching the colors in its hover, instead of waiting until 10% left.
 - Status-bar quota hover opens immediately instead of waiting for the account refresh to finish.
 - Date fields (From / To) and their calendar popup now follow the VS Code light or dark theme instead of always rendering light.

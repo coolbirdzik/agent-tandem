@@ -1,3 +1,8 @@
+/* Shared translucent-popover recipe: backgrounds mix with transparent so the blur shows through. */
+:root{--tandem-popover-opacity:80%;--tandem-popover-filter:blur(16px) saturate(1.4)}
+@media (prefers-reduced-transparency:reduce){:root{--tandem-popover-opacity:100%;--tandem-popover-filter:none}}
+@media (forced-colors:active){:root{--tandem-popover-opacity:100%;--tandem-popover-filter:none}}
+body.vscode-high-contrast,body.vscode-high-contrast-light{--tandem-popover-opacity:100%;--tandem-popover-filter:none}
 /* Match the editor's hover palette across every extension webview. */
 .tandem-hover-hint,.burn-tooltip {
   color:var(--vscode-editorHoverWidget-foreground,var(--vscode-foreground));

@@ -106,37 +106,6 @@ describe('Single tandem webview', () => {
     expect(panelHtml(resources, true)).toContain('data-editor-tab="true"');
   });
 
-  it('opens the title More actions as a local popover and supports selection and dismissal', () => {
-    render(state);
-    const more = document.querySelector<HTMLDetailsElement>('#more-menu')!;
-    const open = () => window.dispatchEvent(new MessageEvent('message', { data: { type: 'headerAction', action: 'more' } }));
-    postMessage.mockClear();
-    open();
-    expect(more.open).toBe(true);
-    expect(document.activeElement?.id).toBe('open-tab');
-    expect(postMessage).not.toHaveBeenCalled();
-    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    expect(document.activeElement?.id).toBe('open-settings');
-    (document.activeElement as HTMLButtonElement).click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'settings', selection: undefined });
-    expect(more.open).toBe(false);
-    open();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    expect(more.open).toBe(false);
-    expect(document.activeElement?.id).toBe('chat-input');
-    open();
-    document.body.click();
-    expect(more.open).toBe(false);
-    open(); open();
-    expect(more.open).toBe(false);
-    render({ ...state, running: true });
-    open();
-    expect(document.activeElement?.id).toBe('menu-stop');
-    (document.activeElement as HTMLButtonElement).click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'stop', selection: undefined });
-    expect(more.open).toBe(false);
-  });
-
   it('offers scoped conversation links for script and binary changes and labels removable manual links', () => {
     const names = ['media/provider-icons.ttf', 'media/screenshots/preferences.png', 'tests/quota-status-bar.test.ts', 'tests/settings.test.ts', 'tests/status-bar-preferences.test.ts'];
     const review = { revision: 'scripts', busy: false, files: names.map((name, i) => ({ path: name, kind: 'modified' as const, binary: i < 2 })) };
@@ -1171,10 +1140,6 @@ describe('Single tandem webview', () => {
     render(state); postMessage.mockClear();
     document.querySelector<HTMLButtonElement>('.conversation-link')!.click();
     expect(postMessage.mock.calls).toEqual([[{ type: 'conversation', selection: 'Claude:c1' }]]);
-    document.querySelector<HTMLButtonElement>('#open-tab')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'tab', selection: undefined });
-    document.querySelector<HTMLButtonElement>('[data-screen="tools"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'screen', selection: 'tools' });
     render({ ...state, running: true, screen: 'changes' });
     const stop = document.querySelector<HTMLButtonElement>('header #stop')!;
     expect(stop.hidden).toBe(false); stop.click();
@@ -1190,17 +1155,12 @@ describe('Single tandem webview', () => {
     render({ ...state, review: { revision: 'watch', files: [], busy: false, externalTracking: true } });
     expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(false);
     expect(document.querySelector('#review-toggle')!.textContent).toContain('Watching external changes');
-    expect(document.querySelector('#external-review-menu')!.textContent).toContain('Change tracking');
     expect(document.querySelector('#external-review-toggle')).toBeNull();
     expect(document.querySelector('#external-review-hint')!.textContent).toContain('Chat in Codex or Claude');
     document.querySelector<HTMLButtonElement>('#review-tracking')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'trackingControls', selection: undefined });
     const input = document.querySelector<HTMLTextAreaElement>('#chat-input')!; input.value = 'Work'; input.dispatchEvent(new Event('input'));
     expect(document.querySelector<HTMLButtonElement>('#chat-send')!.disabled).toBe(false);
-    postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#external-review-menu')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'trackingControls', selection: undefined });
-    document.querySelector<HTMLButtonElement>('#getting-started')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'gettingStarted', selection: undefined });
   });
   it('defaults history to the current workspace and scopes provider totals to the chosen folder', () => {
     const value: ViewState = { ...state, conversations: [

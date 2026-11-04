@@ -102,7 +102,7 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
     this.subscriptions.push(view.onDidChangeVisibility(() => { if (view.visible) this.update(); }));
     this.update();
   }
-  async headerAction(action: 'newChat' | 'history' | 'review' | 'refresh' | 'more') {
+  async headerAction(action: 'newChat' | 'history' | 'review' | 'refresh') {
     await this.open();
     await this.view?.webview.postMessage({ type: 'headerAction', action });
   }

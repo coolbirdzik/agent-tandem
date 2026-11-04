@@ -35,7 +35,7 @@ select{width:100%;min-width:0;background:var(--vscode-dropdown-background);color
 .review-more>summary::-webkit-details-marker{display:none}
 .review-more>summary:hover{background:var(--vscode-toolbar-hoverBackground)}
 .review-more>summary:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}
-.review-menu{position:absolute;right:0;top:calc(100% + 6px);width:min(330px,calc(100vw - 24px));padding:12px;background:var(--vscode-menu-background,var(--vscode-editor-background));border:1px solid var(--review-border);border-radius:5px;box-shadow:0 6px 20px var(--vscode-widget-shadow,transparent);z-index:10}
+.review-menu{position:absolute;right:0;top:calc(100% + 6px);width:min(330px,calc(100vw - 24px));padding:12px;background:color-mix(in srgb,var(--vscode-menu-background,var(--vscode-editor-background)) var(--tandem-popover-opacity),transparent);backdrop-filter:var(--tandem-popover-filter);-webkit-backdrop-filter:var(--tandem-popover-filter);border:1px solid var(--review-border);border-radius:5px;box-shadow:0 6px 20px var(--vscode-widget-shadow,transparent);z-index:10}
 .review-menu-meta{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap}
 .review-menu-meta strong{font-weight:500}.review-menu-meta #file-kind{margin-left:auto;font-size:11px}
 .review-menu .header-actions{display:grid;gap:2px;padding:8px 0}
