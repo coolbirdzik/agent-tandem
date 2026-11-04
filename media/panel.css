@@ -1,4 +1,5 @@
 @import url("./hover-hints.css");
+@import url("./quota-window.css");
 :root{--tandem-bg:var(--vscode-sideBar-background,var(--vscode-editor-background));--tandem-line:color-mix(in srgb,var(--vscode-foreground) 10%,var(--tandem-bg));--tandem-muted:var(--vscode-descriptionForeground);--tandem-hover:color-mix(in srgb,var(--vscode-foreground) 8%,var(--tandem-bg));--tandem-surface:var(--vscode-editor-background);--tandem-space-xs:4px;--tandem-space-sm:8px;--tandem-space-md:12px;--tandem-space-lg:16px;--tandem-space-xl:24px;--tandem-radius:8px;--tandem-control:color-mix(in srgb,var(--vscode-foreground) 4%,var(--tandem-bg));--tandem-ease:cubic-bezier(.2,.7,.2,1)}
 
 .provider-icon[data-provider=Codex]{filter:brightness(0)}

@@ -297,7 +297,7 @@ describe('Settings usage dashboard', () => {
   it('customizes both status items through Preferences with an accurate preview and host persistence requests', () => {
     render({ ...value, activeProvider: 'Claude' });
     expect(document.querySelectorAll('#status-bar-preview .provider-icon')).toHaveLength(2);
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Quota —5h 75%');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Quota —\uE030 75%');
     choose('status-bar-providers', 'claude');
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { providers: 'claude' } } });
     expect(document.querySelector('#status-bar-preview .provider-icon[data-provider=Codex]')).toBeNull();
@@ -333,18 +333,18 @@ describe('Settings usage dashboard', () => {
     render(); choose('status-bar-style', 'progress');
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { style: 'progress' } } });
     const items = [...document.querySelectorAll<HTMLElement>('.status-bar-preview-item')];
-    expect(items.map(item => item.textContent)).toEqual(['Quota —', '5h ███▊░ 75%']);
+    expect(items.map(item => item.textContent)).toEqual(['Quota —', '\uE030 ███▊░ 75%']);
     expect(items[1]!.getAttribute('aria-label')).toContain('Claude Code');
     expect(items[1]!.title).toContain('5h: 75% remaining');
     expect(document.querySelector<HTMLInputElement>('[data-status-field="quota"]')!.disabled).toBe(false);
     render({ ...value, preferences: { ...value.preferences, statusBar: { providers: 'claude', fields: ['quota'], quotaWindows: 'all', alignment: 'right', style: 'progress', codexColor: '', claudeColor: '' } } });
     expect(document.querySelector<HTMLSelectElement>('#status-bar-style')!.value).toBe('progress');
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('5h ███▊░ 75%');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('\uE030 ███▊░ 75%');
     choose('status-bar-style', 'compact');
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('5h 75%');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('\uE030 75%');
     choose('status-bar-style', 'rings');
-    expect([...document.querySelectorAll('.status-bar-glyph')].map(glyph => glyph.textContent)).toEqual(['']);
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('5h  75%');
+    expect([...document.querySelectorAll('.status-bar-glyph')].map(glyph => glyph.textContent)).toEqual(['\uE030', '']);
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('\uE030  75%');
     choose('status-bar-style', 'minimal');
     expect(document.querySelector('#status-bar-preview')!.textContent).toBe(' 75%');
   });
@@ -437,6 +437,8 @@ describe('Settings usage dashboard', () => {
     render();
     const chips = [...document.querySelectorAll<HTMLButtonElement>('#range-chips [data-range]')];
     expect(chips.map(chip => chip.dataset.range)).toEqual(['today', 'yesterday', 'week', 'month', 'year', 'all', 'custom', 'cycle-5h', 'cycle-weekly']);
+    expect(chips.find(chip => chip.dataset.range === 'cycle-5h')!.textContent).toBe('5-hour cycle');
+    expect(chips.find(chip => chip.dataset.range === 'cycle-5h')!.querySelector('.quota-window-badge')).toBeNull();
     expect(chips.find(chip => chip.getAttribute('aria-pressed') === 'true')!.dataset.range).toBe('today');
     chips.find(chip => chip.dataset.range === 'month')!.click();
     expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe('month');
@@ -533,7 +535,8 @@ describe('Settings usage dashboard', () => {
     render({ ...state, accountsBusy: true }); expect(document.querySelector<HTMLButtonElement>('#account-add')!.disabled).toBe(true);
     render({ ...state, accountsError: 'Native CLI rejected sign-in.' }); expect(document.querySelector<HTMLElement>('#accounts-error')!.hidden).toBe(false);
     render({ ...state, managedAccounts: [{ ...profile, status: { ...status, quotaCached: true } }] });
-    expect(document.querySelector('#managed-account-list')!.textContent).toContain('5h · 50% left');
+    expect(document.querySelector('#managed-account-list')!.textContent).toContain('\uE030 · 50% left');
+    expect(document.querySelector('#managed-account-list .quota-window-badge')?.getAttribute('aria-label')).toBe('5h');
     expect(document.querySelector('#managed-account-list .account-checked')!.textContent).toContain('Cached quota');
   });
   it('shows Device fallback and compares reset cycles without assigning unknown token history to an account', () => {

@@ -3,7 +3,7 @@ import { ACCOUNT_PROVIDERS, accountProviderName, isChatAccount, type AccountProv
 import { profileIdentityKey } from '../core/account-profiles';
 import type { UsageDashboardState } from '../core/usage-dashboard';
 import type { ProviderAccountStatus } from '../providers/account-status';
-import { resetSummary } from '../core/quota-status';
+import { compactCountdown, quotaWindowIconLabel } from '../core/quota-status';
 import { uniqueQuotaWindows } from '../core/quota-windows';
 import { uniqueAccountProfiles, accountProfileStatus } from '../core/account-display';
 
@@ -15,12 +15,15 @@ interface Dependencies {
 }
 export function quickQuota(status?: ProviderAccountStatus) {
   const windows = uniqueQuotaWindows(status?.quota?.windows);
-  if (windows?.length) return [...windows.map(window => `${window.label} ${Math.round(Math.max(0, 100 - window.usedPercent) * 10) / 10}% left`), ...(status?.quota?.bankedResets?.availableCount ? [`↻ ${status.quota.bankedResets.availableCount}`] : [])].join(' · ');
+  const now = Date.now();
+  if (windows?.length) return [...windows.map(window => {
+    const quota = `${quotaWindowIconLabel(window.label)} ${Math.round(Math.max(0, 100 - window.usedPercent) * 10) / 10}% left`;
+    return window.resetsAt ? `${quota} · ${window.resetsAt <= now ? 'reset due' : `resets in ${compactCountdown(window.resetsAt, now)}`}` : quota;
+  }), ...(status?.quota?.bankedResets?.availableCount ? [`↻ ${status.quota.bankedResets.availableCount}`] : [])].join(' · ');
   return status?.quota?.credits || status?.quota?.detail || status?.error || (status?.status === 'loading' ? 'Loading quota…' : 'Quota unavailable');
 }
 function quotaDetail(status?: ProviderAccountStatus) {
-  const reset = uniqueQuotaWindows(status?.quota?.windows).filter(window => window.resetsAt).map(window => `${window.label} ${resetSummary(window.resetsAt!)}`).join(' · ');
-  return [status?.quotaCached ? 'Cached quota' : undefined, status?.error, reset].filter(Boolean).join(' · ');
+  return [status?.quotaCached ? 'Cached quota' : undefined, status?.error].filter(Boolean).join(' · ');
 }
 /** Native popup; remains open for quota refresh, switches and live host progress. */
 export class QuickAccounts implements vscode.Disposable {

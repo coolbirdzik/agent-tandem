@@ -1,4 +1,4 @@
-"""Regenerate status-bar glyphs from our provider SVGs and quota meters: python -m pip install fonttools."""
+"""Regenerate status-bar glyphs from provider/badge SVGs and quota meters: python -m pip install fonttools."""
 from math import cos, hypot, pi, sin, tan
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -38,10 +38,11 @@ def capsule(pen, start, end, radius):
 def glyph(provider):
     svg = ET.parse(ROOT / 'media' / f'{provider}.svg').getroot()
     target = TTGlyphPen(None)
-    # SVG's 24px square, flipped to font coordinates, with a 32-unit margin.
-    pen = TransformPen(Cu2QuPen(target, max_err=0.25), (40, 0, 0, -40, 32, 992))
+    # Provider logos have a 32-unit margin; 16px badges carry their own padding.
+    transform = (64, 0, 0, -64, 0, 1024) if provider.startswith('quota-') else (40, 0, 0, -40, 32, 992)
+    pen = TransformPen(Cu2QuPen(target, max_err=0.25), transform)
     for element in svg.iter('{http://www.w3.org/2000/svg}path'):
-        if provider == 'codex':
+        if provider != 'claude':
             parse_path(element.attrib['d'], pen)
         else:
             lines = RecordingPen()
@@ -118,6 +119,7 @@ def quota_level(eighths):
 
 QUOTA_GLYPHS = {f'quota-ring-{n}': (0xE010 + n, quota_ring(n), 1024) for n in range(9)}
 QUOTA_GLYPHS.update({f'quota-level-{n}': (0xE020 + n, quota_level(n), 512) for n in range(9)})
+QUOTA_GLYPHS.update({f'quota-window-{label}': (0xE030 + index, glyph(f'quota-{label}'), 1024) for index, label in enumerate(['5h', '7d'])})
 
 
 font = FontBuilder(1024, isTTF=True)
@@ -136,4 +138,4 @@ font.setupOS2(sTypoAscender=1024, sTypoDescender=0, usWinAscent=1024, usWinDesce
 font.setupPost()
 font.font['head'].created = font.font['head'].modified = 2082844800
 font.font.recalcTimestamp = False
-font.save(ROOT / 'media' / 'provider-icons.ttf')
+font.save(ROOT / 'media' / 'status-bar-icons-filled.ttf')

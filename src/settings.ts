@@ -21,6 +21,7 @@ import { conversationTime, matchesConversation, type ConversationFilter } from '
 import { quotaCycleCharts } from './ui/quota-cycle-charts';
 import { observeQuotaCycleStarts, quotaCycleScope } from './core/quota-cycle-start';
 import { storageUsageLevel, storageSize } from './core/storage-usage';
+import { quotaWindowLabel } from './ui/quota-window-label';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 autoHideScrollbars();
@@ -76,13 +77,16 @@ document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => {
     event.preventDefault(); showTab(DASHBOARD_TABS[(next + DASHBOARD_TABS.length) % DASHBOARD_TABS.length]!, true);
   };
 });
-const RANGE_CHIPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time'], ['custom', 'Custom'], ['cycle-5h', '5h cycle'], ['cycle-weekly', 'Weekly cycle']] as const;
+const RANGE_CHIPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time'], ['custom', 'Custom'], ['cycle-5h', '5-hour cycle'], ['cycle-weekly', 'Weekly cycle']] as const;
 function renderRangeChips() {
   const root = el('range-chips'), value = el<HTMLSelectElement>('filter-range').value;
   if (!root.children.length) for (const [key, label] of RANGE_CHIPS) {
     if (key === 'cycle-5h') { const divider = node('span', undefined, 'range-divider'); divider.setAttribute('aria-hidden', 'true'); root.append(divider); }
     const chip = node('button', label, 'range-chip'); chip.type = 'button'; chip.dataset.range = key;
-    if (key.startsWith('cycle-')) { chip.title = 'Usage of one account between its quota resets'; const icon = node('span', undefined, 'codicon codicon-history'); icon.setAttribute('aria-hidden', 'true'); chip.prepend(icon); }
+    if (key.startsWith('cycle-')) {
+      chip.title = 'Usage of one account between its quota resets';
+      const icon = node('span', undefined, 'codicon codicon-history'); icon.setAttribute('aria-hidden', 'true'); chip.prepend(icon);
+    }
     chip.onclick = () => { const select = el<HTMLSelectElement>('filter-range'); if (select.value !== key) { select.value = key; select.dispatchEvent(new Event('change')); } };
     root.append(chip);
   }
@@ -132,8 +136,8 @@ function renderCycleBar() {
   el<HTMLButtonElement>('cycle-prev').disabled = cycleIndex >= cycles.length - 1;
   el<HTMLButtonElement>('cycle-next').disabled = cycleIndex <= 0;
   el<HTMLButtonElement>('cycle-current').disabled = cycleIndex === 0;
-  if (!account) { title.textContent = `No account for ${window} cycles`; meta.textContent = 'Sign in, or choose an account, to follow its quota cycles.'; return; }
-  if (!cycle) { title.textContent = `No ${window} cycles recorded yet`; meta.textContent = "AgentTandem records a cycle when it reads this account's quota. Refresh quota while you use the account."; return; }
+  if (!account) { title.replaceChildren(quotaWindowLabel(`No account for ${window} cycles`)); meta.textContent = 'Sign in, or choose an account, to follow its quota cycles.'; return; }
+  if (!cycle) { title.replaceChildren(quotaWindowLabel(`No ${window} cycles recorded yet`)); meta.textContent = "AgentTandem records a cycle when it reads this account's quota. Refresh quota while you use the account."; return; }
   const now = Date.now();
   title.textContent = `${resetClock(cycle.from, now)} → ${resetClock(cycle.current ? cycle.resetsAt : cycle.to, now)}`;
   meta.textContent = [cycle.current ? `Current · resets in ${compactCountdown(cycle.resetsAt, now)}` : `${cycleIndex + 1} of ${cycles.length} recorded`,
@@ -147,9 +151,9 @@ el('cycle-current').onclick = () => { cycleIndex = 0; renderUsage(); };
 /** Local tokens and cost, quota and unattributed tokens for the current selection. */
 function renderSummary(filters: UsageFilters, result: ReturnType<typeof usageBreakdown>) {
   const root = el('summary'); root.replaceChildren();
-  const card = (label: string, value: string, detail: string, title?: string) => {
+  const card = (label: string, value: string, detail: string | HTMLElement, title?: string) => {
     const item = node('div', undefined, 'summary-card'), amount = node('strong', value); if (title) amount.title = title;
-    item.append(node('span', label), amount, node('small', detail)); root.append(item); return item;
+    item.append(node('span', label), amount, typeof detail === 'string' ? node('small', detail) : detail); root.append(item); return item;
   };
   card('Tokens', compact(result.totals.total), `${number(result.totals.requests)} requests · Local`, number(result.totals.total));
   card('API equivalent', costLabel(result.cost), 'Estimate · local tokens × API prices', `${result.cost.usd.toFixed(6)} USD`);
@@ -159,10 +163,12 @@ function renderSummary(filters: UsageFilters, result: ReturnType<typeof usageBre
   const windows = (accountId ? dashboardAccountStatus(provider) : state?.accounts?.[provider])?.quota?.windows ?? [];
   if (window && cycle) {
     const live = cycle.current ? windows.find(row => row.label === (window === '5h' ? '5h' : '7d'))?.usedPercent : undefined, used = live ?? cycle.usedPercent;
-    card('Quota used', used === undefined ? '—' : percent(used), `${window} cycle · ${cycle.current ? 'live reading' : 'highest reading'}`);
+    card('Quota used', used === undefined ? '—' : percent(used), quotaWindowLabel(`${window} cycle · ${cycle.current ? 'live reading' : 'highest reading'}`, 'small'));
   } else {
     const tightest = windows.reduce<typeof windows[number] | undefined>((best, row) => !best || row.usedPercent > best.usedPercent ? row : best, undefined);
-    card('Quota left', tightest ? percent(Math.max(0, 100 - tightest.usedPercent)) : '—', tightest ? `${providerName(provider)} ${tightest.label}${tightest.resetsAt ? ` · resets in ${compactCountdown(tightest.resetsAt)}` : ''}` : `${providerName(provider)} quota unavailable`);
+    const detail = tightest ? quotaWindowLabel(`${providerName(provider)} ${tightest.label}`, 'small') : node('small', `${providerName(provider)} quota unavailable`);
+    if (tightest?.resetsAt) detail.append(document.createTextNode(` · resets in ${compactCountdown(tightest.resetsAt)}`));
+    card('Quota left', tightest ? percent(Math.max(0, 100 - tightest.usedPercent)) : '—', detail);
   }
   // A selected account hides its provider's unknown history, so show that beside the account's own total.
   const unknownFilters = accountId ? { ...filters, provider, accountId: UNKNOWN_ACCOUNT } : { ...filters, accountId: UNKNOWN_ACCOUNT };
@@ -621,7 +627,7 @@ function renderAccounts() {
     const windows = node('div', undefined, 'account-windows');
     for (const window of status?.quota?.windows ?? []) {
       const row = node('div', undefined, 'account-window'); row.dataset.low = String(window.usedPercent >= 90);
-      const remaining = Math.max(0, 100 - window.usedPercent), label = node('div', undefined, 'account-window-label'); label.append(node('span', window.label), node('span', `${Math.round(remaining * 10) / 10}% left`));
+      const remaining = Math.max(0, 100 - window.usedPercent), label = node('div', undefined, 'account-window-label'); label.append(quotaWindowLabel(window.label), node('span', `${Math.round(remaining * 10) / 10}% left`));
       const meter = node('progress'); meter.max = 100; meter.value = remaining; meter.setAttribute('aria-label', `${provider} ${window.label} quota remaining`);
       row.append(label, meter); if (window.resetsAt) row.append(node('span', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
       windows.append(row);
@@ -683,7 +689,7 @@ function renderAccountGroups(filters: UsageFilters) {
     const windows = node('div', undefined, 'account-group-windows');
     for (const window of group.status?.quota?.windows ?? []) {
       const row = node('div', undefined, 'account-group-window'), line = node('div');
-      line.append(node('span', window.label), node('strong', `${Math.round((100 - window.usedPercent) * 10) / 10}% left`));
+      line.append(quotaWindowLabel(window.label), node('strong', `${Math.round((100 - window.usedPercent) * 10) / 10}% left`));
       const tick = quotaTicks(group.provider, group.status).find(t => t.windowId === window.id), rate = tick && quotaPace(state?.quotaTicks ?? [], tick).percentPerHour;
       if (rate !== undefined) line.append(node('span', `${number(Math.round(rate * 10) / 10)}% / hour`, 'muted'));
       row.dataset.low = String(window.usedPercent >= 90);
@@ -760,7 +766,7 @@ function renderManagedAccounts() {
     item.append(heading, meta);
     const windows = node('div', undefined, 'managed-account-quota');
     for (const window of profile.status?.quota?.windows ?? []) {
-      const row = node('div'), label = node('span', `${window.label} · ${Math.round((100 - window.usedPercent) * 10) / 10}% left`), meter = node('progress'); meter.max = 100; meter.value = Math.max(0, 100 - window.usedPercent); meter.setAttribute('aria-label', `${profile.label} ${window.label} quota remaining`);
+      const row = node('div'), label = quotaWindowLabel(`${window.label} · ${Math.round((100 - window.usedPercent) * 10) / 10}% left`), meter = node('progress'); meter.max = 100; meter.value = Math.max(0, 100 - window.usedPercent); meter.setAttribute('aria-label', `${profile.label} ${window.label} quota remaining`);
       if (window.resetsAt) label.title = `Resets ${new Date(window.resetsAt).toLocaleString()}`;
       row.append(label, meter);
       const tick = isChatAccount(profile.provider) ? quotaTicks(profile.provider, profile.status).find(t => t.windowId === window.id) : undefined;
@@ -824,7 +830,7 @@ function renderQuotaPace() {
     const long = burn.end - burn.start > 36 * 3600000, span = Math.max(1, burn.end - burn.start), name = provider === 'Claude' ? 'Claude Code' : provider;
     const x = (at: number) => Math.min(1000, Math.max(0, (at - burn.start) / span * 1000)), y = (remaining: number) => 100 - remaining;
     const item = node('article', undefined, 'quota-pace-card'); item.dataset.provider = provider; item.dataset.low = String(beforeReset);
-    const heading = node('div', undefined, 'quota-pace-heading'); heading.append(providerIcon(provider), node('span', `${name} · ${tick.label}`)); item.append(heading);
+    const heading = node('div', undefined, 'quota-pace-heading'); heading.append(providerIcon(provider), quotaWindowLabel(`${name} · ${tick.label}`)); item.append(heading);
     item.append(node('strong', `${percent(burn.remaining)} left`));
     const verdict = node('p', undefined, 'burn-verdict'), icon = node('span', undefined, 'codicon'); icon.setAttribute('aria-hidden', 'true');
     verdict.dataset.state = rate === undefined || early ? 'pending' : beforeReset ? 'over' : 'ok';
@@ -911,7 +917,7 @@ function renderConversations(filters: UsageFilters) {
     const otherKnownAccount = result.accounts.some(row => row.account && row.account.id !== identity?.id);
     const uncertain = conversation.days.some(row => !!row.accountSource && usageBreakdown([row], filters).totals.total > 0);
     if (trend.tokensPerPercent && ((matched && !uncertain) || (trend.source === 'Device' && !otherKnownAccount))) {
-      const estimate = node('span', `≈ ${number(Math.round(t.total / trend.tokensPerPercent * 10) / 10)}% ${trend.label} equivalent`, 'muted');
+      const estimate = quotaWindowLabel(`≈ ${number(Math.round(t.total / trend.tokensPerPercent * 10) / 10)}% ${trend.label} equivalent`, 'span', 'muted');
       estimate.title = `${trend.source} estimate from tokens per 1%. This is not measured per-conversation quota consumption.`; quotaRoot.append(estimate);
     }
   }
@@ -944,7 +950,7 @@ function renderQuotaEstimates() {
       const waiting = baseline ? tokenDelta > 0 && quotaDelta <= 0 ? 'Waiting for quota to increase' : quotaDelta > 0 && tokenDelta <= 0 ? 'Waiting for API tokens to update' : 'Waiting for new usage'
         : meter ? 'API baseline saved · Waiting for new usage' : estimate.reason === 'No tokens attributed to this account in this window' ? 'No tokens recorded this cycle' : estimate.reason;
       const row = node('div', undefined, 'quota-estimate-row'), label = node('div', undefined, 'quota-estimate-label');
-      label.append(node('strong', estimate.label), node('span', estimate.usedPercent === undefined ? '—' : `${estimate.usedPercent}% used`, 'muted')); row.append(label);
+      label.append(quotaWindowLabel(estimate.label, 'strong'), node('span', estimate.usedPercent === undefined ? '—' : `${estimate.usedPercent}% used`, 'muted')); row.append(label);
       if (trend.tokensPerPercent === undefined) {
         const pending = node('p', waiting, 'muted');
         if (baseline) pending.title = `API baseline saved · ${number(tokenDelta)} new tokens · ${number(quotaDelta)} quota percentage points`;
