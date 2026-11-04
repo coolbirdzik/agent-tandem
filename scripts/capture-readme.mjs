@@ -86,7 +86,7 @@ try {
     const all = `${settings}/?accounts=1&range=month`, tab = name => `document.getElementById('tab-${name}').click();`;
     await capture('token-dashboard', `${all}&tab=details`, 1440, 1696);
     await capture('dashboard-cycle', `${settings}/?accounts=1&range=cycle-5h`, 1440, 1180);
-    await captureSection('account-detail', `${settings}/?accounts=1`, 1440, ['#account-detail-bar', '.activity-panel'], `document.querySelector('.account-group-open').click()`, 'accounts');
+    await captureSection('account-detail', `${settings}/?accounts=1`, 1440, ['#account-picker', '.activity-panel'], `document.querySelector('.account-group-open').click()`, 'accounts');
     await captureSection('quota-burn-down', all, 1440, ['#quota-pace'], tab('quota'));
     await captureSection('tokens-per-quota', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], tab('quota'), 'all', true);
     await captureSection('quota-cycle-tokens', all, 1440, ['#quota-estimates > .quota-estimate-provider:first-child'], `${tab('quota')}document.querySelectorAll('#quota-estimates > .quota-estimate-provider:first-child .quota-chart-control select').forEach((select, index) => { select.value = index ? 'capacityTokens' : 'observedTokens'; select.dispatchEvent(new Event('change')); })`, 'all', true);
