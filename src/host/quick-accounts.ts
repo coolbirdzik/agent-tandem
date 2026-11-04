@@ -7,7 +7,7 @@ import { resetSummary } from '../core/quota-status';
 import { uniqueQuotaWindows } from '../core/quota-windows';
 import { uniqueAccountProfiles, accountProfileStatus } from '../core/account-display';
 
-interface Item extends vscode.QuickPickItem { action?: 'switch' | 'all' | 'reset' | 'log' | 'dashboard' | 'manage'; id?: string }
+interface Item extends vscode.QuickPickItem { action?: 'switch' | 'all' | 'reset' | 'log' | 'dashboard'; id?: string }
 interface Dependencies {
   state(): UsageDashboardState; publish(): Promise<void>; refresh(signal: AbortSignal): Promise<void>;
   switch(id: string): Promise<void>; open(page: 'dashboard' | 'accounts'): Promise<void>; report(error: unknown): void;
@@ -32,24 +32,23 @@ export class QuickAccounts implements vscode.Disposable {
   private logOpen = false;
   private generation = 0;
   private readonly refreshButton = { iconPath: new vscode.ThemeIcon('refresh'), tooltip: 'Refresh account quota' };
-  private readonly dashboardButton = { iconPath: new vscode.ThemeIcon('dashboard'), tooltip: 'Open settings' };
-  private readonly manageButton = { iconPath: new vscode.ThemeIcon('settings-gear'), tooltip: 'Manage accounts' };
+  private readonly dashboardButton = { iconPath: new vscode.ThemeIcon('settings-gear'), tooltip: 'Open settings' };
   constructor(private deps: Dependencies) {}
   async show(provider?: AccountProvider) {
     this.provider = provider; this.logOpen = false;
     if (this.picker) { this.update(); this.picker.show(); return; }
     const picker = vscode.window.createQuickPick<Item>(); this.picker = picker;
     picker.matchOnDescription = true; picker.matchOnDetail = true;
-    picker.buttons = [this.dashboardButton, this.manageButton, this.refreshButton];
+    picker.buttons = [this.dashboardButton, this.refreshButton];
     this.subscriptions = [picker.onDidHide(() => this.dispose()),
       picker.onDidTriggerButton(button => {
-        if (button === this.dashboardButton || button === this.manageButton) { const page = button === this.dashboardButton ? 'dashboard' : 'accounts'; this.dispose(); void this.deps.open(page).catch(this.deps.report); }
+        if (button === this.dashboardButton) { this.dispose(); void this.deps.open('dashboard').catch(this.deps.report); }
         else void this.refresh();
       }),
       picker.onDidAccept(() => {
         const item = picker.selectedItems[0];
         if (!item?.action) return;
-        if (item.action === 'dashboard' || item.action === 'manage') { const page = item.action === 'dashboard' ? 'dashboard' : 'accounts'; this.dispose(); void this.deps.open(page).catch(this.deps.report); }
+        if (item.action === 'dashboard') { this.dispose(); void this.deps.open('dashboard').catch(this.deps.report); }
         else if (item.action === 'all') { this.provider = undefined; picker.value = ''; this.update(); }
         else if (item.action === 'log') { this.logOpen = !this.logOpen; this.update(); }
         else if (this.working || this.deps.state().accountsBusy) return;
@@ -130,8 +129,7 @@ export class QuickAccounts implements vscode.Disposable {
     if (state.accountsError || state.accountsNotice) items.push({ label: `$(${state.accountsError ? 'error' : 'check'}) ${state.accountsError || state.accountsNotice}`, alwaysShow: true });
     if (this.provider) items.push({ label: '$(list-selection) Show all accounts', action: 'all', alwaysShow: true });
     items.push({ label: 'Open', kind: vscode.QuickPickItemKind.Separator },
-      { label: '$(dashboard) Open settings', action: 'dashboard', alwaysShow: true },
-      { label: '$(settings-gear) Manage accounts', action: 'manage', alwaysShow: true });
+      { label: '$(settings-gear) Open settings', action: 'dashboard', alwaysShow: true });
     const selected = picker.activeItems[0]; picker.items = items;
     if (selected) { const same = items.find(row => selected.id ? row.id === selected.id : row.label === selected.label); if (same) picker.activeItems = [same]; }
   }

@@ -98,11 +98,11 @@ describe('Quick quota/account popup', () => {
     finish(); await vi.waitFor(() => expect(picker.busy).toBe(false)); expect(picker.items.some((i: any) => i.label.includes('Account switched'))).toBe(true); expect(f.deps.open).not.toHaveBeenCalled();
     picker.accept('Account switched'); expect(picker.items.some((i: any) => i.label.includes('Verifying the new native'))).toBe(true); f.popup.dispose();
   });
-  it('blocks switches during agent work and sends Dashboard/Manage through distinct menu actions', async () => {
+  it('blocks switches during agent work and opens settings from the menu', async () => {
     const f = fixture(); f.state.accountSwitchBlocked = 'Finish the active turn.'; await f.popup.show('Codex');
     expect(f.picker().items.find((i: any) => i.id === 'second').action).toBeUndefined(); f.picker().accept('Work'); expect(f.deps.switch).not.toHaveBeenCalled();
     f.picker().accept('Open settings'); expect(f.deps.open).toHaveBeenCalledWith('dashboard'); expect(f.picker().dispose).toHaveBeenCalledOnce();
-    await f.popup.show(); f.picker().accept('Manage accounts'); expect(f.deps.open).toHaveBeenCalledWith('accounts'); f.popup.dispose();
+    f.popup.dispose();
   });
   it('reuses one popup and does not reopen when hidden during a switch', async () => {
     const f = fixture(); await f.popup.show('Codex'); const picker = f.picker(); await f.popup.show('Claude'); expect(f.picker()).toBe(picker);
