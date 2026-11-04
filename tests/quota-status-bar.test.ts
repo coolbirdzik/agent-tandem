@@ -106,3 +106,8 @@ it('does not rewrite or show quota items again for identical refresh data', () =
   expect(write).toHaveBeenLastCalledWith('$(agent-tandem-claude) $(agent-tandem-quota-window-5h) 75%');
   bar.dispose();
 });
+
+it('shares severity thresholds between the status bar and its hover', async () => {
+  const { quotaUsageTone } = await import('../src/core/quota-status');
+  expect([0, 74.9, 75, 99, 100, 120].map(quotaUsageTone)).toEqual(['healthy', 'healthy', 'warning', 'warning', 'exhausted', 'exhausted']);
+});
