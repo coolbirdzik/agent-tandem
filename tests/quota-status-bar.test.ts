@@ -108,6 +108,6 @@ it('does not rewrite or show quota items again for identical refresh data', () =
 });
 
 it('shares severity thresholds between the status bar and its hover', async () => {
-  const { quotaUsageTone } = await import('../src/core/quota-status');
+  const { quotaUsageTone } = await import('../src/core/quota-status.js');
   expect([0, 74.9, 75, 99, 100, 120].map(quotaUsageTone)).toEqual(['healthy', 'healthy', 'warning', 'warning', 'exhausted', 'exhausted']);
 });
