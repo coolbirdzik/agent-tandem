@@ -51,13 +51,17 @@ export function resetClock(at: number, now = Date.now()) {
 export function resetSummary(at: number, now = Date.now()) {
   return at <= now ? `reset since ${resetClock(at, now)}` : `resets ${resetClock(at, now)} · in ${compactCountdown(at, now)}`;
 }
+/** Shared severity for a quota window so the status bar and its hover agree: exhausted (red), 25% or less left (warning), otherwise healthy. */
+export function quotaUsageTone(usedPercent: number) {
+  return usedPercent >= 100 ? 'exhausted' as const : usedPercent >= 75 ? 'warning' as const : 'healthy' as const;
+}
 export function quotaStatus(state: QuotaState, options: Partial<StatusBarPreferences> = {}) {
   const preferences = statusBarPreferences(options);
   const provider = state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex';
   const status = state.accounts?.[provider], account = status?.account;
   const windows = uniqueQuotaWindows(status?.quota?.windows);
   const remaining = windows.length ? Math.min(...windows.map(window => Math.max(0, 100 - window.usedPercent))) : undefined;
-  const tone = remaining !== undefined ? remaining === 0 ? 'exhausted' : remaining <= 10 ? 'warning' : 'healthy' : status?.status === 'loading' ? 'loading' : 'unavailable';
+  const tone = remaining !== undefined ? quotaUsageTone(100 - remaining) : status?.status === 'loading' ? 'loading' : 'unavailable';
   const visibleWindows = preferences.quotaWindows === 'main' ? windows.slice(0, 2) : windows;
   const left = (window: typeof windows[number]) => Math.max(0, Math.min(100, 100 - window.usedPercent));
   // With quota shown, each reset rides on its own window as a clock countdown instead of repeating labels.

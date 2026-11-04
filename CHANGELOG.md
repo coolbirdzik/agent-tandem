@@ -29,6 +29,7 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Fixed
 
+- The quota status-bar item now turns warning (orange) at 25% or less left and error (red) when exhausted, matching the colors in its hover, instead of waiting until 10% left.
 - Status-bar quota hover opens immediately instead of waiting for the account refresh to finish.
 - Date fields (From / To) and their calendar popup now follow the VS Code light or dark theme instead of always rendering light.
 

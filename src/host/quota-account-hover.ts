@@ -3,7 +3,7 @@ import type { UsageDashboardState } from '../core/usage-dashboard';
 import type { ConversationProvider } from '../providers/conversations';
 import { profileIdentityKey } from '../core/account-profiles';
 import { bankedResetCountdown } from '../core/banked-resets';
-import { compactCountdown, quotaWindowIconLabel, resetClock, resetSummary } from '../core/quota-status';
+import { compactCountdown, quotaWindowIconLabel, resetClock, resetSummary, quotaUsageTone } from '../core/quota-status';
 import { storageSize, storageUsageLevel } from '../core/storage-usage';
 import { uniqueQuotaWindows } from '../core/quota-windows';
 import { uniqueAccountProfiles, accountProfileStatus } from '../core/account-display';
@@ -15,7 +15,7 @@ const link = (label: string, command: string, args: unknown[] = [], title = '') 
 const colors = { blue: 'charts-blue', orange: 'charts-orange', green: 'charts-green', yellow: 'editorWarning-foreground', red: 'errorForeground', muted: 'descriptionForeground' };
 /** Only static theme color tokens enter HTML; all account/user text is escaped. */
 const color = (text: string, tone: keyof typeof colors) => `<span style="color:var(--vscode-${colors[tone]});">${text}</span>`;
-const quotaTone = (used: number) => used >= 100 ? 'red' : used >= 75 ? 'yellow' : 'green';
+const quotaTone = (used: number) => ({ exhausted: 'red', warning: 'yellow', healthy: 'green' } as const)[quotaUsageTone(used)];
 const remainingOf = (used: number) => Math.round(Math.max(0, 100 - used) * 10) / 10;
 const chip = (text: string) => `<span style="color:var(--vscode-descriptionForeground);background-color:var(--vscode-editor-inactiveSelectionBackground);border-radius:4px;">&nbsp;${text}&nbsp;</span>`;
 // Native hover CSS cannot be overridden; h5 + muted caps mirrors VS Code's own view section headers.
