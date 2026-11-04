@@ -14,6 +14,8 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Changed
 
+- Account picker groups each quota period's percentage left with its reset countdown and omits exact reset times.
+- Show five-hour and weekly quota labels as flat, filled badges with transparent **5h** and **7d** lettering across the status bar, quota hover, account picker, chat, account cards and dashboard. Updates no longer leave these badges blank because of a cached font. Status-bar Text style keeps plain labels.
 - Dashboard account filter is now a sticky picker in the top-right corner. Each account shows its provider logo, email, provider name and account details; **View usage** on an account card still selects it there. The "All accounts" back bar under the account view is removed — pick "All accounts" in the picker instead.
 - Rename "Settings & dashboard", "Open dashboard" and the "Open Settings and Usage Dashboard" command to "Settings" / "Open settings" across the panel menu, status bar hover, account popup and docs.
 - Settings tab bar now scrolls horizontally at medium widths instead of wrapping onto a second line.

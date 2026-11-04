@@ -3,7 +3,7 @@ import type { UsageDashboardState } from '../core/usage-dashboard';
 import type { ConversationProvider } from '../providers/conversations';
 import { profileIdentityKey } from '../core/account-profiles';
 import { bankedResetCountdown } from '../core/banked-resets';
-import { compactCountdown, resetClock, resetSummary } from '../core/quota-status';
+import { compactCountdown, quotaWindowIconLabel, resetClock, resetSummary } from '../core/quota-status';
 import { storageSize, storageUsageLevel } from '../core/storage-usage';
 import { uniqueQuotaWindows } from '../core/quota-windows';
 import { uniqueAccountProfiles, accountProfileStatus } from '../core/account-display';
@@ -45,7 +45,7 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
   const windows = uniqueQuotaWindows(status?.quota?.windows);
   if (windows.length) md.appendMarkdown(table(...windows.map(window => {
     const remaining = remainingOf(window.usedPercent), tone = quotaTone(window.usedPercent);
-    return row(`<td width="28"><strong>${escape(window.label)}</strong></td>`, `<td>${meter(remaining, tone)}</td>`,
+    return row(`<td width="28"><strong>${quotaWindowIconLabel(window.label, escape)}</strong></td>`, `<td>${meter(remaining, tone)}</td>`,
       `<td align="right">${color(`<strong>${remaining}%</strong>`, tone)} ${color('left', 'muted')}</td>`,
       `<td align="right">${window.resetsAt ? color(`$(clock) ${window.resetsAt > Date.now() ? `${resetClock(window.resetsAt)} · ${compactCountdown(window.resetsAt)}` : 'reset'}`, 'muted') : color('—', 'muted')}</td>`);
   })));
@@ -76,7 +76,7 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
       const saved = accountProfileStatus(profile), identity = saved?.account || profile.identity, quota = uniqueQuotaWindows(saved?.quota?.windows);
       const email = identity?.email && profile.label.trim().toLowerCase() !== identity.email.trim().toLowerCase() ? escape(identity.email) : '';
       // One line per window so each reset time stays readable; the action keeps its own right-aligned column.
-      const quotaLines = quota.slice(0, 2).map(window => `${color(`${escape(window.label)} ${remainingOf(window.usedPercent)}% left`, quotaTone(window.usedPercent))}${window.resetsAt ? color(` · $(clock) ${resetSummary(window.resetsAt)}`, 'muted') : ''}`);
+      const quotaLines = quota.slice(0, 2).map(window => `${color(`${quotaWindowIconLabel(window.label, escape)} ${remainingOf(window.usedPercent)}% left`, quotaTone(window.usedPercent))}${window.resetsAt ? color(` · $(clock) ${resetSummary(window.resetsAt)}`, 'muted') : ''}`);
       const detail = [email, saved?.quotaCached ? '$(history) cached' : '', saved?.error ? escape(saved.error) : ''].filter(Boolean).join(color(' · ', 'muted'));
       const lines = [...(quotaLines.length ? quotaLines : [color('Quota unavailable', 'muted')]), ...(detail ? [color(detail, 'muted')] : [])].join('<br>');
       const action = busy ? color('$(lock) Unavailable', 'muted') : link('<span style="color:var(--vscode-button-foreground);background-color:var(--vscode-button-background);border-radius:4px;">&nbsp;&nbsp;Switch&nbsp;&nbsp;</span>', 'agentTandem.quickSwitchAccount', [profile.id]);

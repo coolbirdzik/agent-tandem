@@ -28,6 +28,28 @@ function fixture() {
   const popup = new QuickAccounts(deps); return { state, deps, popup, picker: () => host.pickers.at(-1)! };
 }
 describe('Quick quota/account popup', () => {
+  it('groups each period with its reset countdown for saved and native accounts', async () => {
+    const now = Date.now(), clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    const f = fixture();
+    try {
+      const status = f.state.accounts!.Codex!;
+      status.quota!.windows = [
+        { id: '5h', label: '5h', usedPercent: 77, resetsAt: now + 78 * 60000 },
+        { id: '7d', label: '7d', usedPercent: 44, resetsAt: now + 34 * 3600000 },
+      ];
+      status.quota!.bankedResets = { availableCount: 3 };
+      const expected = '$(agent-tandem-quota-window-5h) 23% left · resets in 1h18m · $(agent-tandem-quota-window-7d) 56% left · resets in 1d10h · ↻ 3';
+      await f.popup.show('Codex');
+      expect(f.picker().items.find((row: any) => row.id === 'first').detail).toBe(expected);
+      f.state.managedAccounts = [];
+      f.popup.update();
+      expect(f.picker().items.find((row: any) => row.label.includes('one@example.test')).detail).toBe(expected);
+      status.quota!.windows![0]!.resetsAt = now - 60000;
+      expect(quickQuota(status)).toContain('23% left · reset due');
+      delete status.quota!.windows![0]!.resetsAt;
+      expect(quickQuota(status)).toContain('23% left · $(agent-tandem-quota-window-7d)');
+    } finally { f.popup.dispose(); clock.mockRestore(); }
+  });
   it('shows one saved row per identity and uses its current quota instead of a stale duplicate', async () => {
     const f = fixture(), work = f.state.managedAccounts![1]!;
     f.state.managedAccounts!.push({ ...work, id: 'old-copy', label: 'Old Work', status: { ...work.status!, quotaCached: true, updatedAt: 1, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }] } } });
@@ -41,7 +63,7 @@ describe('Quick quota/account popup', () => {
     for (const phase of ['loading', 'error'] as const) {
       f.state.accounts!.Codex = { ...previous, status: phase, quotaCached: true, updatedAt: Date.now() - 3600000, ...(phase === 'error' ? { error: 'Offline' } : {}) };
       await f.popup.show('Codex'); const row = f.picker().items.find((i: any) => i.id === 'first');
-      expect(row.detail).toContain('5h 75% left'); expect(row.detail).toContain('Cached quota');
+      expect(row.detail).toContain('$(agent-tandem-quota-window-5h) 75% left'); expect(row.detail).toContain('Cached quota');
       expect(row.description).toContain('one@example.test');
       if (phase === 'error') expect(row.detail).toContain('Offline');
       expect(f.picker().items.find((i: any) => i.id === 'second').action).toBe('switch');
@@ -82,7 +104,7 @@ describe('Quick quota/account popup', () => {
   it('shows account quota immediately, prioritizes the clicked provider and opens no dashboard on click or refresh', async () => {
     const f = fixture(); await f.popup.show('Cursor'); const picker = f.picker();
     expect(picker.items[0].label).toBe('Cursor'); expect(picker.items.some((i: any) => i.id === 'second')).toBe(false);
-    picker.accept('Show all accounts'); expect(picker.items.find((i: any) => i.id === 'second').detail).toContain('5h 38.5% left');
+    picker.accept('Show all accounts'); expect(picker.items.find((i: any) => i.id === 'second').detail).toContain('$(agent-tandem-quota-window-5h) 38.5% left');
     expect(picker.items.find((i: any) => i.id === 'first').action).toBeUndefined(); expect(f.deps.open).not.toHaveBeenCalled(); expect(f.deps.refresh).toHaveBeenCalledOnce();
     picker.refresh(); await vi.waitFor(() => expect(f.deps.refresh).toHaveBeenCalledTimes(2)); expect(f.deps.open).not.toHaveBeenCalled();
     f.popup.dispose();

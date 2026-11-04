@@ -1,0 +1,2 @@
+@font-face{font-family:'AgentTandem Providers';src:url('status-bar-icons-filled.ttf') format('truetype')}
+.quota-window-badge{display:inline-block;flex:none;width:16px;height:16px;font:normal 16px/1 'AgentTandem Providers';vertical-align:-3px}

@@ -65,140 +65,154 @@
       "agent-tandem-codex": {
         "description": "AgentTandem Codex provider logo",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E001"
         }
       },
       "agent-tandem-claude": {
         "description": "AgentTandem Claude Code provider logo",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E002"
+        }
+      },
+      "agent-tandem-quota-window-5h": {
+        "description": "AgentTandem boxed five-hour quota window",
+        "default": {
+          "fontPath": "./media/status-bar-icons-filled.ttf",
+          "fontCharacter": "\\E030"
+        }
+      },
+      "agent-tandem-quota-window-7d": {
+        "description": "AgentTandem boxed seven-day quota window",
+        "default": {
+          "fontPath": "./media/status-bar-icons-filled.ttf",
+          "fontCharacter": "\\E031"
         }
       },
       "agent-tandem-quota-ring-0": {
         "description": "AgentTandem quota ring at 0/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E010"
         }
       },
       "agent-tandem-quota-ring-1": {
         "description": "AgentTandem quota ring at 1/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E011"
         }
       },
       "agent-tandem-quota-ring-2": {
         "description": "AgentTandem quota ring at 2/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E012"
         }
       },
       "agent-tandem-quota-ring-3": {
         "description": "AgentTandem quota ring at 3/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E013"
         }
       },
       "agent-tandem-quota-ring-4": {
         "description": "AgentTandem quota ring at 4/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E014"
         }
       },
       "agent-tandem-quota-ring-5": {
         "description": "AgentTandem quota ring at 5/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E015"
         }
       },
       "agent-tandem-quota-ring-6": {
         "description": "AgentTandem quota ring at 6/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E016"
         }
       },
       "agent-tandem-quota-ring-7": {
         "description": "AgentTandem quota ring at 7/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E017"
         }
       },
       "agent-tandem-quota-ring-8": {
         "description": "AgentTandem quota ring at 8/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E018"
         }
       },
       "agent-tandem-quota-level-0": {
         "description": "AgentTandem quota column at 0/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E020"
         }
       },
       "agent-tandem-quota-level-1": {
         "description": "AgentTandem quota column at 1/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E021"
         }
       },
       "agent-tandem-quota-level-2": {
         "description": "AgentTandem quota column at 2/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E022"
         }
       },
       "agent-tandem-quota-level-3": {
         "description": "AgentTandem quota column at 3/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E023"
         }
       },
       "agent-tandem-quota-level-4": {
         "description": "AgentTandem quota column at 4/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E024"
         }
       },
       "agent-tandem-quota-level-5": {
         "description": "AgentTandem quota column at 5/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E025"
         }
       },
       "agent-tandem-quota-level-6": {
         "description": "AgentTandem quota column at 6/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E026"
         }
       },
       "agent-tandem-quota-level-7": {
         "description": "AgentTandem quota column at 7/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E027"
         }
       },
       "agent-tandem-quota-level-8": {
         "description": "AgentTandem quota column at 8/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E028"
         }
       }

@@ -10,7 +10,7 @@ const report = path.join(runtime, 'report.json');
 const light = process.argv.includes('--light'), suffix = light ? '-light' : '';
 await mkdir(fixture, { recursive: true }); await mkdir(path.join(profile, 'User'), { recursive: true }); await mkdir(path.join(root, 'artifacts'), { recursive: true });
 const manifest = JSON.parse(await readFile('package.json', 'utf8'));
-await mkdir(path.join(fixture, 'media'), { recursive: true }); await copyFile('media/provider-icons.ttf', path.join(fixture, 'media', 'provider-icons.ttf'));
+await mkdir(path.join(fixture, 'media'), { recursive: true }); await copyFile('media/status-bar-icons-filled.ttf', path.join(fixture, 'media', 'status-bar-icons-filled.ttf'));
 await writeFile(path.join(fixture, 'package.json'), JSON.stringify({ name: 'quota-hover-fixture', publisher: 'agent-tandem-tests', version: '1.0.0', engines: { vscode: '^1.100.0' }, enabledApiProposals: ['statusBarItemTooltip'], main: './main.cjs', activationEvents: ['onStartupFinished'], contributes: { icons: manifest.contributes.icons } }));
 await writeFile(path.join(profile, 'User', 'settings.json'), JSON.stringify({ 'window.restoreWindows': 'none', 'workbench.startupEditor': 'none', 'window.zoomLevel': 0, 'workbench.colorTheme': light ? 'Default Light Modern' : 'Default Dark Modern', 'extensions.autoCheckUpdates': false, 'agentTandem.statusBarProviders': 'codex', 'agentTandem.statusBarFields': ['quota'] }));
 await build({ entryPoints: ['tests/extension/quota-hover.ts'], outfile: path.join(fixture, 'main.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['vscode'] });
@@ -24,12 +24,19 @@ try {
   const page = await until(async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(page => page.url.includes('workbench')), 'renderer');
   ws = new WebSocket(page.webSocketDebuggerUrl); const pending = new Map(); let id = 0;
   ws.onmessage = event => { const value = JSON.parse(String(event.data)), entry = pending.get(value.id); if (!entry) return; pending.delete(value.id); value.error ? entry.reject(value.error) : entry.resolve(value.result); };
+  ws.addEventListener('close', () => { for (const entry of pending.values()) entry.reject(new Error('The isolated test window closed.')); pending.clear(); });
   await new Promise((resolve, reject) => { ws.addEventListener('open', resolve, { once: true }); ws.addEventListener('error', reject, { once: true }); });
   const call = (method, params = {}) => new Promise((resolve, reject) => { const next = ++id; pending.set(next, { resolve, reject }); ws.send(JSON.stringify({ id: next, method, params })); });
-  const evaluate = async expression => { const data = await call('Runtime.evaluate', { expression, returnByValue: true }); if (data.exceptionDetails) throw new Error(JSON.stringify(data.exceptionDetails)); return data.result.value; };
+  const evaluate = async expression => { const data = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (data.exceptionDetails) throw new Error(JSON.stringify(data.exceptionDetails)); return data.result.value; };
   await until(async () => JSON.parse(await readFile(report, 'utf8')).ready, 'fixture');
   const statusSelector = `.statusbar-item[id*="agentTandem.quota.codex"]`;
   await until(() => evaluate(`!!document.querySelector(${JSON.stringify(statusSelector)})`), 'status item');
+  // Exercise Chromium's loaded font, including a stale font with empty .notdef glyphs.
+  for (const label of ['5h', '7d']) {
+    const selector = `${statusSelector} .codicon-agent-tandem-quota-window-${label}`;
+    const painted = await evaluate(`(async()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return false;const s=getComputedStyle(e,'::before'),text=String.fromCodePoint(${label === '5h' ? 0xE030 : 0xE031}),font='16px '+s.fontFamily;await document.fonts.load(font,text);const c=document.createElement('canvas');c.width=c.height=32;const ctx=c.getContext('2d');ctx.font=font;ctx.fillText(text,0,20);return [...ctx.getImageData(0,0,32,32).data].some((value,index)=>index%4===3&&value>0)})()`);
+    assert.equal(painted, true, `${label} badge paints pixels with the font loaded by VS Code`);
+  }
   const hover = async () => {
     await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 200, y: 100 }); await pause(250);
     const point = await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(statusSelector)});if(!e)return;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
@@ -45,6 +52,8 @@ try {
   await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('hover-check'), 'lazy hover quota check');
   const text = await evaluate(`document.querySelector('.monaco-hover').innerText`); assert.match(text, /Reset usage/); assert.match(text, /Work/); assert.match(text, /24% left/);
   assert.match(text, /84% left/, 'Hover renders the updated saved-account quota');
+  assert.equal(await evaluate(`document.querySelectorAll('.monaco-hover .codicon-agent-tandem-quota-window-5h').length`), 2, 'Current and saved five-hour windows use badges');
+  assert.equal(await evaluate(`document.querySelectorAll('.monaco-hover .codicon-agent-tandem-quota-window-7d').length`), 1, 'Weekly hover window uses its badge');
   assert.equal(text.match(/24% left/g)?.length, 1, 'Current quota appears once');
   assert.doesNotMatch(text, /Work old copy|0% left/, 'Stale duplicate quota and saved profile are omitted');
   assert.match(text, /Extension storage/i); assert.match(text, /1.4 GB/); assert.match(text, /Above 1 GB/);
@@ -72,6 +81,7 @@ try {
   await hover(); assert.match(await evaluate(`document.querySelector('.monaco-hover').innerText`), /1 earned reset/);
   await clickLink('Search');
   await until(() => evaluate(`document.querySelector('.quick-input-widget')?.innerText.includes('Open settings')`), 'search popup with dashboard action');
+  assert.ok(await evaluate(`document.querySelectorAll('.quick-input-widget .codicon-agent-tandem-quota-window-5h').length > 0`), 'Native account picker renders quota badges');
   assert.doesNotMatch(await evaluate(`document.querySelector('.quick-input-widget').innerText`), /Work old copy/, 'Search popup also deduplicates saved identities');
   const popup = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(path.join(root, 'artifacts', `quick-accounts-native${suffix}.png`), Buffer.from(popup.data, 'base64'));
   const result = { ...(JSON.parse(await readFile(report, 'utf8'))), nativeHoverVerified: true, storageWarningVerified: true, colors: palette, realCreditsConsumed: false };

@@ -47,7 +47,8 @@ describe('Single tandem webview', () => {
     expect(document.querySelector('.message')).toBe(message);
     expect(document.querySelector('.history-filters button span')).toBe(filter);
     expect(document.querySelector('.account-summary')).toBe(summary);
-    expect(summary.textContent).toContain('5h 80%');
+    expect(summary.textContent).toContain('\uE030 80%');
+    expect(summary.querySelector('.quota-window-badge')?.getAttribute('aria-label')).toBe('5h');
     expect(document.querySelector('.account-popover progress')).toBe(meter);
     expect(document.querySelector('[data-account-refresh]')).toBe(refresh);
     expect(refresh.disabled).toBe(true);
@@ -63,7 +64,7 @@ describe('Single tandem webview', () => {
     render({ ...value, accounts: { Claude: { ...value.accounts!.Claude!, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 30 }] } } } });
     expect(document.querySelector('.account-summary')).toBe(summary);
     expect(summary.querySelector('.quota-ring-value')).toBe(ring);
-    expect(summary.textContent).toContain('5h 70%');
+    expect(summary.textContent).toContain('\uE030 70%');
     expect(ring!.getAttribute('stroke-dasharray')).toBe('70 100');
     mutations.disconnect(); window.getSelection()!.removeAllRanges();
   });
@@ -387,7 +388,8 @@ describe('Single tandem webview', () => {
     render(value);
     expect(document.querySelectorAll('[data-account-provider]')).toHaveLength(1);
     expect(document.querySelector('[data-account-provider="Claude"]')).toBeNull();
-    expect(document.querySelector('#provider-accounts')!.textContent).toContain('5h 75%');
+    expect(document.querySelector('#provider-accounts')!.textContent).toContain('\uE030 75%');
+    expect([...document.querySelectorAll('#provider-accounts .quota-window-badge')].map(badge => badge.getAttribute('aria-label'))).toEqual(['5h', '7d']);
     expect(document.querySelector('.quota-ring-value')!.getAttribute('stroke-dasharray')).toBe('75 100');
     expect(document.querySelector('.quota-mini')!.getAttribute('data-level')).toBe('healthy');
     expect(document.querySelector('#provider-accounts')!.parentElement).toBe(document.querySelector('#chat-context')!.parentElement);
@@ -407,7 +409,7 @@ describe('Single tandem webview', () => {
     expect(popover.hidden).toBe(true);
     expect(document.querySelectorAll('[data-account-provider]')).toHaveLength(1);
     expect(document.querySelector('[data-account-provider="Codex"]')).toBeNull();
-    expect(document.querySelector('#provider-accounts')!.textContent).toContain('5h 0%');
+    expect(document.querySelector('#provider-accounts')!.textContent).toContain('\uE030 0%');
     document.querySelector<HTMLButtonElement>('[data-account-provider="Claude"]')!.click();
     expect(popover.textContent).toContain('claude@example.test');
     render({ ...value, conversation: undefined, composeProvider: 'Codex' });

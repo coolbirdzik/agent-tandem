@@ -9,13 +9,28 @@ function quotaProgress(remaining: number) {
   const full = Math.floor(steps / 8), partial = '▏▎▍▌▋▊▉'[steps % 8 - 1] ?? '';
   return `${('█'.repeat(full) + partial).padEnd(5, '░')} ${Math.round(remaining * 10) / 10}%`;
 }
-/** Ring and column product icons in media/provider-icons.ttf, one glyph per eighth of remaining quota. */
+/** Ring and column product icons in media/status-bar-icons-filled.ttf, one glyph per eighth of remaining quota. */
 export const QUOTA_GLYPHS = { ring: 0xE010, level: 0xE020 } as const;
+export const QUOTA_WINDOW_GLYPHS = { '5h': 0xE030, '7d': 0xE031 } as const;
+/** Only known quota-window names become icons; provider-specific names stay readable. */
+export function quotaWindowIcon(label: string) {
+  return Object.hasOwn(QUOTA_WINDOW_GLYPHS, label) ? `$(agent-tandem-quota-window-${label})` : undefined;
+}
+/** Preserve model/limit context around period names, with optional escaping for native hover HTML. */
+export function quotaWindowIconLabel(label: string, text: (part: string) => string = part => part) {
+  return label.split(/\b(5h|7d)\b/).map(part => quotaWindowIcon(part) ?? text(part)).join('');
+}
+/** Keep unfamiliar windows and verbose text readable; compact styles use boxed SVG-derived badges. */
+function quotaWindowLabel(label: string, style: StatusBarPreferences['style']) {
+  return style !== 'text' ? quotaWindowIconLabel(label) : label;
+}
 function quotaGlyph(kind: keyof typeof QUOTA_GLYPHS, remaining: number) {
   return `$(agent-tandem-quota-${kind}-${remaining <= 0 ? 0 : remaining >= 100 ? 8 : Math.max(1, Math.min(7, Math.round(remaining / 12.5)))})`;
 }
 /** Font character for a quota product icon reference, for webviews that cannot render `$(…)`. */
 export function quotaGlyphCharacter(reference: string) {
+  const window = /^\$\(agent-tandem-quota-window-(5h|7d)\)$/.exec(reference);
+  if (window) return String.fromCodePoint(QUOTA_WINDOW_GLYPHS[window[1] as keyof typeof QUOTA_WINDOW_GLYPHS]);
   const match = /^\$\(agent-tandem-quota-(ring|level)-([0-8])\)$/.exec(reference);
   return match ? String.fromCodePoint(QUOTA_GLYPHS[match[1] as keyof typeof QUOTA_GLYPHS] + Number(match[2])) : undefined;
 }
@@ -52,14 +67,14 @@ export function quotaStatus(state: QuotaState, options: Partial<StatusBarPrefere
   // Minimal: one column per window and only the tightest percentage (and its reset); hover names each window.
   const summary = preferences.style === 'minimal' ? tightest ? `${visibleWindows.map(window => quotaGlyph('level', left(window))).join('')} ${Math.round(left(tightest))}%${merged && reset(tightest) ? ` ${reset(tightest)}` : ''}` : ''
     : visibleWindows.map(window => {
-      const remaining = left(window), quota = `${window.label} ${preferences.style === 'progress' ? quotaProgress(remaining) : preferences.style === 'rings' ? `${quotaGlyph('ring', remaining)} ${Math.round(remaining)}%` : `${Math.round(remaining)}%`}`;
+      const remaining = left(window), quota = `${quotaWindowLabel(window.label, preferences.style)} ${preferences.style === 'progress' ? quotaProgress(remaining) : preferences.style === 'rings' ? `${quotaGlyph('ring', remaining)} ${Math.round(remaining)}%` : `${Math.round(remaining)}%`}`;
       return merged && reset(window) ? `${quota} ${reset(window)}` : quota;
     }).join(' · ');
   const resets = status?.quota?.bankedResets;
   const name = provider === 'Claude' ? 'Claude Code' : provider, parts: string[] = [];
   for (const field of preferences.fields) {
     if (field === 'quota') parts.push(summary || status?.quota?.credits || (status?.status === 'loading' ? '…' : 'Quota —'));
-    if (field === 'reset' && !merged) parts.push(visibleWindows.filter(window => window.resetsAt).map(window => preferences.style === 'text' ? `${window.label} reset ${bankedResetCountdown(window.resetsAt!).replace(/ left$/, '')}` : `${window.label} ${reset(window)}`).join(' · ') || 'Reset —');
+    if (field === 'reset' && !merged) parts.push(visibleWindows.filter(window => window.resetsAt).map(window => preferences.style === 'text' ? `${window.label} reset ${bankedResetCountdown(window.resetsAt!).replace(/ left$/, '')}` : `${quotaWindowLabel(window.label, preferences.style)} ${reset(window)}`).join(' · ') || 'Reset —');
     if (field === 'bankedResets' && resets?.availableCount) parts.push(preferences.style === 'text' ? `${resets.availableCount} banked reset${resets.availableCount === 1 ? '' : 's'}` : `↻ ${resets.availableCount}`);
     if (field === 'account') parts.push(account?.email || account?.method || 'Account —');
     if (field === 'plan') parts.push(account?.plan || 'Plan —');
