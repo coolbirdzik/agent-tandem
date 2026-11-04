@@ -28,4 +28,4 @@ Stop the external writer before final decisions. Save dirty buffers before rever
 
 Conversation groups require successful edit-tool evidence that reproduces the saved change. Codex patches called directly or through static, awaited `exec` calls are supported. Shell/script writes and edits without a complete content match remain unassigned; this does not mean they were necessarily manual. Unmatched saved captures are checked again when native history refreshes.
 
-Open **Settings & dashboard → Storage** to see where snapshots are stored and preview cleanup of unused data. Pending Revert, tracking baselines, checkpoints and Undo are protected by cleanup.
+Open **Settings → Storage** to see where snapshots are stored and preview cleanup of unused data. Pending Revert, tracking baselines, checkpoints and Undo are protected by cleanup.

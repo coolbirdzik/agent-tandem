@@ -270,7 +270,7 @@
       },
       {
         "command": "agentTandem.openSettings",
-        "title": "AgentTandem: Open Settings and Usage Dashboard",
+        "title": "AgentTandem: Open Settings",
         "icon": "$(dashboard)"
       },
       {
@@ -834,7 +834,7 @@
           {
             "id": "usage",
             "title": "4. Check account, quota and token usage",
-            "description": "See where every number comes from: API, Local or Estimate.\n[Open dashboard](command:agentTandem.openSettings)",
+            "description": "See where every number comes from: API, Local or Estimate.\n[Open settings](command:agentTandem.openSettings)",
             "media": {
               "markdown": "docs/onboarding/usage.md"
             },

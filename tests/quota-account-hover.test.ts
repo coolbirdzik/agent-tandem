@@ -37,7 +37,7 @@ describe('Account status hover menu', () => {
     expect(menu.value).toContain('command:agentTandem.quickSwitchAccount?%5B%22two%22%5D');
     expect(menu.value).not.toContain('quickSwitchAccount?%5B%22one%22');
     expect(menu.value).toContain('command:agentTandem.resetCodexUsage'); expect(menu.value).toContain('>Reset usage</a>');
-    expect(menu.value).toContain('uses 1 of 2'); expect(menu.value).toContain('Open dashboard');
+    expect(menu.value).toContain('uses 1 of 2'); expect(menu.value).toContain('Open settings');
     expect(menu.isTrusted).toEqual({ enabledCommands: expect.arrayContaining(['agentTandem.openSettings', 'agentTandem.resetCodexUsage']) });
     expect(menu.supportHtml).toBe(true);
     expect(menu.value).toContain('color:var(--vscode-editorWarning-foreground)');

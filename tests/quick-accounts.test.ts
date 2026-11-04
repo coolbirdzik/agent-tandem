@@ -101,7 +101,7 @@ describe('Quick quota/account popup', () => {
   it('blocks switches during agent work and sends Dashboard/Manage through distinct menu actions', async () => {
     const f = fixture(); f.state.accountSwitchBlocked = 'Finish the active turn.'; await f.popup.show('Codex');
     expect(f.picker().items.find((i: any) => i.id === 'second').action).toBeUndefined(); f.picker().accept('Work'); expect(f.deps.switch).not.toHaveBeenCalled();
-    f.picker().accept('Open dashboard'); expect(f.deps.open).toHaveBeenCalledWith('dashboard'); expect(f.picker().dispose).toHaveBeenCalledOnce();
+    f.picker().accept('Open settings'); expect(f.deps.open).toHaveBeenCalledWith('dashboard'); expect(f.picker().dispose).toHaveBeenCalledOnce();
     await f.popup.show(); f.picker().accept('Manage accounts'); expect(f.deps.open).toHaveBeenCalledWith('accounts'); f.popup.dispose();
   });
   it('reuses one popup and does not reopen when hidden during a switch', async () => {

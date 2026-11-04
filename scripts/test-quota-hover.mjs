@@ -34,7 +34,7 @@ try {
     await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 200, y: 100 }); await pause(250);
     const point = await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(statusSelector)});if(!e)return;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
     assert.ok(point, 'Codex quota status visible'); await call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
-    await until(() => evaluate(`document.querySelector('.monaco-hover')?.textContent?.includes('Open dashboard')`), 'hover menu');
+    await until(() => evaluate(`document.querySelector('.monaco-hover')?.textContent?.includes('Open settings')`), 'hover menu');
   };
   const clickLink = async name => {
     const point = await evaluate(`(()=>{const e=[...document.querySelectorAll('.monaco-hover a')].find(e=>e.textContent.includes(${JSON.stringify(name)}));if(!e)return;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
@@ -61,7 +61,7 @@ try {
   const hoverRect = await evaluate(`(()=>{const r=document.querySelector('.monaco-hover').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,scale:1}})()`);
   const crop = await call('Page.captureScreenshot', { format: 'png', clip: hoverRect }); await mkdir(path.join(root, 'media', 'screenshots'), { recursive: true });
   await writeFile(path.join(root, 'artifacts', `account-hover${suffix}.png`), Buffer.from(crop.data, 'base64'));
-  await clickLink('Open dashboard'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('dashboard'), 'dashboard link');
+  await clickLink('Open settings'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('dashboard'), 'dashboard link');
   await hover(); await clickLink('Manage storage'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('storage'), 'storage link');
   for (const [label, scope] of [['Clean accepted', 'accepted'], ['Clean all', 'all']]) {
     await hover(); await clickLink(label);
@@ -71,7 +71,7 @@ try {
   await hover(); await clickLink('Reset usage'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('reset'), 'reset link');
   await hover(); assert.match(await evaluate(`document.querySelector('.monaco-hover').innerText`), /1 earned reset/);
   await clickLink('Search');
-  await until(() => evaluate(`document.querySelector('.quick-input-widget')?.innerText.includes('Open dashboard')`), 'search popup with dashboard action');
+  await until(() => evaluate(`document.querySelector('.quick-input-widget')?.innerText.includes('Open settings')`), 'search popup with dashboard action');
   assert.doesNotMatch(await evaluate(`document.querySelector('.quick-input-widget').innerText`), /Work old copy/, 'Search popup also deduplicates saved identities');
   const popup = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(path.join(root, 'artifacts', `quick-accounts-native${suffix}.png`), Buffer.from(popup.data, 'base64'));
   const result = { ...(JSON.parse(await readFile(report, 'utf8'))), nativeHoverVerified: true, storageWarningVerified: true, colors: palette, realCreditsConsumed: false };

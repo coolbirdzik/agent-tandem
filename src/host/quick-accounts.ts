@@ -32,7 +32,7 @@ export class QuickAccounts implements vscode.Disposable {
   private logOpen = false;
   private generation = 0;
   private readonly refreshButton = { iconPath: new vscode.ThemeIcon('refresh'), tooltip: 'Refresh account quota' };
-  private readonly dashboardButton = { iconPath: new vscode.ThemeIcon('dashboard'), tooltip: 'Open dashboard' };
+  private readonly dashboardButton = { iconPath: new vscode.ThemeIcon('dashboard'), tooltip: 'Open settings' };
   private readonly manageButton = { iconPath: new vscode.ThemeIcon('settings-gear'), tooltip: 'Manage accounts' };
   constructor(private deps: Dependencies) {}
   async show(provider?: AccountProvider) {
@@ -130,7 +130,7 @@ export class QuickAccounts implements vscode.Disposable {
     if (state.accountsError || state.accountsNotice) items.push({ label: `$(${state.accountsError ? 'error' : 'check'}) ${state.accountsError || state.accountsNotice}`, alwaysShow: true });
     if (this.provider) items.push({ label: '$(list-selection) Show all accounts', action: 'all', alwaysShow: true });
     items.push({ label: 'Open', kind: vscode.QuickPickItemKind.Separator },
-      { label: '$(dashboard) Open dashboard', action: 'dashboard', alwaysShow: true },
+      { label: '$(dashboard) Open settings', action: 'dashboard', alwaysShow: true },
       { label: '$(settings-gear) Manage accounts', action: 'manage', alwaysShow: true });
     const selected = picker.activeItems[0]; picker.items = items;
     if (selected) { const same = items.find(row => selected.id ? row.id === selected.id : row.label === selected.label); if (same) picker.activeItems = [same]; }

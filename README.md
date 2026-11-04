@@ -51,7 +51,7 @@ After a Codex or Claude Code switch, select **Restart Extension Host** to let th
 
 ![Account manager with app filters, search and fictional Codex, Claude Code, Cursor and Antigravity profiles](media/screenshots/accounts.png)
 
-Hover a provider's quota in the VS Code status bar to open the account menu: remaining quota, reset countdowns, saved accounts and **Open dashboard** are available without clicking the status bar. Select a saved account to switch. **Manage accounts** and **Refresh quota** stay in the menu; clicking the status bar opens a searchable account picker with the same labeled shortcuts. In the dashboard, **View usage** selects an account's statistics without switching its sign-in.
+Hover a provider's quota in the VS Code status bar to open the account menu: remaining quota, reset countdowns, saved accounts and **Open settings** are available without clicking the status bar. Select a saved account to switch. **Manage accounts** and **Refresh quota** stay in the menu; clicking the status bar opens a searchable account picker with the same labeled shortcuts. In the dashboard, **View usage** selects an account's statistics without switching its sign-in.
 
 Quota rows use theme colors: green for healthy, amber at 25% remaining or less, red when exhausted. The active account, reset actions and extension storage have distinct icons.
 
@@ -61,7 +61,7 @@ Saved-account quota is checked in the background at most once every ten minutes,
 
 Saved profile identity is checked against credential metadata before native sign-in is mirrored. A different account cannot overwrite a saved profile or supply its plan/quota. Expired sign-ins keep their saved identity and require signing in again.
 
-![Native VS Code quota hover with active account, saved-account switch links, Reset usage and Open dashboard](media/screenshots/account-hover.png)
+![Native VS Code quota hover with active account, saved-account switch links, Reset usage and Open settings](media/screenshots/account-hover.png)
 
 For the active Codex ChatGPT account, **Reset usage** uses **one earned reset** to restore eligible quota. The available count is shown beside the action. After redemption, AgentTandem reads quota from Codex again and reports the result. The action is disabled when no earned resets are available or an agent turn is active; token history stays intact. The same action is available in the account picker and dashboard account cards. Requires a selected Codex CLI that supports earned resets. See [OpenAI Docs: earned rate-limit resets](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
 
@@ -76,7 +76,7 @@ Saved credentials stay in local native-auth profile storage and are not sent to 
 
 ## Token and usage dashboard
 
-Run **AgentTandem: Open Settings and Usage Dashboard**, or use **Dashboard** below chat. The dashboard opens on **Today** for all accounts.
+Run **AgentTandem: Open Settings**, or use **Settings** below chat. The dashboard opens on **Today** for all accounts.
 
 - **Filter bar** — date chips (**Today** to **All time**, **Custom**, **5h cycle**, **Weekly cycle**), then provider, account, model and grouping by day, week or month.
 - **Summary** — tokens, API-equivalent cost, quota and **Unknown account** tokens for the current selection, with **Assign** when some history has no account.

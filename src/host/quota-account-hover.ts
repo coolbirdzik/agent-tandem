@@ -97,7 +97,7 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
   ].filter(Boolean);
   if (notes.length) md.appendMarkdown(block(`<div>${notes.join('<br>')}</div>`));
   md.appendMarkdown('<hr>\n\n');
-  md.appendMarkdown(table(row(`<td>${link('$(dashboard) <strong>Open dashboard</strong>', 'agentTandem.openSettings')}</td>`, `<td align="right">${[
+  md.appendMarkdown(table(row(`<td>${link('$(dashboard) <strong>Open settings</strong>', 'agentTandem.openSettings')}</td>`, `<td align="right">${[
     state.accountsRefreshing ? color('$(loading~spin) Refreshing…', 'muted') : link('$(refresh) Refresh', 'agentTandem.refreshQuotaAccounts', [], 'Refresh quota for every saved account'), link('$(settings-gear) Accounts', 'agentTandem.manageAccounts', [], 'Manage accounts'),
     link('$(search) Search', 'agentTandem.quickAccounts', [provider], 'Search / switch accounts')].join(' &nbsp;&nbsp; ')}</td>`)).trimEnd());
   return md;

@@ -47,7 +47,7 @@ it('keeps separate agent items with independent quota colors, commands and full 
   expect(codex.backgroundColor.id).toBe('statusBarItem.errorBackground'); expect(claude.backgroundColor).toBeUndefined();
   expect(claude.text).toBe('$(agent-tandem-claude) 5h 80%'); expect(claude.command).toEqual({ command: 'agentTandem.quickAccounts', title: 'Quota & quick account switch', arguments: ['Claude'] });
   expect(codex.accessibilityInformation.label).toContain('5h: 0% remaining');
-  expect(codex.tooltip.value).toContain('Open dashboard');
+  expect(codex.tooltip.value).toContain('Open settings');
   bar.dispose(); expect(host.items.every(item => item.disposed)).toBe(true);
 });
 it('applies provider selection and the master visibility switch immediately without leaving old items visible', () => {
