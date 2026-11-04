@@ -15,6 +15,7 @@ Historical version dates and boundaries are reconstructed from package version c
 - Settings tab bar now scrolls horizontally at medium widths instead of wrapping onto a second line.
 - Dashboard period chips (Today, This week, 5h cycle, …) now scroll horizontally in narrow panels instead of wrapping onto multiple rows.
 - Dashboard hides the Provider filter while a specific account is selected, since the account already determines the provider.
+- Account popup now has a single **Open settings** entry with a cog icon; the separate **Manage accounts** button and menu item are removed.
 - Settings pages no longer show a small label above the title, and each page title now matches its tab name (Dashboard, Accounts, Preferences, Storage).
 
 ## [0.1.41] - 2026-11-03

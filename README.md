@@ -51,7 +51,7 @@ After a Codex or Claude Code switch, select **Restart Extension Host** to let th
 
 ![Account manager with app filters, search and fictional Codex, Claude Code, Cursor and Antigravity profiles](media/screenshots/accounts.png)
 
-Hover a provider's quota in the VS Code status bar to open the account menu: remaining quota, reset countdowns, saved accounts and **Open settings** are available without clicking the status bar. Select a saved account to switch. **Manage accounts** and **Refresh quota** stay in the menu; clicking the status bar opens a searchable account picker with the same labeled shortcuts. In the dashboard, **View usage** selects an account's statistics without switching its sign-in.
+Hover a provider's quota in the VS Code status bar to open the account menu: remaining quota, reset countdowns, saved accounts and **Open settings** are available without clicking the status bar. Select a saved account to switch. **Refresh quota** stays in the menu; clicking the status bar opens a searchable account picker with the same labeled shortcuts. In the dashboard, **View usage** selects an account's statistics without switching its sign-in.
 
 Quota rows use theme colors: green for healthy, amber at 25% remaining or less, red when exhausted. The active account, reset actions and extension storage have distinct icons.
 
