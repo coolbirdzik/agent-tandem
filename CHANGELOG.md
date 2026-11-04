@@ -18,6 +18,10 @@ Historical version dates and boundaries are reconstructed from package version c
 - Account popup now has a single **Open settings** entry with a cog icon; the separate **Manage accounts** button and menu item are removed.
 - Settings pages no longer show a small label above the title, and each page title now matches its tab name (Dashboard, Accounts, Preferences, Storage).
 
+### Fixed
+
+- Date fields (From / To) and their calendar popup now follow the VS Code light or dark theme instead of always rendering light.
+
 ## [0.1.41] - 2026-11-03
 
 ### Added
