@@ -14,6 +14,9 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Changed
 
+- Dashboard tabs (Overview, Quota, Conversations, Details) now show an icon beside each label.
+- The Dashboard, Accounts and Storage tab bars now share one style and stay pinned below the Settings header while you scroll.
+- The Accounts app filter (All apps, Codex, Claude Code, …) now uses the same underlined tab style as the dashboard sections, keeping the app icons.
 - Account picker groups each quota period's percentage left with its reset countdown and omits exact reset times.
 - Show five-hour and weekly quota labels as flat, filled badges with transparent **5h** and **7d** lettering across the status bar, quota hover, account picker, chat, account cards and dashboard. Updates no longer leave these badges blank because of a cached font. Status-bar Text style keeps plain labels.
 - Dashboard account filter is now a sticky picker in the top-right corner. Each account shows its provider logo, email, provider name and account details; **View usage** on an account card still selects it there. The "All accounts" back bar under the account view is removed — pick "All accounts" in the picker instead.

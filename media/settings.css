@@ -448,9 +448,10 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .account-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 0 0 20px; }
 .account-toolbar label, .conversation-search { display: grid; gap: 5px; font-size: 11px; color: var(--muted); }
 .conversation-search input { min-width: 220px; }
-.account-platforms { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 18px; margin: 24px 0; }
-.account-platform { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 9px 12px; gap: 8px; }
-.account-platform[aria-pressed=true] { color: var(--vscode-foreground); background: var(--surface); border-color: var(--line); }
+.account-platforms { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin: 24px 0 18px; overflow-x: auto; scrollbar-width: none; }
+.account-platform { flex: none; background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 12px 0; white-space: nowrap; }
+.account-platform:hover { color: var(--vscode-foreground); background: transparent; }
+.account-platform[aria-pressed=true] { color: var(--vscode-foreground); border-bottom-color: var(--accent); }
 .account-platform small { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--muted); min-width: 12px; }
 .account-platform .provider-icon, .account-platform .account-app-mark { width: 16px; height: 16px; font-size: 15px; }
 .account-connection { padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 20px; }
@@ -535,7 +536,7 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .account-empty > .codicon { font-size: 28px; color: var(--muted); }
 .account-empty h3 { font-size: 17px; font-weight: 500; margin: 12px 0 6px; }
 .account-empty p { margin: 0 0 20px; }
-@media (max-width: 500px) { #managed-accounts .page-heading { flex-wrap: wrap; gap: 18px; } .account-platform { padding: 7px 8px; } .account-search { width: 100%; } .account-search input { width: 100%; } .managed-account { padding: 16px; } .managed-account[data-active=true] { padding-top: 15px; } .account-connection { padding: 16px; } .account-connection .account-toolbar label { width: 100%; } .account-connection select { width: 100%; } }
+@media (max-width: 500px) { #managed-accounts .page-heading { flex-wrap: wrap; gap: 18px; } .account-platform { padding: 10px 0; } .account-search { width: 100%; } .account-search input { width: 100%; } .managed-account { padding: 16px; } .managed-account[data-active=true] { padding-top: 15px; } .account-connection { padding: 16px; } .account-connection .account-toolbar label { width: 100%; } .account-connection select { width: 100%; } }
 .quota-pace-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 24px; }
 .quota-pace-card > strong { display: block; font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; margin: 8px 0 4px; }
 .quota-pace-card p { font-size: 11px; margin: 0; }
@@ -759,10 +760,10 @@ html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-w
 .summary-card small { color: var(--muted); font-size: 11px; text-wrap: pretty; }
 .summary-card button { align-self: flex-start; margin-top: 8px; padding: 3px 10px; font-size: 12px; }
 .summary-card[data-unknown=true] strong { color: var(--serious); }
-.dashboard-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; overflow-x: auto; scrollbar-width: none; }
-.dashboard-tabs [role=tab] { flex: none; padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
-.dashboard-tabs [role=tab]:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground); }
-.dashboard-tabs [role=tab][aria-selected=true] { color: var(--vscode-foreground); border-bottom-color: var(--accent); font-weight: 600; }
+.dashboard-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 18px; overflow-x: auto; scrollbar-width: none; }
+.dashboard-tabs [role=tab] { flex: none; padding: 12px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); white-space: nowrap; }
+.dashboard-tabs [role=tab]:hover { color: var(--vscode-foreground); }
+.dashboard-tabs [role=tab][aria-selected=true] { color: var(--vscode-foreground); border-bottom-color: var(--accent); }
 .tab-panel > * + * { margin-top: 18px; }
 .quota-now .dashboard-accounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; }
 .quota-now .dashboard-accounts article, .quota-now .dashboard-accounts article + article { padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
@@ -777,3 +778,6 @@ html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-w
 .banked-reset-popover p { margin: 0; padding: 3px 0; font-size: 12px; color: var(--muted); }
 .banked-reset:hover .banked-reset-popover, .banked-reset:focus-within .banked-reset-popover, .banked-reset[data-open=true] .banked-reset-popover { display: block; }
 .banked-reset[data-open=false] .banked-reset-popover { display: none; }
+
+/* Sub-tab bars stay pinned under the sticky settings header while the page scrolls. */
+.dashboard-tabs, .account-platforms, .storage-navigation { position: sticky; top: calc(var(--settings-header-h, 57px) - 1px); z-index: 1; background: var(--vscode-editor-background); }
