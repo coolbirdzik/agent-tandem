@@ -297,7 +297,7 @@ describe('Settings usage dashboard', () => {
   it('customizes both status items through Preferences with an accurate preview and host persistence requests', () => {
     render({ ...value, activeProvider: 'Claude' });
     expect(document.querySelectorAll('#status-bar-preview .provider-icon')).toHaveLength(2);
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Quota —5h 75%');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('Quota —\uE030 75%');
     choose('status-bar-providers', 'claude');
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { providers: 'claude' } } });
     expect(document.querySelector('#status-bar-preview .provider-icon[data-provider=Codex]')).toBeNull();
@@ -333,18 +333,18 @@ describe('Settings usage dashboard', () => {
     render(); choose('status-bar-style', 'progress');
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'preferences', value: { statusBar: { style: 'progress' } } });
     const items = [...document.querySelectorAll<HTMLElement>('.status-bar-preview-item')];
-    expect(items.map(item => item.textContent)).toEqual(['Quota —', '5h ███▊░ 75%']);
+    expect(items.map(item => item.textContent)).toEqual(['Quota —', '\uE030 ███▊░ 75%']);
     expect(items[1]!.getAttribute('aria-label')).toContain('Claude Code');
     expect(items[1]!.title).toContain('5h: 75% remaining');
     expect(document.querySelector<HTMLInputElement>('[data-status-field="quota"]')!.disabled).toBe(false);
     render({ ...value, preferences: { ...value.preferences, statusBar: { providers: 'claude', fields: ['quota'], quotaWindows: 'all', alignment: 'right', style: 'progress', codexColor: '', claudeColor: '' } } });
     expect(document.querySelector<HTMLSelectElement>('#status-bar-style')!.value).toBe('progress');
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('5h ███▊░ 75%');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('\uE030 ███▊░ 75%');
     choose('status-bar-style', 'compact');
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('5h 75%');
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('\uE030 75%');
     choose('status-bar-style', 'rings');
-    expect([...document.querySelectorAll('.status-bar-glyph')].map(glyph => glyph.textContent)).toEqual(['']);
-    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('5h  75%');
+    expect([...document.querySelectorAll('.status-bar-glyph')].map(glyph => glyph.textContent)).toEqual(['\uE030', '']);
+    expect(document.querySelector('#status-bar-preview')!.textContent).toBe('\uE030  75%');
     choose('status-bar-style', 'minimal');
     expect(document.querySelector('#status-bar-preview')!.textContent).toBe(' 75%');
   });
@@ -365,6 +365,22 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector<HTMLButtonElement>('#accounts [data-reset-usage]')!.disabled).toBe(true);
     render({ ...value, accountsBusy: true, accounts: { Codex: status } });
     expect(document.querySelector<HTMLButtonElement>('#accounts [data-reset-usage]')!.disabled).toBe(true);
+  });
+  it('reopens banked reset details on focus and hover after Escape, including when opened without a click', () => {
+    const status = { status: 'ready' as const, account: { signedIn: true, email: 'codex@test', method: 'ChatGPT' }, quota: { status: 'available' as const, windows: [], bankedResets: { availableCount: 1, credits: [{ title: 'Earned reset', expiresAt: Date.now() + 3600000 }] } } };
+    render({ ...value, accounts: { Codex: status } });
+    document.querySelector<HTMLButtonElement>('#tab-quota')!.click();
+    const wrap = document.querySelector<HTMLElement>('#accounts .banked-reset')!, trigger = wrap.querySelector<HTMLButtonElement>('button')!;
+    const expanded = () => trigger.getAttribute('aria-expanded');
+    trigger.focus(); expect(expanded()).toBe('true');
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(expanded()).toBe('false');
+    trigger.blur(); trigger.focus(); expect(expanded()).toBe('true');
+    trigger.blur(); expect(expanded()).toBe('false');
+    wrap.dispatchEvent(new MouseEvent('mouseenter')); expect(expanded()).toBe('true');
+    trigger.click(); trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(expanded()).toBe('false');
+    wrap.dispatchEvent(new MouseEvent('mouseleave')); trigger.blur();
+    wrap.dispatchEvent(new MouseEvent('mouseenter')); expect(expanded()).toBe('true');
+    wrap.dispatchEvent(new MouseEvent('mouseleave')); expect(expanded()).toBe('false');
   });
   it('shows live switch progress, lets users hide and reopen it, and retains rollback/error logs without reopening on every update', () => {
     const operation: NonNullable<UsageDashboardState['accountSwitch']> = { id: 'operation-one', profileId: 'selected', provider: 'Codex', label: 'Work', startedAt: Date.now(), status: 'running', outcome: 'notChanged', logs: [{ at: Date.now(), level: 'info', message: 'Backing up the current sign-in.' }] };
@@ -400,7 +416,6 @@ describe('Settings usage dashboard', () => {
     const status = (identity: typeof one, usedPercent: number) => ({ status: 'ready' as const, account: identity, updatedAt: now, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent, resetsAt: now + 3600000 }] } });
     render({ ...value, data: { ...value.data!, days: [first, second] }, accounts: { Codex: status(one, 20) }, managedAccounts: [{ id: '11111111-1111-4111-8111-111111111111', provider: 'Codex', label: 'Work', identity: two, createdAt: now, status: status(two, 60) }] });
     expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(false);
-    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(true);
     expect(document.querySelectorAll('.account-group')).toHaveLength(2);
     const work = [...document.querySelectorAll('.account-group')].find(row => row.textContent?.includes('Work'))!;
     expect(work.textContent).toContain('40% left'); work.querySelector<HTMLButtonElement>('button')!.click();
@@ -411,12 +426,12 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#accounts')!.textContent).toContain('40% left');
     expect(document.querySelector('#accounts')!.textContent).not.toContain('80% left');
     expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(true);
-    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(false);
-    expect(document.querySelector('#account-detail-title')!.textContent).toBe('Work');
-    document.querySelector<HTMLButtonElement>('#account-detail-back')!.click();
+    expect(document.querySelector('#account-detail-bar')).toBeNull();
+    expect(document.querySelector('#account-picker-trigger')!.textContent).toContain('Work');
+    expect(document.querySelector('#account-picker-trigger')!.textContent).toContain('Codex');
+    document.querySelector<HTMLButtonElement>('#account-picker-menu [data-value=""]')!.click();
     expect(document.querySelector<HTMLSelectElement>('#filter-account')!.value).toBe('');
     expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(false);
-    expect(document.querySelector<HTMLElement>('#account-detail-bar')!.hidden).toBe(true);
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('300');
   });
   it('switches dashboard tabs by click and arrow keys, and opens history assignment in Details', () => {
@@ -438,6 +453,8 @@ describe('Settings usage dashboard', () => {
     render();
     const chips = [...document.querySelectorAll<HTMLButtonElement>('#range-chips [data-range]')];
     expect(chips.map(chip => chip.dataset.range)).toEqual(['today', 'yesterday', 'week', 'month', 'year', 'all', 'custom', 'cycle-5h', 'cycle-weekly']);
+    expect(chips.find(chip => chip.dataset.range === 'cycle-5h')!.textContent).toBe('5-hour cycle');
+    expect(chips.find(chip => chip.dataset.range === 'cycle-5h')!.querySelector('.quota-window-badge')).toBeNull();
     expect(chips.find(chip => chip.getAttribute('aria-pressed') === 'true')!.dataset.range).toBe('today');
     chips.find(chip => chip.dataset.range === 'month')!.click();
     expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe('month');
@@ -479,10 +496,38 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#cycle-meta')!.textContent).toContain('2 of 2 recorded');
     expect(document.querySelector<HTMLButtonElement>('#cycle-prev')!.disabled).toBe(true);
     document.querySelector<HTMLButtonElement>('#cycle-current')!.click(); expect(document.querySelector('#cycle-meta')!.textContent).toContain('Current');
-    postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#account-detail-back')!.click();
+    postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#account-picker-menu [data-value=""]')!.click();
     expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe('today');
     expect(postMessage).toHaveBeenCalledWith({ type: 'usageWindow', value: null });
     expect(document.querySelector<HTMLElement>('#cycle-bar')!.hidden).toBe(true);
+  });
+  it.each(['cycle-5h', 'cycle-weekly'])('switches providers in %s without leaving the cycle or mixing their usage', range => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identities = { Codex: { signedIn: true, email: 'codex@test', method: 'ChatGPT', plan: 'plus' }, Claude: { signedIn: true, email: 'claude@test', method: 'Claude account', plan: 'pro' } };
+    const codex = usageAccount('Codex', identities.Codex)!, claude = usageAccount('Claude', identities.Claude)!;
+    const label = range === 'cycle-5h' ? '5h' : '7d', duration = label === '5h' ? 5 * 3600000 : 7 * 86400000;
+    const codexReset = now + duration / 2, claudeReset = now + duration / 3;
+    const status = (provider: 'Codex' | 'Claude', resetsAt: number) => ({ status: 'ready' as const, account: identities[provider], quota: { status: 'available' as const, windows: [{ id: label, label, usedPercent: 25, resetsAt }] } });
+    const fixture: UsageDashboardState = { ...value, activeProvider: 'Codex', accounts: { Codex: status('Codex', codexReset), Claude: status('Claude', claudeReset) }, quotaTicks: [
+      { provider: 'Codex', accountId: codex.id, plan: 'plus', windowId: label, label, resetsAt: codexReset, at: now, usedPercent: 25 },
+      { provider: 'Claude', accountId: claude.id, plan: 'pro', windowId: label, label, resetsAt: claudeReset, at: now, usedPercent: 25 },
+    ] };
+    render(fixture); choose('filter-account', codex.id); choose('filter-range', range);
+    const accountSelect = document.querySelector<HTMLSelectElement>('#filter-account')!, providerSelect = document.querySelector<HTMLSelectElement>('#filter-provider')!;
+    expect(providerSelect.parentElement!.hidden).toBe(true);
+    expect([...accountSelect.options].map(option => option.value)).toContain(claude.id);
+    postMessage.mockClear();
+    [...document.querySelectorAll<HTMLButtonElement>('#account-picker-menu [role=option]')].find(option => option.dataset.value === claude.id)!.click();
+    expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe(range);
+    expect(accountSelect.value).toBe(claude.id); expect(providerSelect.value).toBe('Claude');
+    expect([...accountSelect.options].map(option => option.value)).toContain(codex.id);
+    const request = { from: claudeReset - duration, to: claudeReset };
+    expect(postMessage).toHaveBeenCalledWith({ type: 'usageWindow', value: request });
+    const bucket = label === '5h' ? 'hour' : 'day', day = label === '5h' ? '2026-10-13 12:00' : '2026-10-13';
+    render({ ...fixture, usageWindow: { ...request, bucket, days: [{ ...row(day, 'Codex', 'codex-model', 100), account: codex }, { ...row(day, 'Claude', 'claude-model', 700), account: claude }], conversations: [] } });
+    expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('700');
+    expect(document.querySelector('#account-picker-trigger')!.textContent).toContain('claude@test');
+    expect(providerSelect.parentElement!.hidden).toBe(true);
   });
   it('explains when a cycle has no account or no recorded cycles', () => {
     render({ ...value, accounts: {} }); choose('filter-range', 'cycle-weekly');
@@ -534,7 +579,8 @@ describe('Settings usage dashboard', () => {
     render({ ...state, accountsBusy: true }); expect(document.querySelector<HTMLButtonElement>('#account-add')!.disabled).toBe(true);
     render({ ...state, accountsError: 'Native CLI rejected sign-in.' }); expect(document.querySelector<HTMLElement>('#accounts-error')!.hidden).toBe(false);
     render({ ...state, managedAccounts: [{ ...profile, status: { ...status, quotaCached: true } }] });
-    expect(document.querySelector('#managed-account-list')!.textContent).toContain('5h · 50% left');
+    expect(document.querySelector('#managed-account-list')!.textContent).toContain('\uE030 · 50% left');
+    expect(document.querySelector('#managed-account-list .quota-window-badge')?.getAttribute('aria-label')).toBe('5h');
     expect(document.querySelector('#managed-account-list .account-checked')!.textContent).toContain('Cached quota');
   });
   it('shows Device fallback and compares reset cycles without assigning unknown token history to an account', () => {
@@ -893,9 +939,9 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#account-breakdown')!.textContent).toContain('Unknown account');
     const quotaBefore = document.querySelector('#quota-estimates')!.textContent;
     choose('filter-account', one.id);
-    expect(document.querySelector('#account-detail-title')!.textContent).toBe('one@test.invalid');
-    expect(document.querySelector('#account-detail-meta')!.textContent).toContain('Codex');
-    expect(document.querySelector('#account-detail-meta')!.textContent).not.toContain('Unattributed history');
+    expect(document.querySelector('#account-picker-trigger strong')!.textContent).toBe('one@test.invalid');
+    expect(document.querySelector('#account-picker-trigger small')!.textContent).toContain('Codex');
+    expect(document.querySelector('#account-picker-trigger small')!.textContent).not.toContain('Unattributed history');
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('200');
     expect(document.querySelector('#period-breakdown')!.textContent).toContain('one-model');
     expect(document.querySelector('#period-breakdown')!.textContent).not.toContain('two-model');

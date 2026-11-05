@@ -1,6 +1,6 @@
 # Know where usage data comes from
 
-The quota item beside tracking shows the active provider. Click it to open **Settings & dashboard**.
+The quota item beside tracking shows the active provider. Click it to open **Settings**.
 
 The dashboard starts with daily usage and supports weekly/monthly breakdowns by account, provider and model.
 

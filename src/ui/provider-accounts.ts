@@ -1,6 +1,7 @@
 import type { ConversationProvider } from '../providers/conversations';
 import type { ProviderAccountStatus, QuotaWindow } from '../providers/account-status';
 import { bankedResetDetails } from '../core/banked-resets';
+import { quotaWindowLabel } from './quota-window-label';
 type Accounts = Partial<Record<ConversationProvider, ProviderAccountStatus>>;
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => {
   const element = document.createElement(tag); if (text !== undefined) element.textContent = text; if (className) element.className = className; return element;
@@ -94,7 +95,7 @@ export class ProviderAccounts {
             }
             ring.append(circle);
           }
-          label.append(ring, node('span', `${window.label} ${remaining(window).replace(' left', '')}`));
+          label.append(ring, quotaWindowLabel(`${window.label} ${remaining(window).replace(' left', '')}`));
           quota.append(label);
         }
       } else quota.append(node('span', status?.quota?.credits || (status?.status === 'error' ? 'Refresh to retry' : 'Quota —')));
@@ -139,7 +140,7 @@ export class ProviderAccounts {
     if (status?.error) this.popover.append(node('p', status.error, 'account-detail-meta'));
     for (const window of status?.quota?.windows ?? []) {
       const row = node('div', undefined, 'quota-window'), label = node('div', undefined, 'quota-window-heading');
-      label.append(node('span', window.label), node('span', remaining(window))); row.append(label);
+      label.append(quotaWindowLabel(window.label), node('span', remaining(window))); row.append(label);
       const meter = node('progress'); meter.max = 100; meter.value = Math.max(0, 100 - window.usedPercent); meter.setAttribute('aria-label', `${window.label} quota remaining`); meter.dataset.low = String(window.usedPercent >= 90);
       row.append(meter, node('span', resetLabel(window), 'account-detail-meta')); this.popover.append(row);
     }
