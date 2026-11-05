@@ -774,7 +774,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }));
   register('agentTandem.open', () => { state.screen = 'changes'; update(); return preview.open(); });
   register('agentTandem.openInTab', () => preview.openInTab());
-  for (const action of ['newChat', 'history', 'review', 'refresh', 'more'] as const) {
+  for (const action of ['newChat', 'history', 'review', 'refresh'] as const) {
     register(`agentTandem.header.${action}`, () => preview.headerAction(action));
   }
   const openImageChanges = async (target: unknown) => {
@@ -1591,6 +1591,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (!disposed && state.project === request.project) { state.reviewBusy = false; await refreshReview(request.project); update(); }
     }
   });
+  register('agentTandem.diagnostics', () => vscode.commands.executeCommand('agentTandem.showSection', 'tools').then(() => preview.open()));
   register('agentTandem.showSection', async screen => {
     if (screen !== 'conversations' && screen !== 'changes' && screen !== 'tools' && screen !== 'cli') throw new Error('Unknown section.');
     uiGeneration++; state.screen = screen; update(); if (screen === 'cli') void refreshCLIManager();

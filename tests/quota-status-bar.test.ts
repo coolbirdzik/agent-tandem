@@ -21,7 +21,7 @@ it('uses the status item quota snapshot for its hover even when dashboard data i
   const current = { ...state, accounts: { Codex: { status: 'ready' as const, account: { signedIn: true, email: 'current@test', method: 'ChatGPT' }, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 46 }] } } } };
   bar.update(current, { status: 'ready', preferences: { showQuotaInStatusBar: true, grouping: 'day' }, accounts: { Codex: { status: 'ready', account: { signedIn: true, email: 'previous@test', method: 'ChatGPT' }, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }] } } } });
   const codex = host.items.find(item => item.id.endsWith('codex'));
-  expect(codex.text).toContain('5h 54%'); expect(codex.tooltip.value).toContain('<strong>54%</strong>');
+  expect(codex.text).toContain('$(agent-tandem-quota-window-5h) 54%'); expect(codex.tooltip.value).toContain('<strong>54%</strong>');
   expect(codex.tooltip.value).toContain('current@test'); expect(codex.tooltip.value).not.toContain('previous@test');
   bar.dispose();
 });
@@ -29,14 +29,14 @@ it('does not duplicate a window or retain its obsolete exhausted tone', () => {
   const bar = new QuotaStatusBar();
   bar.update({ ...state, accounts: { Codex: { status: 'ready', quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }, { id: '5h', label: '5h', usedPercent: 46 }] } } } });
   const codex = host.items.find(item => item.id.endsWith('codex'));
-  expect(codex.text).toBe('$(agent-tandem-codex) 5h 54%'); expect(codex.backgroundColor).toBeUndefined();
-  expect(codex.tooltip.value.match(/<strong>5h<\/strong>/g)).toHaveLength(1); bar.dispose();
+  expect(codex.text).toBe('$(agent-tandem-codex) $(agent-tandem-quota-window-5h) 54%'); expect(codex.backgroundColor).toBeUndefined();
+  expect(codex.tooltip.value.match(/<strong>\$\(agent-tandem-quota-window-5h\)<\/strong>/g)).toHaveLength(1); bar.dispose();
 });
 it('keeps cached quota visible and identifies its timestamp and refresh error in the tooltip', () => {
   const bar = new QuotaStatusBar();
   bar.update({ ...state, accounts: { ...state.accounts, Claude: { ...state.accounts!.Claude!, status: 'error', quotaCached: true, updatedAt: Date.now() - 3600000, error: 'Offline' } } });
   const claude = host.items.find(item => item.id.endsWith('claude'));
-  expect(claude.text).toContain('5h 80%'); expect(claude.tooltip.value).toContain('Cached quota'); expect(claude.tooltip.value).toContain('Offline');
+  expect(claude.text).toContain('$(agent-tandem-quota-window-5h) 80%'); expect(claude.tooltip.value).toContain('Cached quota'); expect(claude.tooltip.value).toContain('Offline');
   bar.dispose();
 });
 it('keeps separate agent items with independent quota colors, commands and full accessible tooltips', () => {
@@ -45,9 +45,9 @@ it('keeps separate agent items with independent quota colors, commands and full 
   const [codex, claude] = host.items;
   expect(codex.visible).toBe(true); expect(claude.visible).toBe(true);
   expect(codex.backgroundColor.id).toBe('statusBarItem.errorBackground'); expect(claude.backgroundColor).toBeUndefined();
-  expect(claude.text).toBe('$(agent-tandem-claude) 5h 80%'); expect(claude.command).toEqual({ command: 'agentTandem.quickAccounts', title: 'Quota & quick account switch', arguments: ['Claude'] });
+  expect(claude.text).toBe('$(agent-tandem-claude) $(agent-tandem-quota-window-5h) 80%'); expect(claude.command).toEqual({ command: 'agentTandem.quickAccounts', title: 'Quota & quick account switch', arguments: ['Claude'] });
   expect(codex.accessibilityInformation.label).toContain('5h: 0% remaining');
-  expect(codex.tooltip.value).toContain('Open dashboard');
+  expect(codex.tooltip.value).toContain('Open settings');
   bar.dispose(); expect(host.items.every(item => item.disposed)).toBe(true);
 });
 it('applies provider selection and the master visibility switch immediately without leaving old items visible', () => {
@@ -76,7 +76,7 @@ it('switches to icons only while retaining accessible agent names and full hover
 it('switches existing items to progress bars while keeping quota alerts and accessible percentages', () => {
   const bar = new QuotaStatusBar(); bar.update(state);
   host.settings.statusBarStyle = 'progress'; bar.update(state);
-  expect(host.items.map(item => item.text)).toEqual(['$(agent-tandem-codex) 5h ░░░░░ 0%', '$(agent-tandem-claude) 5h ████░ 80%']);
+  expect(host.items.map(item => item.text)).toEqual(['$(agent-tandem-codex) $(agent-tandem-quota-window-5h) ░░░░░ 0%', '$(agent-tandem-claude) $(agent-tandem-quota-window-5h) ████░ 80%']);
   expect(host.items[0].backgroundColor.id).toBe('statusBarItem.errorBackground');
   expect(host.items[1].accessibilityInformation.label).toContain('5h: 80% remaining');
   expect(host.items).toHaveLength(2); bar.dispose();
@@ -103,6 +103,11 @@ it('does not rewrite or show quota items again for identical refresh data', () =
   expect(write).not.toHaveBeenCalled();
   expect(claude.color.id).toBe('charts.green');
   bar.update({ ...state, accounts: { ...state.accounts, Claude: { ...state.accounts!.Claude!, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 25 }] } } } });
-  expect(write).toHaveBeenLastCalledWith('$(agent-tandem-claude) 5h 75%');
+  expect(write).toHaveBeenLastCalledWith('$(agent-tandem-claude) $(agent-tandem-quota-window-5h) 75%');
   bar.dispose();
+});
+
+it('shares severity thresholds between the status bar and its hover', async () => {
+  const { quotaUsageTone } = await import('../src/core/quota-status.js');
+  expect([0, 74.9, 75, 99, 100, 120].map(quotaUsageTone)).toEqual(['healthy', 'healthy', 'warning', 'warning', 'exhausted', 'exhausted']);
 });

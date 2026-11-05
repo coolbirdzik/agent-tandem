@@ -116,7 +116,7 @@ function positionModelPopover() {
 modelTrigger.onclick = () => {
   if (modelTrigger.disabled) return;
   if (!modelPopover.hidden) { closeModelPopover(); return; }
-  closeMenu(); modelPopover.hidden = false; modelTrigger.setAttribute('aria-expanded', 'true');
+  modelPopover.hidden = false; modelTrigger.setAttribute('aria-expanded', 'true');
   positionModelPopover(); dropdowns.focus(chatModel);
 };
 element('model-popover-close').onclick = () => closeModelPopover(true);
@@ -224,69 +224,32 @@ element('chat-stop').onclick = () => send('stopChat');
 element('activity-stop').onclick = () => send('stopChat');
 const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 marked.use({ renderer: { html: ({ text }) => escapeHtml(text), image: ({ text }) => escapeHtml(text) } });
-const closeMenu = () => { element<HTMLDetailsElement>('more-menu').open = false; };
-const moreMenu = element<HTMLDetailsElement>('more-menu');
-const menuButtons = () => [...moreMenu.querySelectorAll<HTMLButtonElement>('.menu-items button')].filter(button => !button.hidden && !button.disabled);
-function toggleMoreMenu() {
-  closeModelPopover();
-  moreMenu.open = !moreMenu.open;
-  if (moreMenu.open) menuButtons()[0]?.focus();
-}
-moreMenu.addEventListener('click', event => {
-  if ((event.target as Element).closest('button')) closeMenu();
-});
-moreMenu.addEventListener('keydown', event => {
-  const buttons = menuButtons();
-  const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-  let next: number;
-  switch (event.key) {
-    case 'ArrowDown': next = (index + 1) % buttons.length; break;
-    case 'ArrowUp': next = (index - 1 + buttons.length) % buttons.length; break;
-    case 'Home': next = 0; break;
-    case 'End': next = buttons.length - 1; break;
-    default: return;
-  }
-  event.preventDefault(); buttons[next]?.focus();
-});
 function showHistory(show: boolean) {
   if (show && !historyVisible) {
     providerFilter = 'all';
     element<HTMLInputElement>('conversation-search').value = '';
   }
   historyVisible = show;
-  closeMenu();
   if (lastState?.screen !== 'conversations') send('screen', 'conversations');
   else if (lastState) render(lastState);
 }
 
 
 element('stop').onclick = () => send(lastState?.chat?.status === 'running' ? 'stopChat' : 'stop');
-element('menu-stop').onclick = () => send('stop');
 element('probe').onclick = () => send('probe');
 element('sync').onclick = () => send('sync');
-element('open-tab')?.addEventListener('click', () => send('tab'));
 element('history-open').onclick = () => showHistory(true);
-element('open-settings').onclick = () => { closeMenu(); send('settings'); };
 element('history-close').onclick = () => showHistory(false);
 element<HTMLSelectElement>('history-workspace').onchange = () => { if (lastState) render(lastState); };
-element('external-review-menu').onclick = () => { closeMenu(); send('trackingControls'); };
 element('review-tracking').onclick = () => send('trackingControls');
-element('getting-started').onclick = () => { closeMenu(); send('gettingStarted'); };
 element('conversation-search').oninput = () => { if (lastState) render(lastState); };
 document.querySelectorAll<HTMLButtonElement>('[data-provider]').forEach(node => { node.onclick = () => { providerFilter = node.dataset.provider!; if (lastState) render(lastState); }; });
-document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach(node => { node.onclick = () => { closeMenu(); send('screen', node.dataset.screen); }; });
+document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach(node => { node.onclick = () => { send('screen', node.dataset.screen); }; });
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !modelPopover.hidden) { event.preventDefault(); event.stopPropagation(); closeModelPopover(true); return; }
-  if (event.key === 'Escape' && moreMenu.open) {
-    event.preventDefault(); closeMenu();
-    if (document.body.dataset.editorTab === 'true') moreMenu.querySelector<HTMLElement>('summary')?.focus();
-    else chatInput.focus();
-    return;
-  }
-  if (event.key === 'Escape') { closeMenu(); if (historyVisible) showHistory(false); else cancelEdit(); }
+  if (event.key === 'Escape') { if (historyVisible) showHistory(false); else cancelEdit(); }
 });
 window.addEventListener('click', event => {
-  if (!element('more-menu').contains(event.target as Node)) closeMenu();
   if (!modelPopover.contains(event.target as Node) && !modelTrigger.contains(event.target as Node)) closeModelPopover();
 });
 
@@ -1008,7 +971,6 @@ function render(state: ViewState) {
   }
 
   const stop = element<HTMLButtonElement>('stop');
-  element('menu-stop').hidden = !state.running;
   stop.hidden = !state.running && (!chatRunning || state.chat?.phase === 'finishing');
   stop.disabled = state.chat?.phase === 'stopping';
   stop.title = chatRunning ? 'Stop agent' : 'Stop demo'; stop.setAttribute('aria-label', stop.title);
@@ -1056,7 +1018,6 @@ window.addEventListener('message', event => {
       case 'history': showHistory(true); break;
       case 'review': send('screen', 'changes'); break;
       case 'refresh': element<HTMLButtonElement>('sync').click(); break;
-      case 'more': toggleMoreMenu(); break;
     }
   }
 });

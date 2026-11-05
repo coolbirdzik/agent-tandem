@@ -10,7 +10,47 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Added
 
+- Earned Codex resets are listed with title, expiry and time left, soonest first. The status-bar hover shows them under **Reset usage**; Settings and dashboard account cards show a **Banked resets: N available** line that opens the list on hover, focus or click.
+
+### Changed
+
+- The sidebar and editor-tab **⋯** actions now use VS Code's native overflow menu instead of a custom in-panel menu. **AgentTandem: Diagnostics** is a new command.
+- Popovers and dropdown menus now have a blurred translucent background, falling back to opaque in high-contrast and reduced-transparency modes.
+- Five-hour and weekly quota labels are now flat filled **5h** and **7d** badges across the status bar, hover, account picker, chat, account cards and dashboard. Status-bar Text style keeps plain labels.
+- The Dashboard, Accounts and Storage tab bars share one style and stay pinned below the Settings header; dashboard tabs show icons, and the Accounts app filter uses the same underlined tabs.
+- Dashboard account filter is now a sticky top-right picker showing each account's provider logo, email and details, replacing the "All accounts" back bar. The Provider filter is hidden while an account is selected.
+- Settings tab bar and dashboard period chips scroll horizontally in narrow panels instead of wrapping.
+- "Settings & dashboard" and "Open dashboard" are now "Settings" / "Open settings", and the account popup has a single **Open settings** entry instead of **Manage accounts**.
+- Account picker shows each quota period's percentage left with its reset countdown, without exact reset times.
+- Settings page titles match their tab names and no longer show a small label above.
+
+### Fixed
+
+- Dashboard tabs stay clear of the account picker while scrolling, including in narrow panels, and quota-cycle views let you switch between Codex and Claude accounts without leaving the selected cycle range.
+- Banked reset details reopen on hover or focus after being dismissed with Escape.
+- Settings search boxes, date pickers, dropdowns and expandable sections use the themed styling, and date fields and their calendar follow the VS Code light or dark theme.
+- The quota status-bar item turns warning at 25% or less left and error when exhausted, matching its hover.
+- Status-bar quota hover opens immediately instead of waiting for the account refresh.
+
+## [0.1.41] - 2026-11-03
+
+### Added
+
 - Dashboard: filter usage by **5h cycle** or **Weekly cycle** of one account, between its quota resets. Step through recorded cycles, see hourly or daily activity, quota used in the cycle and the provider's unattributed tokens in the same window.
+
+### Changed
+
+- Dashboard: replace the long page with date chips, a summary of tokens, API-equivalent cost, quota and unknown-account tokens, and **Overview**, **Quota**, **Conversations** and **Details** tabs. **View usage** on an account card now filters the whole dashboard; the separate **By account** / **All accounts** view selector is gone.
+
+## [0.1.40] - 2026-11-03
+
+### Fixed
+
+- Usage: report truncated or incomplete compressed Codex history as unreadable instead of counting a partial file.
+
+## [0.1.39] - 2026-11-03
+
+### Added
 
 - Usage: attribute Codex and Claude responses without account evidence to the one account whose quota rose around them. Matches are saved under **Matched from quota changes** and never replace native evidence or a user assignment. Responses that match no account or several stay **Unknown account**.
 
@@ -20,8 +60,6 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Changed
 
-- Dashboard: replace the long page with date chips, a summary of tokens, API-equivalent cost, quota and unknown-account tokens, and **Overview**, **Quota**, **Conversations** and **Details** tabs. **View usage** on an account card now filters the whole dashboard; the separate **By account** / **All accounts** view selector is gone.
-
 - Agent sidebar tab: remove the 900px maximum width so the chat fills the available width.
 
 ### Fixed
@@ -30,6 +68,18 @@ Historical version dates and boundaries are reconstructed from package version c
 
 - Claude: find the CLI bundled with the Claude Code editor extension when no `claude` is on PATH, instead of failing with "claude was not found". A PATH CLI still takes precedence, and the bundled CLI appears in Manage CLIs.
 - Match quota burn-down chart legends to the visible chart lines.
+
+## [0.1.38] - 2026-10-31
+
+### Added
+
+- Usage: correct historical account switches for selected response IDs. Corrections appear as **User confirmed**, take priority over broad conversation or date assignments, and can be removed in the dashboard.
+
+## [0.1.36] - 2026-10-30
+
+### Changed
+
+- Accounts: check saved-account quota in the background at most every ten minutes, with a one-minute manual refresh cooldown and backoff on failures that honors a longer `Retry-After`.
 
 ## [0.1.35] - 2026-10-27
 
@@ -394,7 +444,12 @@ Historical version dates and boundaries are reconstructed from package version c
 - Fixed Enter/send failing in projects over 20,000 files: removed workspace file-count/total-size limits, bounded capture concurrency and reuse of unchanged/identical blobs.
 - Resolve unavailable ChatGPT Codex models from the app-server catalog without changing CLI configuration.
 
-[Unreleased]: https://github.com/nh-kng/agent-tandem/compare/2bddae8575a72d8a0341d78b4c7176f38235d861...HEAD
+[Unreleased]: https://github.com/nh-kng/agent-tandem/compare/6d0ed39b1ef87f399d93117f931e19dd73088837...HEAD
+[0.1.41]: https://github.com/nh-kng/agent-tandem/compare/f8f13a992dfd139d2e7d38ba5380219444346047...6d0ed39b1ef87f399d93117f931e19dd73088837
+[0.1.40]: https://github.com/nh-kng/agent-tandem/compare/0417483d87e64849e83cce371f266b31830613d7...f8f13a992dfd139d2e7d38ba5380219444346047
+[0.1.39]: https://github.com/nh-kng/agent-tandem/compare/10ab9daee2380b84f6ad3d8b0aa0ed999d3dc844...0417483d87e64849e83cce371f266b31830613d7
+[0.1.38]: https://github.com/nh-kng/agent-tandem/compare/074c7fdb9e4a70582c401e301f0d4b3757f321e8...10ab9daee2380b84f6ad3d8b0aa0ed999d3dc844
+[0.1.36]: https://github.com/nh-kng/agent-tandem/compare/2bddae8575a72d8a0341d78b4c7176f38235d861...074c7fdb9e4a70582c401e301f0d4b3757f321e8
 [0.1.35]: https://github.com/nh-kng/agent-tandem/compare/4e54c88915fe2ced7f152c2bf3e3500e965858da...2bddae8575a72d8a0341d78b4c7176f38235d861
 [0.1.34]: https://github.com/nh-kng/agent-tandem/compare/c0188777a174d5f37934c3f96d50c90dd4272381...4e54c88915fe2ced7f152c2bf3e3500e965858da
 [0.1.33]: https://github.com/nh-kng/agent-tandem/compare/b3f83a893a603c69cd31db3b97217523478277c5...c0188777a174d5f37934c3f96d50c90dd4272381

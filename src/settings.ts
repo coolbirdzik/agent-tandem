@@ -7,7 +7,7 @@ import type { ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
 import { PRICING_CHECKED_AT, PRICING_SOURCES, type ApiCost } from './core/api-pricing';
 import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates, quotaMeters, sameQuotaCycle, quotaObservations, quotaTrends } from './core/quota-estimate';
-import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel } from './core/usage-account';
+import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel, type UsageAccount } from './core/usage-account';
 import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
 import { bankedResetDetails } from './core/banked-resets';
@@ -21,6 +21,7 @@ import { conversationTime, matchesConversation, type ConversationFilter } from '
 import { quotaCycleCharts } from './ui/quota-cycle-charts';
 import { observeQuotaCycleStarts, quotaCycleScope } from './core/quota-cycle-start';
 import { storageUsageLevel, storageSize } from './core/storage-usage';
+import { quotaWindowLabel } from './ui/quota-window-label';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 autoHideScrollbars();
@@ -30,6 +31,24 @@ const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => {
   const value = document.createElement(tag); if (text !== undefined) value.textContent = text; if (className) value.className = className; return value;
 };
+/** Compact "Banked resets" summary; the per-reset expiry lines open in a popover on hover, focus or click. */
+function bankedResetPopover(resets: Parameters<typeof bankedResetDetails>[0]): HTMLElement | undefined {
+  const [summary, ...lines] = bankedResetDetails(resets); if (!summary) return undefined;
+  const wrap = node('div', undefined, 'banked-reset');
+  if (!lines.length) { wrap.append(node('span', summary, 'muted')); return wrap; }
+  const trigger = node('button', summary, 'banked-reset-trigger quiet'); trigger.type = 'button'; trigger.setAttribute('aria-haspopup', 'true'); trigger.setAttribute('aria-expanded', 'false');
+  const panel = node('div', undefined, 'banked-reset-popover'); panel.setAttribute('role', 'tooltip');
+  for (const line of lines) panel.append(node('p', line));
+  let pinned = false, hovered = false;
+  const setOpen = (open: boolean) => { wrap.dataset.open = String(open); trigger.setAttribute('aria-expanded', String(open)); };
+  wrap.onmouseenter = () => { hovered = true; setOpen(true); };
+  wrap.onmouseleave = () => { hovered = false; if (!pinned && !wrap.contains(document.activeElement)) setOpen(false); };
+  wrap.addEventListener('focusin', () => setOpen(true));
+  wrap.addEventListener('focusout', event => { if (!pinned && !hovered && !wrap.contains(event.relatedTarget as Node | null)) setOpen(false); });
+  trigger.onclick = () => { pinned = !pinned; setOpen(pinned); };
+  wrap.onkeydown = event => { if (event.key === 'Escape') { pinned = false; trigger.focus(); setOpen(false); event.stopPropagation(); } };
+  wrap.append(trigger, panel); return wrap;
+}
 const numberFormat = new Intl.NumberFormat();
 const compactFormat = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 const moneyFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
@@ -40,6 +59,8 @@ const costLabel = (cost: ApiCost) => !cost.pricedTokens && cost.unpricedTokens ?
 let state: UsageDashboardState | undefined, initialized = false, currentPage = 'dashboard';
 let currentStoragePage = 'conversations', nativeScanRequested = false;
 let periodLimit = 60, modelSignature = '', accountSignature = '';
+interface AccountChoice { provider?: ConversationProvider; title: string; info: string }
+let accountChoices = new Map<string, AccountChoice>();
 const collapsedPeriods = new Set<string>(); let periodsCollapsed = false, modelSlots = new Map<string, number>();
 let conversationLimit = 20, selectedUsageConversation: string | undefined;
 let accountPlatform: AccountProvider | '' = '';
@@ -62,13 +83,16 @@ document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => {
     event.preventDefault(); showTab(DASHBOARD_TABS[(next + DASHBOARD_TABS.length) % DASHBOARD_TABS.length]!, true);
   };
 });
-const RANGE_CHIPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time'], ['custom', 'Custom'], ['cycle-5h', '5h cycle'], ['cycle-weekly', 'Weekly cycle']] as const;
+const RANGE_CHIPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time'], ['custom', 'Custom'], ['cycle-5h', '5-hour cycle'], ['cycle-weekly', 'Weekly cycle']] as const;
 function renderRangeChips() {
   const root = el('range-chips'), value = el<HTMLSelectElement>('filter-range').value;
   if (!root.children.length) for (const [key, label] of RANGE_CHIPS) {
     if (key === 'cycle-5h') { const divider = node('span', undefined, 'range-divider'); divider.setAttribute('aria-hidden', 'true'); root.append(divider); }
     const chip = node('button', label, 'range-chip'); chip.type = 'button'; chip.dataset.range = key;
-    if (key.startsWith('cycle-')) { chip.title = 'Usage of one account between its quota resets'; const icon = node('span', undefined, 'codicon codicon-history'); icon.setAttribute('aria-hidden', 'true'); chip.prepend(icon); }
+    if (key.startsWith('cycle-')) {
+      chip.title = 'Usage of one account between its quota resets';
+      const icon = node('span', undefined, 'codicon codicon-history'); icon.setAttribute('aria-hidden', 'true'); chip.prepend(icon);
+    }
     chip.onclick = () => { const select = el<HTMLSelectElement>('filter-range'); if (select.value !== key) { select.value = key; select.dispatchEvent(new Event('change')); } };
     root.append(chip);
   }
@@ -118,8 +142,8 @@ function renderCycleBar() {
   el<HTMLButtonElement>('cycle-prev').disabled = cycleIndex >= cycles.length - 1;
   el<HTMLButtonElement>('cycle-next').disabled = cycleIndex <= 0;
   el<HTMLButtonElement>('cycle-current').disabled = cycleIndex === 0;
-  if (!account) { title.textContent = `No account for ${window} cycles`; meta.textContent = 'Sign in, or choose an account, to follow its quota cycles.'; return; }
-  if (!cycle) { title.textContent = `No ${window} cycles recorded yet`; meta.textContent = "AgentTandem records a cycle when it reads this account's quota. Refresh quota while you use the account."; return; }
+  if (!account) { title.replaceChildren(quotaWindowLabel(`No account for ${window} cycles`)); meta.textContent = 'Sign in, or choose an account, to follow its quota cycles.'; return; }
+  if (!cycle) { title.replaceChildren(quotaWindowLabel(`No ${window} cycles recorded yet`)); meta.textContent = "AgentTandem records a cycle when it reads this account's quota. Refresh quota while you use the account."; return; }
   const now = Date.now();
   title.textContent = `${resetClock(cycle.from, now)} → ${resetClock(cycle.current ? cycle.resetsAt : cycle.to, now)}`;
   meta.textContent = [cycle.current ? `Current · resets in ${compactCountdown(cycle.resetsAt, now)}` : `${cycleIndex + 1} of ${cycles.length} recorded`,
@@ -133,9 +157,9 @@ el('cycle-current').onclick = () => { cycleIndex = 0; renderUsage(); };
 /** Local tokens and cost, quota and unattributed tokens for the current selection. */
 function renderSummary(filters: UsageFilters, result: ReturnType<typeof usageBreakdown>) {
   const root = el('summary'); root.replaceChildren();
-  const card = (label: string, value: string, detail: string, title?: string) => {
+  const card = (label: string, value: string, detail: string | HTMLElement, title?: string) => {
     const item = node('div', undefined, 'summary-card'), amount = node('strong', value); if (title) amount.title = title;
-    item.append(node('span', label), amount, node('small', detail)); root.append(item); return item;
+    item.append(node('span', label), amount, typeof detail === 'string' ? node('small', detail) : detail); root.append(item); return item;
   };
   card('Tokens', compact(result.totals.total), `${number(result.totals.requests)} requests · Local`, number(result.totals.total));
   card('API equivalent', costLabel(result.cost), 'Estimate · local tokens × API prices', `${result.cost.usd.toFixed(6)} USD`);
@@ -145,10 +169,12 @@ function renderSummary(filters: UsageFilters, result: ReturnType<typeof usageBre
   const windows = (accountId ? dashboardAccountStatus(provider) : state?.accounts?.[provider])?.quota?.windows ?? [];
   if (window && cycle) {
     const live = cycle.current ? windows.find(row => row.label === (window === '5h' ? '5h' : '7d'))?.usedPercent : undefined, used = live ?? cycle.usedPercent;
-    card('Quota used', used === undefined ? '—' : percent(used), `${window} cycle · ${cycle.current ? 'live reading' : 'highest reading'}`);
+    card('Quota used', used === undefined ? '—' : percent(used), quotaWindowLabel(`${window} cycle · ${cycle.current ? 'live reading' : 'highest reading'}`, 'small'));
   } else {
     const tightest = windows.reduce<typeof windows[number] | undefined>((best, row) => !best || row.usedPercent > best.usedPercent ? row : best, undefined);
-    card('Quota left', tightest ? percent(Math.max(0, 100 - tightest.usedPercent)) : '—', tightest ? `${providerName(provider)} ${tightest.label}${tightest.resetsAt ? ` · resets in ${compactCountdown(tightest.resetsAt)}` : ''}` : `${providerName(provider)} quota unavailable`);
+    const detail = tightest ? quotaWindowLabel(`${providerName(provider)} ${tightest.label}`, 'small') : node('small', `${providerName(provider)} quota unavailable`);
+    if (tightest?.resetsAt) detail.append(document.createTextNode(` · resets in ${compactCountdown(tightest.resetsAt)}`));
+    card('Quota left', tightest ? percent(Math.max(0, 100 - tightest.usedPercent)) : '—', detail);
   }
   // A selected account hides its provider's unknown history, so show that beside the account's own total.
   const unknownFilters = accountId ? { ...filters, provider, accountId: UNKNOWN_ACCOUNT } : { ...filters, accountId: UNKNOWN_ACCOUNT };
@@ -306,12 +332,6 @@ el('attribution-form').onsubmit = event => {
   const scope = assignmentScope(), accountId = el<HTMLSelectElement>('attribution-account').value;
   if (!state?.attributionBusy && validAssignmentScope(scope) && accountId) send('usageAttribution', { action: 'assign', scope, accountId: accountId === UNKNOWN_ACCOUNT ? null : accountId });
 };
-el('account-detail-back').onclick = () => {
-  for (const id of ['filter-account', 'filter-provider', 'filter-model']) el<HTMLSelectElement>(id).value = '';
-  // A cycle belongs to one account, so all accounts return to a calendar range.
-  if (cycleWindow()) el<HTMLSelectElement>('filter-range').value = 'today';
-  renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace(); el('dashboard').scrollIntoView?.({ block: 'start' });
-};
 el('storage-refresh').onclick = () => send('storage'); el('storage-reveal').onclick = () => send('revealStorage');
 el('storage-preview').onclick = () => send('previewCleanup'); el('storage-cancel').onclick = () => send('storage');
 el('storage-clean').onclick = () => { if (state?.storage?.plan) send('cleanup', { token: state.storage.plan.token }); };
@@ -441,6 +461,9 @@ el<HTMLSelectElement>('default-grouping').onchange = () => {
 };
 for (const id of ['filter-provider', 'filter-account', 'filter-model', 'filter-range', 'filter-group', 'filter-from', 'filter-to']) el(id).onchange = () => {
   if (['filter-provider', 'filter-account', 'filter-range'].includes(id)) cycleIndex = 0;
+  if (id === 'filter-account') el<HTMLSelectElement>('filter-provider').value = '';
+  // A cycle belongs to one account, so all accounts return to a calendar range.
+  if (id === 'filter-account' && !el<HTMLSelectElement>(id).value && cycleWindow()) el<HTMLSelectElement>('filter-range').value = 'today';
   periodLimit = 60; renderUsage(); renderAccounts(); renderQuotaEstimates(); renderQuotaPace();
 };
 el('reset-filters').onclick = () => {
@@ -528,6 +551,45 @@ function renderApiActivity(filters: UsageFilters) {
   } else root.append(node('p', 'No API daily buckets were reported for the selected range. Local token usage below shows recorded activity on this device.', 'muted'));
   details.append(node('p', 'Claude: local token history, native API quota.', 'muted'));
 }
+function syncStickyLayout() {
+  document.documentElement.style.setProperty('--settings-header-h', `${document.querySelector<HTMLElement>('.settings-header')?.offsetHeight ?? 0}px`);
+  document.documentElement.style.setProperty('--account-picker-h', `${el('account-picker').offsetHeight}px`);
+}
+syncStickyLayout(); window.addEventListener('resize', syncStickyLayout);
+if (typeof ResizeObserver !== 'undefined') {
+  const observer = new ResizeObserver(syncStickyLayout);
+  observer.observe(document.querySelector('.settings-header')!); observer.observe(el('account-picker'));
+}
+const providerLabel = (provider: ConversationProvider) => provider === 'Claude' ? 'Claude Code' : provider;
+function accountPickerItem(choice: AccountChoice | undefined, element: 'button' | 'span' = 'span') {
+  const item = node(element, undefined, 'account-picker-item');
+  item.append(choice?.provider ? providerIcon(choice.provider) : node('span', undefined, `codicon ${choice ? 'codicon-question' : 'codicon-account'} account-picker-mark`));
+  const text = node('span', undefined, 'account-picker-text');
+  text.append(node('strong', choice?.title ?? 'All accounts'), node('small', choice ? [choice.provider && providerLabel(choice.provider), choice.info].filter(Boolean).join(' · ') : 'Every provider and account', 'muted'));
+  item.append(text); return item;
+}
+function setAccountMenu(open: boolean) {
+  const menu = el('account-picker-menu'), trigger = el('account-picker-trigger');
+  menu.hidden = !open; trigger.setAttribute('aria-expanded', String(open));
+  if (open) (menu.querySelector<HTMLElement>('[aria-selected=true]') ?? menu.querySelector<HTMLElement>('[role=option]'))?.focus();
+}
+function renderAccountPicker(ids: string[]) {
+  const select = el<HTMLSelectElement>('filter-account'), trigger = el('account-picker-trigger'), menu = el('account-picker-menu');
+  trigger.replaceChildren(accountPickerItem(accountChoices.get(select.value) ?? (select.value ? { title: 'Unknown account', info: '' } : undefined)), node('span', undefined, 'codicon codicon-chevron-down account-picker-caret'));
+  menu.replaceChildren(...[''].concat(ids).map(id => {
+    const option = accountPickerItem(id ? accountChoices.get(id) : undefined, 'button'); option.setAttribute('role', 'option'); option.dataset.value = id;
+    option.setAttribute('aria-selected', String(id === select.value)); option.tabIndex = -1;
+    option.onclick = () => { setAccountMenu(false); trigger.focus(); if (select.value !== id) { select.value = id; select.dispatchEvent(new Event('change')); } };
+    return option;
+  }));
+}
+el('account-picker-trigger').onclick = () => setAccountMenu(el('account-picker-menu').hidden);
+el('account-picker-menu').onkeydown = event => {
+  const options = [...el('account-picker-menu').querySelectorAll<HTMLElement>('[role=option]')], at = options.indexOf(document.activeElement as HTMLElement);
+  if (event.key === 'Escape') { event.preventDefault(); setAccountMenu(false); el('account-picker-trigger').focus(); }
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); options[(at + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); }
+};
+document.addEventListener('click', event => { if (!el('account-picker').contains(event.target as Node)) setAccountMenu(false); });
 function providerIcon(provider: ConversationProvider) {
   const image = node('img', undefined, 'provider-icon'); image.alt = ''; image.dataset.provider = provider;
   image.src = document.body.dataset[`${provider.toLowerCase()}Icon`] ?? ''; return image;
@@ -578,12 +640,12 @@ function renderAccounts() {
     const windows = node('div', undefined, 'account-windows');
     for (const window of status?.quota?.windows ?? []) {
       const row = node('div', undefined, 'account-window'); row.dataset.low = String(window.usedPercent >= 90);
-      const remaining = Math.max(0, 100 - window.usedPercent), label = node('div', undefined, 'account-window-label'); label.append(node('span', window.label), node('span', `${Math.round(remaining * 10) / 10}% left`));
+      const remaining = Math.max(0, 100 - window.usedPercent), label = node('div', undefined, 'account-window-label'); label.append(quotaWindowLabel(window.label), node('span', `${Math.round(remaining * 10) / 10}% left`));
       const meter = node('progress'); meter.max = 100; meter.value = remaining; meter.setAttribute('aria-label', `${provider} ${window.label} quota remaining`);
       row.append(label, meter); if (window.resetsAt) row.append(node('span', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
       windows.append(row);
     }
-    for (const line of bankedResetDetails(status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
+    { const banked = bankedResetPopover(status?.quota?.bankedResets); if (banked) windows.append(banked); }
     if (!windows.children.length) windows.append(node('span', status?.quota?.detail || status?.error || 'Quota unavailable', 'muted'));
     if (status?.status === 'loading') windows.append(node('span', 'Updating…', 'muted'));
     item.append(windows); const reset = codexResetControls(provider, status); if (reset) item.append(reset); root.append(item);
@@ -618,13 +680,7 @@ function currentQuotaCycleStarts(provider: ConversationProvider, account = dashb
 }
 function renderAccountGroups(filters: UsageFilters) {
   const selected = !!filters.accountId;
-  el('account-overview').hidden = selected; el('account-detail-bar').hidden = !selected;
-  if (selected) {
-    const group = dashboardGroups(filters).find(row => (!filters.provider || row.provider === filters.provider) && row.account?.id === filters.accountId);
-    const provider = group?.provider ?? filters.provider;
-    el('account-detail-title').textContent = group?.label || group?.account?.email || 'Unknown account';
-    el('account-detail-meta').textContent = `${provider === 'Claude' ? 'Claude Code' : provider ?? ''} · ${group?.account ? usageAccountLabel(group.account) : 'Unattributed history'}`;
-  }
+  el('account-overview').hidden = selected;
   const root = el('account-groups'); root.replaceChildren();
   for (const group of dashboardGroups(filters)) {
     const id = group.account?.id ?? UNKNOWN_ACCOUNT, item = node('article', undefined, 'account-group'); item.dataset.provider = group.provider;
@@ -646,7 +702,7 @@ function renderAccountGroups(filters: UsageFilters) {
     const windows = node('div', undefined, 'account-group-windows');
     for (const window of group.status?.quota?.windows ?? []) {
       const row = node('div', undefined, 'account-group-window'), line = node('div');
-      line.append(node('span', window.label), node('strong', `${Math.round((100 - window.usedPercent) * 10) / 10}% left`));
+      line.append(quotaWindowLabel(window.label), node('strong', `${Math.round((100 - window.usedPercent) * 10) / 10}% left`));
       const tick = quotaTicks(group.provider, group.status).find(t => t.windowId === window.id), rate = tick && quotaPace(state?.quotaTicks ?? [], tick).percentPerHour;
       if (rate !== undefined) line.append(node('span', `${number(Math.round(rate * 10) / 10)}% / hour`, 'muted'));
       row.dataset.low = String(window.usedPercent >= 90);
@@ -656,7 +712,7 @@ function renderAccountGroups(filters: UsageFilters) {
       if (window.resetsAt) row.append(node('small', `Resets ${new Date(window.resetsAt).toLocaleString()}`, 'muted'));
       windows.append(row);
     }
-    for (const line of bankedResetDetails(group.status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
+    { const banked = bankedResetPopover(group.status?.quota?.bankedResets); if (banked) windows.append(banked); }
     if (!windows.children.length) windows.append(node('small', group.account ? group.status?.quota?.detail || 'No quota snapshot' : 'Quota cannot be assigned to unknown history', 'muted'));
     item.append(windows);
     const reset = group.active && codexResetControls(group.provider, group.status); if (reset) item.append(reset);
@@ -723,14 +779,14 @@ function renderManagedAccounts() {
     item.append(heading, meta);
     const windows = node('div', undefined, 'managed-account-quota');
     for (const window of profile.status?.quota?.windows ?? []) {
-      const row = node('div'), label = node('span', `${window.label} · ${Math.round((100 - window.usedPercent) * 10) / 10}% left`), meter = node('progress'); meter.max = 100; meter.value = Math.max(0, 100 - window.usedPercent); meter.setAttribute('aria-label', `${profile.label} ${window.label} quota remaining`);
+      const row = node('div'), label = quotaWindowLabel(`${window.label} · ${Math.round((100 - window.usedPercent) * 10) / 10}% left`), meter = node('progress'); meter.max = 100; meter.value = Math.max(0, 100 - window.usedPercent); meter.setAttribute('aria-label', `${profile.label} ${window.label} quota remaining`);
       if (window.resetsAt) label.title = `Resets ${new Date(window.resetsAt).toLocaleString()}`;
       row.append(label, meter);
       const tick = isChatAccount(profile.provider) ? quotaTicks(profile.provider, profile.status).find(t => t.windowId === window.id) : undefined;
       if (tick) { const pace = quotaPace(state?.quotaTicks ?? [], tick); if (pace.percentPerHour !== undefined) row.append(node('small', `${number(Math.round(pace.percentPerHour * 10) / 10)}% / hour`, 'muted')); }
       windows.append(row);
     }
-    for (const line of bankedResetDetails(profile.status?.quota?.bankedResets)) windows.append(node('p', line, 'muted banked-reset-detail'));
+    { const banked = bankedResetPopover(profile.status?.quota?.bankedResets); if (banked) windows.append(banked); }
     const reset = profile.active && codexResetControls(profile.provider, profile.status); if (reset) windows.append(reset);
     if (!windows.children.length) windows.append(node('p', profile.status?.error || (isChatAccount(profile.provider) ? profile.status?.quota?.detail || 'Refresh to check sign-in and quota' : 'Sign-in saved locally · quota in app'), 'muted'));
     item.append(windows);
@@ -787,7 +843,7 @@ function renderQuotaPace() {
     const long = burn.end - burn.start > 36 * 3600000, span = Math.max(1, burn.end - burn.start), name = provider === 'Claude' ? 'Claude Code' : provider;
     const x = (at: number) => Math.min(1000, Math.max(0, (at - burn.start) / span * 1000)), y = (remaining: number) => 100 - remaining;
     const item = node('article', undefined, 'quota-pace-card'); item.dataset.provider = provider; item.dataset.low = String(beforeReset);
-    const heading = node('div', undefined, 'quota-pace-heading'); heading.append(providerIcon(provider), node('span', `${name} · ${tick.label}`)); item.append(heading);
+    const heading = node('div', undefined, 'quota-pace-heading'); heading.append(providerIcon(provider), quotaWindowLabel(`${name} · ${tick.label}`)); item.append(heading);
     item.append(node('strong', `${percent(burn.remaining)} left`));
     const verdict = node('p', undefined, 'burn-verdict'), icon = node('span', undefined, 'codicon'); icon.setAttribute('aria-hidden', 'true');
     verdict.dataset.state = rate === undefined || early ? 'pending' : beforeReset ? 'over' : 'ok';
@@ -874,7 +930,7 @@ function renderConversations(filters: UsageFilters) {
     const otherKnownAccount = result.accounts.some(row => row.account && row.account.id !== identity?.id);
     const uncertain = conversation.days.some(row => !!row.accountSource && usageBreakdown([row], filters).totals.total > 0);
     if (trend.tokensPerPercent && ((matched && !uncertain) || (trend.source === 'Device' && !otherKnownAccount))) {
-      const estimate = node('span', `≈ ${number(Math.round(t.total / trend.tokensPerPercent * 10) / 10)}% ${trend.label} equivalent`, 'muted');
+      const estimate = quotaWindowLabel(`≈ ${number(Math.round(t.total / trend.tokensPerPercent * 10) / 10)}% ${trend.label} equivalent`, 'span', 'muted');
       estimate.title = `${trend.source} estimate from tokens per 1%. This is not measured per-conversation quota consumption.`; quotaRoot.append(estimate);
     }
   }
@@ -907,7 +963,7 @@ function renderQuotaEstimates() {
       const waiting = baseline ? tokenDelta > 0 && quotaDelta <= 0 ? 'Waiting for quota to increase' : quotaDelta > 0 && tokenDelta <= 0 ? 'Waiting for API tokens to update' : 'Waiting for new usage'
         : meter ? 'API baseline saved · Waiting for new usage' : estimate.reason === 'No tokens attributed to this account in this window' ? 'No tokens recorded this cycle' : estimate.reason;
       const row = node('div', undefined, 'quota-estimate-row'), label = node('div', undefined, 'quota-estimate-label');
-      label.append(node('strong', estimate.label), node('span', estimate.usedPercent === undefined ? '—' : `${estimate.usedPercent}% used`, 'muted')); row.append(label);
+      label.append(quotaWindowLabel(estimate.label, 'strong'), node('span', estimate.usedPercent === undefined ? '—' : `${estimate.usedPercent}% used`, 'muted')); row.append(label);
       if (trend.tokensPerPercent === undefined) {
         const pending = node('p', waiting, 'muted');
         if (baseline) pending.title = `API baseline saved · ${number(tokenDelta)} new tokens · ${number(quotaDelta)} quota percentage points`;
@@ -1090,19 +1146,25 @@ function renderUsage() {
   const window = cycleWindow(), target = window ? cycleAccount() : undefined;
   if (target) el<HTMLSelectElement>('filter-provider').value = target.provider;
   el<HTMLSelectElement>('filter-group').disabled = !!window;
-  const provider = el<HTMLSelectElement>('filter-provider').value as ConversationProvider | '', modelSelect = el<HTMLSelectElement>('filter-model');
+  // A specific account already implies its provider, so the Provider filter is hidden and must not narrow the account list.
+  const pickedAccount = el<HTMLSelectElement>('filter-account').value, accountPinned = !!pickedAccount && pickedAccount !== UNKNOWN_ACCOUNT;
+  const provider = (accountPinned && !window ? '' : el<HTMLSelectElement>('filter-provider').value) as ConversationProvider | '', modelSelect = el<HTMLSelectElement>('filter-model');
+  const pickerProvider = accountPinned || target ? '' : provider;
   const accountSelect = el<HTMLSelectElement>('filter-account'), previousAccount = accountSelect.value;
-  const accounts = new Map<string, string>();
-  for (const row of state.data?.days ?? []) if (!provider || row.provider === provider) {
-    accounts.set(row.account?.id ?? UNKNOWN_ACCOUNT, row.account ? `${usageAccountLabel(row.account)} · ${row.provider}` : 'Unknown account');
+  const accounts = new Map<string, string>(), choices = new Map<string, AccountChoice>();
+  const choice = (account: UsageAccount, title = account.email): AccountChoice => ({ provider: account.provider, title, info: account.organization || account.nativeAccountId || (title === account.email ? account.method : account.email) });
+  for (const row of state.data?.days ?? []) if (!pickerProvider || row.provider === pickerProvider) {
+    const id = row.account?.id ?? UNKNOWN_ACCOUNT;
+    accounts.set(id, row.account ? `${usageAccountLabel(row.account)} · ${row.provider}` : 'Unknown account');
+    choices.set(id, row.account ? choice(row.account) : { title: 'Unknown account', info: 'Unattributed history' });
   }
-  for (const agent of ['Codex', 'Claude'] as const) if (!provider || agent === provider) {
+  for (const agent of ['Codex', 'Claude'] as const) if (!pickerProvider || agent === pickerProvider) {
     const account = usageAccount(agent, state.accounts?.[agent]?.account);
-    if (account) accounts.set(account.id, `${usageAccountLabel(account)} · ${agent}`);
+    if (account) { accounts.set(account.id, `${usageAccountLabel(account)} · ${agent}`); choices.set(account.id, choice(account)); }
   }
-  for (const profile of state.managedAccounts ?? []) if (isChatAccount(profile.provider) && (!provider || profile.provider === provider)) {
+  for (const profile of state.managedAccounts ?? []) if (isChatAccount(profile.provider) && (!pickerProvider || profile.provider === pickerProvider)) {
     const account = usageAccount(profile.provider, profile.status?.account || profile.identity);
-    if (account) accounts.set(account.id, `${profile.label} · ${usageAccountLabel(account)} · ${profile.provider}`);
+    if (account) { accounts.set(account.id, `${profile.label} · ${usageAccountLabel(account)} · ${profile.provider}`); choices.set(account.id, choice(account, profile.label)); }
   }
   const accountOptions = [...accounts].sort((a, b) => a[1].localeCompare(b[1])), nextAccountSignature = JSON.stringify(accountOptions);
   if (accountSignature !== nextAccountSignature) {
@@ -1113,6 +1175,8 @@ function renderUsage() {
   }
   if (target && accounts.has(target.id)) accountSelect.value = target.id;
   const accountId = accountSelect.value;
+  el('filter-provider').parentElement!.hidden = !!accountId && accountId !== UNKNOWN_ACCOUNT;
+  accountChoices = choices; renderAccountPicker(accountOptions.map(([id]) => id));
   const models = [...new Set(state.data?.days.filter(row => (!provider || row.provider === provider) && (!accountId || (row.account?.id ?? UNKNOWN_ACCOUNT) === accountId)).map(row => row.model) ?? [])].sort();
   const signature = JSON.stringify(models);
   if (modelSignature !== signature) {

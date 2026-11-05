@@ -65,140 +65,154 @@
       "agent-tandem-codex": {
         "description": "AgentTandem Codex provider logo",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E001"
         }
       },
       "agent-tandem-claude": {
         "description": "AgentTandem Claude Code provider logo",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E002"
+        }
+      },
+      "agent-tandem-quota-window-5h": {
+        "description": "AgentTandem boxed five-hour quota window",
+        "default": {
+          "fontPath": "./media/status-bar-icons-filled.ttf",
+          "fontCharacter": "\\E030"
+        }
+      },
+      "agent-tandem-quota-window-7d": {
+        "description": "AgentTandem boxed seven-day quota window",
+        "default": {
+          "fontPath": "./media/status-bar-icons-filled.ttf",
+          "fontCharacter": "\\E031"
         }
       },
       "agent-tandem-quota-ring-0": {
         "description": "AgentTandem quota ring at 0/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E010"
         }
       },
       "agent-tandem-quota-ring-1": {
         "description": "AgentTandem quota ring at 1/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E011"
         }
       },
       "agent-tandem-quota-ring-2": {
         "description": "AgentTandem quota ring at 2/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E012"
         }
       },
       "agent-tandem-quota-ring-3": {
         "description": "AgentTandem quota ring at 3/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E013"
         }
       },
       "agent-tandem-quota-ring-4": {
         "description": "AgentTandem quota ring at 4/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E014"
         }
       },
       "agent-tandem-quota-ring-5": {
         "description": "AgentTandem quota ring at 5/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E015"
         }
       },
       "agent-tandem-quota-ring-6": {
         "description": "AgentTandem quota ring at 6/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E016"
         }
       },
       "agent-tandem-quota-ring-7": {
         "description": "AgentTandem quota ring at 7/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E017"
         }
       },
       "agent-tandem-quota-ring-8": {
         "description": "AgentTandem quota ring at 8/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E018"
         }
       },
       "agent-tandem-quota-level-0": {
         "description": "AgentTandem quota column at 0/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E020"
         }
       },
       "agent-tandem-quota-level-1": {
         "description": "AgentTandem quota column at 1/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E021"
         }
       },
       "agent-tandem-quota-level-2": {
         "description": "AgentTandem quota column at 2/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E022"
         }
       },
       "agent-tandem-quota-level-3": {
         "description": "AgentTandem quota column at 3/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E023"
         }
       },
       "agent-tandem-quota-level-4": {
         "description": "AgentTandem quota column at 4/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E024"
         }
       },
       "agent-tandem-quota-level-5": {
         "description": "AgentTandem quota column at 5/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E025"
         }
       },
       "agent-tandem-quota-level-6": {
         "description": "AgentTandem quota column at 6/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E026"
         }
       },
       "agent-tandem-quota-level-7": {
         "description": "AgentTandem quota column at 7/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E027"
         }
       },
       "agent-tandem-quota-level-8": {
         "description": "AgentTandem quota column at 8/8 remaining",
         "default": {
-          "fontPath": "./media/provider-icons.ttf",
+          "fontPath": "./media/status-bar-icons-filled.ttf",
           "fontCharacter": "\\E028"
         }
       }
@@ -270,8 +284,9 @@
       },
       {
         "command": "agentTandem.openSettings",
-        "title": "AgentTandem: Open Settings and Usage Dashboard",
-        "icon": "$(dashboard)"
+        "title": "Settings",
+        "icon": "$(dashboard)",
+        "category": "AgentTandem"
       },
       {
         "command": "agentTandem.openStorage",
@@ -317,8 +332,9 @@
       },
       {
         "command": "agentTandem.openInTab",
-        "title": "AgentTandem: Open in Editor Tab",
-        "icon": "$(link-external)"
+        "title": "Open in tab",
+        "icon": "$(link-external)",
+        "category": "AgentTandem"
       },
       {
         "command": "agentTandem.openStepInEditor",
@@ -334,7 +350,8 @@
       },
       {
         "command": "agentTandem.manageCLIs",
-        "title": "AgentTandem: Manage CLIs"
+        "title": "Manage CLIs",
+        "category": "AgentTandem"
       },
       {
         "command": "agentTandem.toggleExternalReview",
@@ -356,13 +373,15 @@
       },
       {
         "command": "agentTandem.trackingControls",
-        "title": "AgentTandem: Change Tracking Controls",
-        "icon": "$(eye)"
+        "title": "Change tracking…",
+        "icon": "$(eye)",
+        "category": "AgentTandem"
       },
       {
         "command": "agentTandem.gettingStarted",
-        "title": "AgentTandem: Getting Started",
-        "icon": "$(book)"
+        "title": "Getting started",
+        "icon": "$(book)",
+        "category": "AgentTandem"
       },
       {
         "command": "agentTandem.refreshStorage",
@@ -406,9 +425,9 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "agentTandem.header.more",
-        "title": "More actions",
-        "icon": "$(ellipsis)"
+        "command": "agentTandem.diagnostics",
+        "title": "Diagnostics",
+        "category": "AgentTandem"
       }
     ],
     "viewsContainers": {
@@ -432,9 +451,39 @@
     "menus": {
       "view/title": [
         {
-          "command": "agentTandem.header.more",
+          "command": "agentTandem.stop",
+          "when": "view == agentTandem.panel && agentTandem.running",
+          "group": "1_actions@0"
+        },
+        {
+          "command": "agentTandem.openInTab",
           "when": "view == agentTandem.panel",
-          "group": "navigation@5"
+          "group": "1_actions@1"
+        },
+        {
+          "command": "agentTandem.openSettings",
+          "when": "view == agentTandem.panel",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "agentTandem.trackingControls",
+          "when": "view == agentTandem.panel",
+          "group": "1_actions@3"
+        },
+        {
+          "command": "agentTandem.gettingStarted",
+          "when": "view == agentTandem.panel",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "agentTandem.manageCLIs",
+          "when": "view == agentTandem.panel",
+          "group": "2_tools@1"
+        },
+        {
+          "command": "agentTandem.diagnostics",
+          "when": "view == agentTandem.panel",
+          "group": "2_tools@2"
         }
       ],
       "editor/title": [
@@ -457,6 +506,36 @@
           "command": "agentTandem.openImageChanges",
           "when": "resourceExtname =~ /^.(png|apng|jpe?g|jfif|gif|webp|bmp|ico|avif|svg|tiff?)$/i && gitOpenRepositoryCount != 0 && !agentTandem.changeNavigation",
           "group": "navigation@9"
+        },
+        {
+          "command": "agentTandem.stop",
+          "when": "activeWebviewPanelId == 'agentTandem.preview' && agentTandem.running",
+          "group": "1_actions@0"
+        },
+        {
+          "command": "agentTandem.openSettings",
+          "when": "activeWebviewPanelId == 'agentTandem.preview'",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "agentTandem.trackingControls",
+          "when": "activeWebviewPanelId == 'agentTandem.preview'",
+          "group": "1_actions@3"
+        },
+        {
+          "command": "agentTandem.gettingStarted",
+          "when": "activeWebviewPanelId == 'agentTandem.preview'",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "agentTandem.manageCLIs",
+          "when": "activeWebviewPanelId == 'agentTandem.preview'",
+          "group": "2_tools@1"
+        },
+        {
+          "command": "agentTandem.diagnostics",
+          "when": "activeWebviewPanelId == 'agentTandem.preview'",
+          "group": "2_tools@2"
         }
       ],
       "editor/content": [
@@ -538,10 +617,6 @@
         },
         {
           "command": "agentTandem.header.refresh",
-          "when": "false"
-        },
-        {
-          "command": "agentTandem.header.more",
           "when": "false"
         }
       ],
@@ -834,7 +909,7 @@
           {
             "id": "usage",
             "title": "4. Check account, quota and token usage",
-            "description": "See where every number comes from: API, Local or Estimate.\n[Open dashboard](command:agentTandem.openSettings)",
+            "description": "See where every number comes from: API, Local or Estimate.\n[Open settings](command:agentTandem.openSettings)",
             "media": {
               "markdown": "docs/onboarding/usage.md"
             },
