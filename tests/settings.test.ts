@@ -6,7 +6,7 @@ import { apiCost } from '../src/core/api-pricing';
 import { usageAccount, UNKNOWN_ACCOUNT } from '../src/core/usage-account';
 import { codexTokenActivity } from '../src/core/api-token-activity';
 import { quotaMeters, type QuotaObservation } from '../src/core/quota-estimate';
-const postMessage = vi.fn(), listeners: EventListener[] = [];
+const postMessage = vi.fn(), listeners: [string, EventListener][] = [];
 const resources = { script: '/settings.js', style: '/settings.css', icons: '/codicon.css', claude: '/claude.svg', codex: '/codex.svg', cspSource: 'https://test.invalid', nonce: 'nonce' };
 const row = (day: string, provider: 'Codex' | 'Claude', model: string, total: number): UsageDay => ({ ...emptyTotals(), day, provider, model, input: total - 20, output: 20, cacheRead: 100, total, requests: 1 });
 const value: UsageDashboardState = { status: 'ready', preferences: { showQuotaInStatusBar: true, grouping: 'day' }, data: {
@@ -20,10 +20,10 @@ beforeEach(async () => {
   document.write(settingsHtml(resources).replace(/<link[^>]+>/g, '').replace(/<script[^>]*>[\s\S]*?<\/script>/g, ''));
   vi.stubGlobal('acquireVsCodeApi', () => ({ postMessage }));
   const add = window.addEventListener.bind(window);
-  vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => { if (type === 'message') listeners.push(listener as EventListener); add(type, listener, options); });
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, listener, options) => { if (['message', 'scroll', 'resize'].includes(type)) listeners.push([type, listener as EventListener]); add(type, listener, options); });
   await import('../src/settings.js');
 });
-afterEach(() => { for (const listener of listeners.splice(0)) window.removeEventListener('message', listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
+afterEach(() => { for (const [type, listener] of listeners.splice(0)) window.removeEventListener(type, listener); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Settings usage dashboard', () => {
   it('offers review cleanup presets next to the category and explains their different impact', () => {
     const storage = { status: 'ready' as const, root: 'root', categories: [{ label: 'Review snapshots & tracking', bytes: 4096, files: 3 }], retainedReviews: [{ project: 'D:/project', files: 7, undo: 1, bytes: 4096 }] };
@@ -448,6 +448,40 @@ describe('Settings usage dashboard', () => {
     const unknown = [...document.querySelectorAll<HTMLElement>('.account-group')].find(row => row.textContent?.includes('Unknown account'));
     unknown?.querySelector<HTMLButtonElement>('.account-group button.quiet:not(.account-group-open)')?.click();
     if (unknown) { expect(panel('details').hidden).toBe(false); expect(document.querySelector<HTMLDetailsElement>('#usage-attribution')!.open).toBe(true); }
+  });
+  it('reveals the start of a newly selected panel when dashboard tabs are pinned', () => {
+    render();
+    const tabs = document.querySelector<HTMLElement>('.dashboard-toolbar')!;
+    tabs.style.top = '140px'; tabs.style.marginBottom = '18px';
+    Object.defineProperty(tabs, 'offsetHeight', { configurable: true, value: 48 });
+    vi.spyOn(tabs, 'getBoundingClientRect').mockReturnValue({ top: 140 } as DOMRect);
+    vi.spyOn(document.getElementById('panel-quota')!, 'getBoundingClientRect').mockReturnValue({ top: -200 } as DOMRect);
+    vi.stubGlobal('scrollY', 950);
+    const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    document.getElementById('tab-quota')!.click();
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({ top: 544, behavior: 'instant' });
+    expect(tabs.hasAttribute('data-stuck')).toBe(true);
+    scroll.mockClear(); document.getElementById('tab-quota')!.click();
+    expect(scroll).not.toHaveBeenCalled();
+    const revealTab = vi.fn(); document.getElementById('tab-conversations')!.scrollIntoView = revealTab;
+    document.getElementById('tab-quota')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(document.getElementById('tab-conversations'));
+    expect(revealTab).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+  });
+  it('keeps the page in place when switching tabs before they become pinned', () => {
+    render();
+    const tabs = document.querySelector<HTMLElement>('.dashboard-toolbar')!;
+    tabs.style.top = '140px';
+    const rect = vi.spyOn(tabs, 'getBoundingClientRect').mockReturnValue({ top: 400 } as DOMRect);
+    vi.stubGlobal('scrollY', 50);
+    const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    document.getElementById('tab-quota')!.click();
+    expect(scroll).not.toHaveBeenCalled(); expect(tabs.hasAttribute('data-stuck')).toBe(false);
+    rect.mockReturnValue({ top: 140 } as DOMRect); window.dispatchEvent(new Event('resize'));
+    expect(tabs.hasAttribute('data-stuck')).toBe(true);
+    rect.mockReturnValue({ top: 400 } as DOMRect); window.dispatchEvent(new Event('resize'));
+    expect(tabs.hasAttribute('data-stuck')).toBe(false);
   });
   it('mirrors the date range in chips and offers quota cycles', () => {
     render();

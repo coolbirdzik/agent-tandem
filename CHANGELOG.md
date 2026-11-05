@@ -18,15 +18,17 @@ Historical version dates and boundaries are reconstructed from package version c
 - Popovers and dropdown menus now have a blurred translucent background, falling back to opaque in high-contrast and reduced-transparency modes.
 - Five-hour and weekly quota labels are now flat filled **5h** and **7d** badges across the status bar, hover, account picker, chat, account cards and dashboard. Status-bar Text style keeps plain labels.
 - The Dashboard, Accounts and Storage tab bars share one style and stay pinned below the Settings header; dashboard tabs show icons, and the Accounts app filter uses the same underlined tabs.
-- Dashboard account filter is now a sticky top-right picker showing each account's provider logo, email and details, replacing the "All accounts" back bar. The Provider filter is hidden while an account is selected.
+- Dashboard account filter is now a picker on the same sticky row as Overview, Quota, Conversations and Details showing each account's provider logo, email and details, replacing the "All accounts" back bar. The Provider filter is hidden while an account is selected.
 - Settings tab bar and dashboard period chips scroll horizontally in narrow panels instead of wrapping.
-- "Settings & dashboard" and "Open dashboard" are now "Settings" / "Open settings", and the account popup has a single **Open settings** entry instead of **Manage accounts**.
+- Open the dashboard through **Open Dashboard** in the sidebar toolbar, command palette, quota hover and account picker. Its editor tab is named **AgentTandem Dashboard**.
 - Account picker shows each quota period's percentage left with its reset countdown, without exact reset times.
 - Settings page titles match their tab names and no longer show a small label above.
 
 ### Fixed
 
-- Dashboard tabs stay clear of the account picker while scrolling, including in narrow panels, and quota-cycle views let you switch between Codex and Claude accounts without leaving the selected cycle range.
+- Dashboard tabs stay clear of the account picker while scrolling, including in narrow panels. Switching pinned Overview, Quota, Conversations or Details tabs reveals the start of the new section, and scrolling content stays behind the account picker.
+- Keyboard navigation keeps the selected dashboard tab visible in narrow panels.
+- Quota-cycle views let you switch between Codex and Claude accounts without leaving the selected cycle range.
 - Banked reset details reopen on hover or focus after being dismissed with Escape.
 - Settings search boxes, date pickers, dropdowns and expandable sections use the themed styling, and date fields and their calendar follow the VS Code light or dark theme.
 - The quota status-bar item turns warning at 25% or less left and error when exhausted, matching its hover.

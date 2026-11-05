@@ -284,7 +284,7 @@
       },
       {
         "command": "agentTandem.openSettings",
-        "title": "Settings",
+        "title": "Open Dashboard",
         "icon": "$(dashboard)",
         "category": "AgentTandem"
       },
@@ -666,7 +666,7 @@
         "agentTandem.showQuotaInStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show agent quota in the VS Code status bar. Customize agents and details in AgentTandem Settings > Preferences."
+          "description": "Show agent quota in the VS Code status bar. Customize agents and details in AgentTandem Dashboard > Preferences."
         },
         "agentTandem.statusBarProviders": {
           "type": "string",
@@ -909,7 +909,7 @@
           {
             "id": "usage",
             "title": "4. Check account, quota and token usage",
-            "description": "See where every number comes from: API, Local or Estimate.\n[Open settings](command:agentTandem.openSettings)",
+            "description": "See where every number comes from: API, Local or Estimate.\n[Open Dashboard](command:agentTandem.openSettings)",
             "media": {
               "markdown": "docs/onboarding/usage.md"
             },

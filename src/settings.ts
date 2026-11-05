@@ -68,11 +68,25 @@ let observedSwitchId: string | undefined;
 const DASHBOARD_TABS = ['overview', 'quota', 'conversations', 'details'] as const;
 type DashboardTab = typeof DASHBOARD_TABS[number];
 function showTab(tab: DashboardTab, focus = false) {
+  const tabs = document.querySelector<HTMLElement>('.dashboard-toolbar')!, styles = getComputedStyle(tabs);
+  const stickyTop = Number.parseFloat(styles.top);
+  const changed = tabs.querySelector('[aria-selected=true]')?.getAttribute('data-tab') !== tab;
+  const pinned = window.scrollY > 0 && tabs.getBoundingClientRect().top <= stickyTop + 1;
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => {
     const selected = button.dataset.tab === tab; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
-    if (selected && focus) button.focus();
   });
   for (const name of DASHBOARD_TABS) el(`panel-${name}`).hidden = name !== tab;
+  // A pinned tab switch starts at the new panel, even after scrolling deep into the old one.
+  if (changed && pinned) {
+    const top = el(`panel-${tab}`).getBoundingClientRect().top + window.scrollY - stickyTop - tabs.offsetHeight - (Number.parseFloat(styles.marginBottom) || 0);
+    window.scrollTo({ top: Math.max(0, top), behavior: 'instant' });
+  }
+  if (focus) {
+    const button = el(`tab-${tab}`);
+    button.focus({ preventScroll: true });
+    button.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+  }
+  syncStickyTabs();
 }
 document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => {
   button.onclick = () => showTab(button.dataset.tab as DashboardTab);
@@ -553,12 +567,22 @@ function renderApiActivity(filters: UsageFilters) {
 }
 function syncStickyLayout() {
   document.documentElement.style.setProperty('--settings-header-h', `${document.querySelector<HTMLElement>('.settings-header')?.offsetHeight ?? 0}px`);
-  document.documentElement.style.setProperty('--account-picker-h', `${el('account-picker').offsetHeight}px`);
+  syncStickyTabs();
+}
+function syncStickyTabs() {
+  const tabs = document.querySelector<HTMLElement>('.dashboard-toolbar')!;
+  const pinned = window.scrollY > 0 && tabs.getBoundingClientRect().top <= Number.parseFloat(getComputedStyle(tabs).top) + 1;
+  tabs.toggleAttribute('data-stuck', pinned);
 }
 syncStickyLayout(); window.addEventListener('resize', syncStickyLayout);
+let stickyFrame: number | undefined;
+window.addEventListener('scroll', () => {
+  stickyFrame ??= requestAnimationFrame(() => { stickyFrame = undefined; syncStickyTabs(); });
+}, { passive: true });
 if (typeof ResizeObserver !== 'undefined') {
   const observer = new ResizeObserver(syncStickyLayout);
   observer.observe(document.querySelector('.settings-header')!); observer.observe(el('account-picker'));
+  observer.observe(el('dashboard'));
 }
 const providerLabel = (provider: ConversationProvider) => provider === 'Claude' ? 'Claude Code' : provider;
 function accountPickerItem(choice: AccountChoice | undefined, element: 'button' | 'span' = 'span') {

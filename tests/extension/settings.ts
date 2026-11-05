@@ -54,7 +54,7 @@ export async function run() {
   await assert.rejects(Promise.resolve(vscode.commands.executeCommand('agentTandem.usageWindow', { from: 0, to: 9 * 86400000 })));
   await vscode.commands.executeCommand('agentTandem.usageWindow', null);
   assert.equal(api.usageDashboard().usageWindow, undefined, 'Leaving cycle mode clears the window');
-  const tabs = () => vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.label === 'AgentTandem Settings');
+  const tabs = () => vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.label === 'AgentTandem Dashboard');
   const started = Date.now();
   while (!tabs().length) {
     if (Date.now() - started > 8000) throw new Error('Settings editor tab did not appear.');

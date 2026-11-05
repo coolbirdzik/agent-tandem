@@ -17,7 +17,7 @@ export class SettingsView implements vscode.Disposable {
   open(page: 'dashboard' | 'storage' | 'accounts' = 'dashboard', storagePage?: 'restore' | 'unused') {
     this.page = page; this.storagePage = storagePage;
     if (this.panel) { this.panel.reveal(); void this.panel.webview.postMessage(page !== 'dashboard' ? { type: 'page', page, ...(storagePage ? { storagePage } : {}) } : { type: 'dashboard' }); this.update(true); return; }
-    const panel = vscode.window.createWebviewPanel('agentTandem.settings', 'AgentTandem Settings', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
+    const panel = vscode.window.createWebviewPanel('agentTandem.settings', 'AgentTandem Dashboard', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
     this.panel = panel;
     const webview = panel.webview;
     webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist'), vscode.Uri.joinPath(this.extensionUri, 'media')] };
