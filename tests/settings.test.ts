@@ -235,6 +235,7 @@ describe('Settings usage dashboard', () => {
     const unknown = [...document.querySelectorAll<HTMLElement>('#account-groups .account-group')].find(item => item.dataset.provider === 'Claude' && item.textContent?.includes('Unknown account'))!;
     expect(unknown.textContent).toContain('Claude transcripts without account identity');
     [...unknown.querySelectorAll('button')].find(button => button.textContent === 'Assign history')!.click();
+    expect(document.querySelector<HTMLDialogElement>('#attribution-dialog')!.open).toBe(true);
     expect((document.querySelector('#attribution-from') as HTMLInputElement).value).toBe('2026-10-01');
     expect((document.querySelector('#attribution-to') as HTMLInputElement).value).toBe('2026-10-14');
     choose('attribution-account', account.id);
@@ -250,6 +251,7 @@ describe('Settings usage dashboard', () => {
     const fixture: UsageDashboardState = { ...value, accounts: { Codex: { status: 'ready', account: { signedIn: true, email: account.email, method: 'ChatGPT' } } }, data: { ...value.data!, days,
       conversations: [{ key: 'Codex:session', id: 'session', provider: 'Codex', firstAt: 1, lastAt: 2, days }], assignments: [{ id: 'saved', provider: 'Codex', conversationId: 'session', account }] } };
     render(fixture); choose('filter-range', 'all');
+    expect(document.querySelector('#attribution-entry-summary')!.textContent).toContain('1 saved assignment');
     expect(document.querySelector('#account-groups')!.textContent).toContain('Inferred from session evidence: 200 tokens');
     expect(document.querySelector('#account-groups')!.textContent).toContain('Matched from quota changes: 50 tokens');
     choose('attribution-conversation', 'session'); choose('attribution-account', account.id);
@@ -434,7 +436,7 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector<HTMLElement>('#account-overview')!.hidden).toBe(false);
     expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('300');
   });
-  it('switches dashboard tabs by click and arrow keys, and opens history assignment in Details', () => {
+  it('switches dashboard tabs by click and arrow keys, and opens history assignment in a dialog', () => {
     render();
     const tab = (name: string) => document.querySelector<HTMLButtonElement>(`#tab-${name}`)!, panel = (name: string) => document.querySelector<HTMLElement>(`#panel-${name}`)!;
     expect(tab('overview').getAttribute('aria-selected')).toBe('true'); expect(panel('quota').hidden).toBe(true);
@@ -447,7 +449,13 @@ describe('Settings usage dashboard', () => {
     tab('overview').click();
     const unknown = [...document.querySelectorAll<HTMLElement>('.account-group')].find(row => row.textContent?.includes('Unknown account'));
     unknown?.querySelector<HTMLButtonElement>('.account-group button.quiet:not(.account-group-open)')?.click();
-    if (unknown) { expect(panel('details').hidden).toBe(false); expect(document.querySelector<HTMLDetailsElement>('#usage-attribution')!.open).toBe(true); }
+    const dialog = document.querySelector<HTMLDialogElement>('#attribution-dialog')!;
+    if (unknown) { expect(panel('overview').hidden).toBe(false); expect(dialog.open).toBe(true); document.querySelector<HTMLButtonElement>('#attribution-close')!.click(); expect(dialog.open).toBe(false); }
+    tab('details').click(); const entry = document.querySelector<HTMLButtonElement>('#attribution-open')!; entry.focus(); entry.click();
+    expect(dialog.open).toBe(true); expect(panel('details').hidden).toBe(false);
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true })); expect(dialog.open).toBe(false);
+    expect(document.activeElement).toBe(document.querySelector('#attribution-open'));
+    document.querySelector<HTMLButtonElement>('#attribution-open')!.click(); document.querySelector<HTMLButtonElement>('#attribution-cancel')!.click(); expect(dialog.open).toBe(false);
   });
   it('reveals the start of a newly selected panel when dashboard tabs are pinned', () => {
     render();
@@ -630,6 +638,7 @@ describe('Settings usage dashboard', () => {
     const root = document.getElementById('quota-estimates')!;
     expect(root.textContent).toContain('Device estimate · 2 cycles');
     expect(root.textContent).toContain('Includes history without native turn identity');
+    expect(root.querySelector('.quota-local-warning')?.textContent).toContain('used only on this device');
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('37,500 tokens per percentage point');
     expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
     expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('title')).toContain('5,000,000 estimated tokens for 100% quota');
@@ -726,6 +735,7 @@ describe('Settings usage dashboard', () => {
     const root = document.querySelector('#quota-estimates')!;
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('100,000 tokens per percentage point');
     expect(root.querySelector('.quota-estimate-source')!.getAttribute('title')).toContain('API counters');
+    expect(root.querySelector('.quota-local-warning')).toBeNull();
     const cells = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
     expect(cells[1]?.textContent).toBe('84% → 82%');
     expect(cells[2]?.textContent).toBe('200,000');

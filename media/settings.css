@@ -366,6 +366,9 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .usage-details summary { cursor: pointer; width: fit-content; }
 .usage-details p { max-width: 80ch; }
 .quota-history-error { grid-column: 1 / -1; color: var(--vscode-errorForeground); }
+.quota-local-warning { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; padding: 8px 10px; border-radius: 6px; font-size: 11px; line-height: 1.5; color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #bf8803) 10%, transparent); }
+.quota-local-warning > .codicon { flex: none; margin-top: 2px; font-size: 13px; color: var(--vscode-editorWarning-foreground, #bf8803); }
+.quota-local-flag { color: var(--vscode-editorWarning-foreground, #bf8803); }
 .usage-coverage a { color: var(--vscode-textLink-foreground, var(--vscode-focusBorder)); }
 .activity-panel, .accounts-panel { min-width: 0; }
 .activity-panel, .accounts-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
@@ -613,8 +616,12 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .account-group[data-kind=ide] > p:last-of-type { margin-bottom: 20px; }
 .tab-panel { scroll-margin-top: 92px; }
 .tab-panel > .section { padding: 16px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: var(--radius); }
-#usage-attribution { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 20px; margin-top: 24px; }
-#usage-attribution summary { font-weight: 500; }
+.attribution-entry { display: flex; align-items: center; gap: 14px; margin-top: 24px; }
+.attribution-entry > .codicon { font-size: 18px; color: var(--muted); flex: none; }
+.attribution-entry > div { flex: 1; min-width: 0; }
+.attribution-entry h2 { margin: 0; font-size: 13px; }
+.attribution-entry p { margin: 3px 0 0; font-size: 12px; }
+.attribution-entry > button { flex: none; }
 #account-overview > .section-heading { margin-bottom: 16px; }
 .account-detail-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
 .account-detail-bar h2 { margin: 0; }
@@ -667,14 +674,33 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
   .provider-row-heading strong { margin-left: 0; width: 100%; }
 }
 .status-bar-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:20px 0}
-.attribution-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}
-.attribution-fields label{display:grid;gap:6px;min-width:0}
-.attribution-fields select,.attribution-fields input{width:100%;min-width:0}
-.attribution-assignment{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;overflow-wrap:anywhere}
+.attribution-dialog{width:min(640px,calc(100vw - 32px));padding:0;overflow:hidden}
+.attribution-dialog-body{padding:24px;max-height:calc(100dvh - 48px);overflow:auto;box-sizing:border-box}
+.attribution-dialog-heading{display:flex;align-items:flex-start;gap:14px}
+.attribution-dialog-heading>.codicon{font-size:22px;color:var(--vscode-focusBorder);margin-top:2px}
+.attribution-dialog-heading>div{flex:1;min-width:0}
+.attribution-dialog-heading h2{margin:0;font-size:16px}
+.attribution-dialog-heading p{margin:6px 0 0;font-size:12px;line-height:1.5}
+.attribution-close{flex:none;width:28px;height:28px;padding:0;border-color:transparent;color:var(--muted)}
+.attribution-close:hover{color:var(--vscode-foreground)}
+.attribution-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;margin:20px 0 16px}
+.attribution-fields label{display:grid;gap:6px;min-width:0;font-size:12px;color:var(--muted)}
+.attribution-fields select,.attribution-fields input{width:100%;min-width:0;color:var(--vscode-input-foreground)}
+.attribution-fields .attribution-wide{grid-column:1/-1}
+.attribution-preview{margin:0;padding:10px 12px;border-radius:6px;background:var(--vscode-textBlockQuote-background,var(--vscode-list-hoverBackground));font-size:12px;line-height:1.5}
+.attribution-status:empty,#attribution-error[hidden]{display:none}
+.attribution-status{margin:12px 0 0;font-size:12px}
+#attribution-error{margin:12px 0 0;font-size:12px;color:var(--vscode-errorForeground)}
+.attribution-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
+.attribution-saved{margin-top:24px;padding-top:16px;border-top:1px solid var(--line)}
+.attribution-saved h3{margin:0 0 4px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.attribution-saved #attribution-assignments>p{margin:8px 0 0;font-size:12px}
+.attribution-assignment{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:12px;overflow-wrap:anywhere}
+.attribution-assignment:last-child{border-bottom:0}
 .attribution-assignment span{min-width:0}
-#attribution-error{color:var(--vscode-errorForeground)}
+.attribution-assignment button{flex:none}
 #conversation-meta button{margin-left:12px}
-@media(max-width:600px){.attribution-assignment{align-items:flex-start;flex-direction:column}}
+@media(max-width:600px){.attribution-assignment{align-items:flex-start;flex-direction:column}.attribution-fields{grid-template-columns:1fr}.attribution-dialog-body{padding:18px}.attribution-entry{flex-wrap:wrap}}
 .status-bar-controls label{display:grid;gap:8px}
 .status-bar-color{display:flex;gap:6px;align-items:center}
 .status-bar-color select{flex:1;min-width:0}

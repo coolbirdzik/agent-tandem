@@ -2,7 +2,7 @@ import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { withStorageLock } from './storage-lock';
-import type { QuotaTick } from './quota-pace';
+import { settleQuotaTicks, type QuotaTick } from './quota-pace';
 const tickKey = (row: QuotaTick) => JSON.stringify([row.provider, row.accountId, row.plan, row.windowId, row.resetsAt]);
 function valid(row: any): row is QuotaTick {
   return row && ['Codex', 'Claude'].includes(row.provider) && ['accountId', 'plan', 'windowId', 'label'].every(key => typeof row[key] === 'string') &&
@@ -20,12 +20,14 @@ export class QuotaPaceStore {
         const clean: QuotaTick = { provider: row.provider, accountId: row.accountId, plan: row.plan, windowId: row.windowId, label: row.label, resetsAt: row.resetsAt, at: row.at, usedPercent: row.usedPercent };
         rows.set(`${tickKey(row)}:${row.at}`, clean);
       }
-      const result = [...rows.values()].sort((a, b) => a.at - b.at).slice(-40000);
+      // Stale dips are removed, including ones already saved; pending ones stay saved so a later read can decide them.
+      const merged = [...rows.values()].sort((a, b) => a.at - b.at), { settled, stale } = settleQuotaTicks(merged);
+      const result = merged.filter(row => !stale.has(row)).slice(-40000), kept = new Set(result);
       if (JSON.stringify(result) !== JSON.stringify(previous)) {
         const temp = `${file}.${randomUUID()}.tmp`;
         try { await writeFile(temp, JSON.stringify(result), { flag: 'wx' }); await rename(temp, file); } finally { await unlink(temp).catch(() => undefined); }
       }
-      return result;
+      return settled.filter(row => kept.has(row));
     });
   }
 }

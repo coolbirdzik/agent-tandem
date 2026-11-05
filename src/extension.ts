@@ -51,6 +51,9 @@ import { TrackingStatusBar } from './host/tracking-status-bar';
 import { SettingsView } from './host/settings-view';
 import { AttachmentStore } from './core/attachment-store';
 import { UsageAccountStore } from './core/usage-account-store';
+import { ActiveSignInStore } from './core/active-sign-ins';
+import { SharedAccountReads, type SharedReadMode } from './core/shared-account-reads';
+import { usageAccount } from './core/usage-account';
 import { UsageAttributionStore, validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution-store';
 import { knownUsageAccounts } from './providers/usage-account-identities';
 import { QuotaHistoryStore } from './core/quota-history-store';
@@ -100,6 +103,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const quotaPaceStore = new QuotaPaceStore(path.join(context.globalStorageUri.fsPath, 'usage'));
   const desktopAccounts = new DesktopAccounts(process.platform === 'win32' ? (action, value) => windowsAntigravityCredential(path.join(context.extensionUri.fsPath, 'media', 'antigravity-credential.ps1'), action, value) : undefined);
   const accountProfiles = new AccountProfiles(path.join(context.globalStorageUri.fsPath, 'accounts'), undefined, desktopAccounts);
+  const sharedReads = new SharedAccountReads(path.join(context.globalStorageUri.fsPath, 'accounts', 'shared-reads'));
   let savedQuotaTicks: QuotaTick[] = [];
   let quotaHistory: QuotaObservation[] = [], quotaHistoryError: string | undefined;
   try { quotaHistory = await quotaHistoryStore.read(); }
@@ -219,8 +223,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const preview = new TandemView(context.extensionUri, () => state,
     async (command, selected) => vscode.commands.executeCommand(command, selected), report);
   const attributionStore = new UsageAttributionStore(path.join(context.globalStorageUri.fsPath, 'usage'));
+  const activeSignIns = new ActiveSignInStore(attributionStore.directory);
+  // After a switch without a restart, open editor extensions may still bill the previous sign-in.
+  // The same holds for a sign-in changed outside AgentTandem, such as `claude /login` in a terminal.
+  const unsettledSignIns = new Set<ConversationProvider>(), startupSignIns = new Map<ConversationProvider, string | null>();
+  const observeSignIn = async (provider: ConversationProvider, identity: Parameters<typeof usageAccount>[1]) => {
+    const account = usageAccount(provider, identity) ?? null, first = startupSignIns.get(provider);
+    if (first === undefined) startupSignIns.set(provider, account?.id ?? null); else if (first !== (account?.id ?? null)) unsettledSignIns.add(provider);
+    await activeSignIns.observe(provider, unsettledSignIns.has(provider) ? null : account).catch(() => undefined);
+  };
   const quotaBar = new QuotaStatusBar(async () => { await accountManager.refresh(undefined, true); }), trackingBar = new TrackingStatusBar(), usageHistory = new UsageHistory(undefined, usageAccounts, path.join(context.globalStorageUri.fsPath, 'usage', 'history-cache'),
-    { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts), quotaSamples: () => savedQuotaTicks, quotaMatches: new UsageAccountStore(attributionStore.directory, 'quota-matches.jsonl') });
+    { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts), quotaSamples: () => savedQuotaTicks, quotaMatches: new UsageAccountStore(attributionStore.directory, 'quota-matches.jsonl'), activeSignIns });
   const storage = new StorageManager(context.globalStorageUri.fsPath);
   let storageState: StorageState = { status: 'idle', root: storage.root }, cleanupPlan: CleanupPlan | undefined;
   let extensionStorage: ExtensionStorageUsage = { status: 'idle', warningBytes: storageWarningBytes(vscode.workspace.getConfiguration('agentTandem').get('storageWarningMB', 1024)) };
@@ -288,6 +301,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     busy: () => !!chatAbort || reviewing || conversationCleanupState.status === 'cleaning',
     project: () => state.project,
     current: provider => isChatAccount(provider) ? state.accounts?.[provider] : undefined,
+    shared: sharedReads,
     executable: async provider => {
       if (!isChatAccount(provider)) throw new Error('Use Open app for desktop accounts.');
       return (await managedCLI(provider, state.project)).cli.executable;
@@ -350,6 +364,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     },
     update: () => { settings.update(); quickAccounts.update(); quotaBar.update(state, dashboardState()); },
     switched: async provider => {
+      // A restart starts a new activation with a clean slate; until then, no time is attributed to either sign-in.
+      unsettledSignIns.add(provider); void activeSignIns.observe(provider, null).catch(() => undefined);
       const restart = 'Restart Extension Host';
       const choice = await vscode.window.showInformationMessage(`${provider} account switched. Restart the extension host so the ${provider} extension uses the new sign-in?`, restart, 'Later');
       if (choice !== restart) return;
@@ -367,7 +383,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   });
   const quickAccounts = new QuickAccounts({ state: dashboardState, publish: () => accountManager.publish(),
     refresh: async signal => {
-      await Promise.all([loadAccount('Codex', true, signal), loadAccount('Claude', true, signal)]);
+      await Promise.all([loadAccount('Codex', true, signal, 'recent'), loadAccount('Claude', true, signal, 'recent')]);
       if (signal.aborted) return;
       await accountManager.refresh(signal);
       if (!signal.aborted) await recordQuotaHistory();
@@ -529,7 +545,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     modelJobs.set(provider, { abort, job });
     return job;
   }
-  async function loadAccount(provider: ConversationProvider, force = false, signal?: AbortSignal): Promise<void> {
+  /** Each provider's CLI sign-in lives in its native home, which can differ between windows. */
+  const sharedSignInKey = (provider: ConversationProvider) => {
+    const home = path.resolve(nativeHome(provider));
+    return `cli:${provider}:${process.platform === 'win32' ? home.toLowerCase() : home}`;
+  };
+  async function loadAccount(provider: ConversationProvider, force = false, signal?: AbortSignal, share: SharedReadMode = force ? 'none' : 'poll'): Promise<void> {
     if (!state.project || disposed || signal?.aborted) return;
     if (!vscode.workspace.isTrusted) {
       state.accounts = { ...state.accounts, [provider]: { status: 'error', error: 'Trust the workspace to read the CLI account.' } }; update(); return;
@@ -547,16 +568,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const current = () => !disposed && project === state.project && state.accounts?.[provider] === loading && !abort.signal.aborted;
     const job = (async () => {
       try {
-        const selected = await managedCLI(provider, project, abort.signal);
-        let account;
-        if (provider === 'Codex') account = await readCodexAccount(project, selected.cli.executable, abort.signal);
-        else {
+        // Another window's fresh read is reused, so the quota API sees one reading per minute.
+        let account = await sharedReads.read(sharedSignInKey(provider), async () => {
+          const selected = await managedCLI(provider, project, abort.signal);
+          if (provider === 'Codex') return readCodexAccount(project, selected.cli.executable, abort.signal);
           const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href) as typeof import('./providers/claude-history');
-          account = await readClaudeAccount(project, sdk.query, selected.cli.executable, abort.signal);
-        }
+          return readClaudeAccount(project, sdk.query, selected.cli.executable, abort.signal);
+        }, share, abort.signal);
         if (current()) {
           account = await accountManager.rememberQuota(provider, account);
-          if (current()) state.accounts = { ...state.accounts, [provider]: account };
+          if (current()) {
+            state.accounts = { ...state.accounts, [provider]: account };
+            // Only this fresh read of the CLI's own sign-in is recorded; saved profiles' quota reads are not.
+            if (account.status === 'ready') await observeSignIn(provider, account.account);
+          }
         }
       } catch (error) {
         if (!abort.signal.aborted) cliResolver.invalidateOnFailure(provider, error);

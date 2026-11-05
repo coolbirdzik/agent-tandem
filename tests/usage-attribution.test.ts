@@ -12,6 +12,7 @@ import { AccountProfiles } from '../src/core/account-profiles';
 import { quotaEstimates } from '../src/core/quota-estimate';
 import { quotaRiseAccount, quotaRises } from '../src/core/quota-attribution';
 import type { QuotaTick } from '../src/core/quota-pace';
+import { ACTIVE_SIGN_IN_GAP, ActiveSignInStore, activeSignInAt } from '../src/core/active-sign-ins';
 
 const one = usageAccount('Codex', { signedIn: true, email: 'one@test.invalid', id: 'workspace-one', method: 'ChatGPT' })!;
 const two = usageAccount('Codex', { signedIn: true, email: 'two@test.invalid', id: 'workspace-two', method: 'ChatGPT' })!;
@@ -391,6 +392,56 @@ describe('Restoring historical account attribution', () => {
       const history = new UsageHistory(f.homes, f.ledger, f.cache, { store: f.store, knownAccounts: async () => [{ account: claudeOne, nativeAccountIds: [] }, { account: claudeTwo, nativeAccountIds: [] }], quotaSamples: () => samples, quotaMatches });
       expect((await history.read()).days[0]).toMatchObject({ provider: 'Claude', account: claudeTwo, accountSource: 'matched' });
     });
+  });
+});
+describe('Falling back to the active CLI sign-in', () => {
+  const at = Date.parse(stamp), minute = 60000;
+  async function signIns() {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-sign-ins-')); roots.push(root);
+    return new ActiveSignInStore(root);
+  }
+  it('extends a span while the same account is read, breaks it after a gap and cuts it at a switch', async () => {
+    const store = await signIns();
+    await store.observe('Codex', one, at - 10 * minute); await store.observe('Codex', one, at - 9 * minute); await store.observe('Codex', one, at - 8 * minute);
+    expect(await store.read()).toEqual([{ provider: 'Codex', account: one, from: at - 10 * minute, to: at - 8 * minute }]);
+    await store.observe('Codex', one, at); expect(await store.read()).toHaveLength(2);
+    const spans = await store.read();
+    expect(activeSignInAt(spans, 'Codex', at - 9 * minute)?.id).toBe(one.id);
+    // Nothing read the sign-in during the gap, beyond the forward reach.
+    expect(activeSignInAt(spans, 'Codex', at - 8 * minute + ACTIVE_SIGN_IN_GAP + 1)).toBeUndefined();
+    // The latest reading reaches forward to cover responses after it.
+    expect(activeSignInAt(spans, 'Codex', at + minute)?.id).toBe(one.id);
+    expect(activeSignInAt(spans, 'Codex', at + ACTIVE_SIGN_IN_GAP + 1)).toBeUndefined();
+    expect(activeSignInAt(spans, 'Claude', at)).toBeUndefined();
+    await store.observe('Codex', two, at + 2 * minute);
+    const switched = await store.read();
+    expect(activeSignInAt(switched, 'Codex', at + minute)?.id).toBe(one.id);
+    expect(activeSignInAt(switched, 'Codex', at + 2 * minute)).toBeUndefined();
+    expect(activeSignInAt(switched, 'Codex', at + 3 * minute)?.id).toBe(two.id);
+  });
+  it('leaves time unknown when windows disagree, after a pending switch or with a corrupt file', async () => {
+    const store = await signIns();
+    expect(activeSignInAt([{ provider: 'Codex', account: one, from: at - minute, to: at + minute }, { provider: 'Codex', account: two, from: at, to: at }], 'Codex', at)).toBeUndefined();
+    await store.observe('Codex', one, at - minute); await store.observe('Codex', null, at);
+    expect(activeSignInAt(await store.read(), 'Codex', at + minute)).toBeUndefined();
+    await writeFile(path.join(store.directory, 'active-sign-ins.json'), '{"spans":[{"provider":"Codex","account":{"provider":"Claude","email":"x"},"from":1,"to":2},');
+    expect(await store.read()).toEqual([]);
+  });
+  it('attributes unmatched history without replacing native evidence, quota matches or Keep unknown', async () => {
+    const f = await fixture(); const store = await signIns();
+    await store.observe('Codex', two, at - 5 * minute); await store.observe('Codex', two, at - minute);
+    for (const name of ['plain', 'native', 'kept', 'matched']) await f.write(name, 'creator-one');
+    await f.ledger.record('Codex:native', one);
+    await f.store.assign({ provider: 'Codex', conversationId: 'kept' }, null);
+    const quotaMatches = new UsageAccountStore(f.store.directory, 'quota-matches.jsonl'); await quotaMatches.record('Codex:matched', one);
+    const history = new UsageHistory(f.homes, f.ledger, f.cache, { ...f.options, quotaMatches, activeSignIns: store });
+    const days = (await history.read()).conversations!, source = (id: string) => days.find(row => row.id === id)!.days[0]!;
+    expect(source('plain')).toMatchObject({ account: two, accountSource: 'active' });
+    expect(source('native')).toMatchObject({ account: one }); expect(source('native').accountSource).toBeUndefined();
+    expect(source('kept').account).toBeUndefined(); expect(source('kept').accountSource).toBe('manual');
+    expect(source('matched')).toMatchObject({ account: one, accountSource: 'matched' });
+    // Active sign-ins are never saved as evidence.
+    expect((await f.ledger.read()).has('Codex:plain')).toBe(false); expect((await quotaMatches.read()).has('Codex:plain')).toBe(false);
   });
 });
 describe('Saving usage account evidence in batches', () => {

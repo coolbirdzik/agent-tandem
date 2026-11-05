@@ -17,6 +17,7 @@ import { matchingAssignment, type KnownUsageAccount, type UsageAttributionStore 
 import type { UsageAccountSource } from '../core/usage-dashboard';
 import { quotaRiseAccount, quotaRises } from '../core/quota-attribution';
 import type { QuotaTick } from '../core/quota-pace';
+import { activeSignInResolver, type ActiveSignInStore } from '../core/active-sign-ins';
 
 const obj = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const count = (value: unknown): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
@@ -243,7 +244,7 @@ export class UsageHistory {
   private counted: UsageRecord[] = [];
   readStats?: UsageReadStats;
   constructor(private homes = { codex: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claude: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude') }, private accounts?: Pick<UsageAccountStore, 'read'>, private cacheDirectory?: string,
-    private attribution?: { store: Pick<UsageAttributionStore, 'read'>; knownAccounts: () => Promise<KnownUsageAccount[]>; quotaSamples?: () => QuotaTick[]; quotaMatches?: Pick<UsageAccountStore, 'read' | 'recordMany'> }) {}
+    private attribution?: { store: Pick<UsageAttributionStore, 'read'>; knownAccounts: () => Promise<KnownUsageAccount[]>; quotaSamples?: () => QuotaTick[]; quotaMatches?: Pick<UsageAccountStore, 'read' | 'recordMany'>; activeSignIns?: Pick<ActiveSignInStore, 'read'> }) {}
   private cacheFile(file: string, provider: ConversationProvider) {
     const source = process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
     return path.join(this.cacheDirectory!, `${createHash('sha256').update(`${provider}:${source}`).digest('hex')}.json`);
@@ -404,6 +405,7 @@ export class UsageHistory {
       if (account && this.attribution?.quotaMatches) newMatches.push({ key: row.id, account });
       return account;
     };
+    const activeSignIn = activeSignInResolver(await this.attribution?.activeSignIns?.read().catch(() => undefined) ?? []);
     const aggregateStart = performance.now(), recent: RecentUsage[] = [], counted: UsageRecord[] = [], now = Date.now();
     let attributed = 0;
     for (const row of records.values()) {
@@ -419,6 +421,12 @@ export class UsageHistory {
           const session = row.provider === 'Claude' && row.conversationId ? claudeSessions.get(row.conversationId) : undefined;
           if (session !== null) row.account = (row.creatorAccountId ? creators.get(`${row.provider}:${row.creatorAccountId}`) : session ?? soleAccounts.get(row.provider)) ?? undefined;
           if (row.account) row.accountSource = 'inferred';
+        }
+        // Last resort, never saved: a later quota match or the user's choice replaces it on the next read.
+        // `accountSource` is already 'manual' when the user chose Keep unknown.
+        if (!row.account && !row.accountSource && !row.accountConflict) {
+          const active = activeSignIn(row.provider, row.timestamp);
+          if (active) { row.account = active; row.accountSource = 'active'; }
         }
       }
       counted.push(row);

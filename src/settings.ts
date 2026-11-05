@@ -252,8 +252,9 @@ function renderAttributionPreview() {
     : 'Choose a conversation, or enter both dates for all conversations. Dates are inclusive; leave them blank to cover an entire conversation.';
   el<HTMLButtonElement>('attribution-save').disabled = !state?.data || !!state.attributionBusy || !valid || !el<HTMLSelectElement>('attribution-account').value || !totals.total;
 }
+let attributionOpener: HTMLElement | undefined;
 function openAttribution(provider: ConversationProvider, conversationId?: string) {
-  showTab('details');
+  attributionOpener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined;
   el<HTMLSelectElement>('attribution-provider').value = provider; renderAttribution();
   el<HTMLSelectElement>('attribution-conversation').value = conversationId ?? '';
   const range = conversationId ? {} : dateRange();
@@ -264,8 +265,17 @@ function openAttribution(provider: ConversationProvider, conversationId?: string
   }
   el<HTMLInputElement>('attribution-from').value = range.from ?? '';
   el<HTMLInputElement>('attribution-to').value = range.to ?? '';
-  renderAttributionPreview(); el<HTMLDetailsElement>('usage-attribution').open = true;
-  el('usage-attribution').scrollIntoView?.({ block: 'nearest' }); el('attribution-account').focus();
+  renderAttributionPreview();
+  const dialog = el<HTMLDialogElement>('attribution-dialog');
+  if (!dialog.open) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
+  el('attribution-account').focus();
+}
+function closeAttribution() {
+  const dialog = el<HTMLDialogElement>('attribution-dialog');
+  if (typeof dialog.close === 'function') dialog.close(); else dialog.removeAttribute('open');
+  // Account cards are rebuilt on render, so the opener may be gone; fall back to the Details entry.
+  (attributionOpener?.isConnected ? attributionOpener : el('panel-details').hidden ? document.querySelector<HTMLElement>('[role=tab][aria-selected=true]') : el('attribution-open'))?.focus();
+  attributionOpener = undefined;
 }
 function renderAttribution() {
   const provider = el<HTMLSelectElement>('attribution-provider').value as ConversationProvider;
@@ -289,8 +299,10 @@ function renderAttribution() {
   el('attribution-form').querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select').forEach(input => { input.disabled = !!state?.attributionBusy; });
   el('attribution-status').textContent = state?.attributionBusy ? 'Saving history assignment…' : state?.attributionNotice ?? '';
   el('attribution-error').hidden = !state?.attributionError; el('attribution-error').textContent = state?.attributionError ?? '';
-  const list = el('attribution-assignments'); list.replaceChildren();
-  for (const row of state?.data?.assignments ?? []) {
+  const list = el('attribution-assignments'), assignments = state?.data?.assignments ?? []; list.replaceChildren();
+  el('attribution-entry-summary').textContent = `${assignments.length ? `${assignments.length} saved ${assignments.length === 1 ? 'assignment' : 'assignments'}` : 'No saved assignments'} · Assign history without account evidence to an account, or keep it unknown.`;
+  if (!assignments.length) list.append(node('p', 'No saved assignments yet.', 'muted'));
+  for (const row of assignments) {
     const item = node('div', undefined, 'attribution-assignment'), label = node('span');
     const scope = row.responseIds ? `${row.responseIds.length} selected responses` : `${row.from || 'Start'} – ${row.to || 'No end date'}`;
     label.textContent = `${row.provider} · ${row.conversationId ? state?.conversationTitles?.[`${row.provider}:${row.conversationId}`] || row.conversationId : 'All conversations'} · ${scope} → ${row.account ? usageAccountLabel(row.account) : 'Keep unknown'} · User confirmed`;
@@ -300,7 +312,7 @@ function renderAttribution() {
   renderAttributionPreview();
 }
 function attributionCaption(days: NonNullable<UsageDashboardState['data']>['days'], filters: UsageFilters) {
-  return ([['matched', 'Matched from quota changes'], ['inferred', 'Inferred from session evidence'], ['manual', 'User confirmed']] as const).flatMap(([source, label]) => {
+  return ([['matched', 'Matched from quota changes'], ['inferred', 'Inferred from session evidence'], ['active', 'Active CLI sign-in'], ['manual', 'User confirmed']] as const).flatMap(([source, label]) => {
     const total = usageBreakdown(days.filter(row => row.accountSource === source), filters).totals.total;
     return total ? [`${label}: ${compact(total)} tokens`] : [];
   }).join(' · ');
@@ -340,6 +352,13 @@ for (const [id, action] of [['account-add', 'add'], ['account-save', 'importCurr
 el('conversation-close').onclick = () => { selectedUsageConversation = undefined; el('conversation-detail').hidden = true; };
 el('conversation-search').oninput = () => { conversationLimit = 20; renderConversations(usageFilters()); };
 el('attribution-provider').onchange = renderAttribution;
+el('attribution-open').onclick = () => openAttribution(usageFilters().provider ?? 'Codex');
+el('attribution-close').onclick = closeAttribution; el('attribution-cancel').onclick = closeAttribution;
+el('attribution-dialog').addEventListener('cancel', event => { event.preventDefault(); closeAttribution(); });
+// Close on backdrop only when the press also started there, so a drag out of a field keeps the draft.
+let attributionBackdropPress = false;
+el('attribution-dialog').addEventListener('mousedown', event => { attributionBackdropPress = event.target === event.currentTarget; });
+el('attribution-dialog').addEventListener('click', event => { if (attributionBackdropPress && event.target === event.currentTarget) closeAttribution(); attributionBackdropPress = false; });
 for (const id of ['attribution-conversation', 'attribution-account', 'attribution-from', 'attribution-to']) el(id).onchange = renderAttributionPreview;
 el('attribution-form').onsubmit = event => {
   event.preventDefault();
@@ -955,7 +974,9 @@ function renderConversations(filters: UsageFilters) {
     const uncertain = conversation.days.some(row => !!row.accountSource && usageBreakdown([row], filters).totals.total > 0);
     if (trend.tokensPerPercent && ((matched && !uncertain) || (trend.source === 'Device' && !otherKnownAccount))) {
       const estimate = quotaWindowLabel(`≈ ${number(Math.round(t.total / trend.tokensPerPercent * 10) / 10)}% ${trend.label} equivalent`, 'span', 'muted');
-      estimate.title = `${trend.source} estimate from tokens per 1%. This is not measured per-conversation quota consumption.`; quotaRoot.append(estimate);
+      estimate.title = `${trend.source} estimate from tokens per 1%. This is not measured per-conversation quota consumption.${trend.source === 'API' ? '' : ' If this account is also used on another device, this percentage reads too high.'}`;
+      if (trend.source !== 'API') estimate.append(node('span', ' · this device only', 'quota-local-flag'));
+      quotaRoot.append(estimate);
     }
   }
   table(el('conversation-models'), ['Model', 'Input', 'Output', 'Cache read', 'Tokens', 'API USD'], result.models.map(row => [row.model, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.total, costLabel(row.cost)]));
@@ -978,6 +999,7 @@ function renderQuotaEstimates() {
     const observed = observeQuotaMeters(state.quotaBaselines ?? [], meters);
     // Render a valid paired sample immediately, even while the host persists it.
     const history = mergeQuotaObservations(state.quotaHistory ?? [], [...scopedQuotaObservations(provider, account), ...observed.observations]);
+    let localTrend = false;
     for (const trend of quotaTrends(provider, account, history)) {
       const estimate = estimates.find(row => row.label === trend.label)!;
       const meter = meters.find(row => row.label === trend.label);
@@ -1074,9 +1096,19 @@ function renderQuotaEstimates() {
         row.append(details);
       }
       windows.append(row);
+      if (trend.source !== 'API' && trend.tokensPerPercent !== undefined) localTrend = true;
     }
+    if (localTrend) item.append(localQuotaWarning());
     root.append(item);
   }
+}
+/** Quota counts every device using the account; local history only this one. */
+const LOCAL_QUOTA_WARNING = 'Local and Device estimates assume this account is used only on this device. Quota also counts other devices and CLIs with a separate config folder (CLAUDE_CONFIG_DIR or CODEX_HOME), so if the account is used there, tokens / 1%, full cycle and tokens left read too low.';
+function localQuotaWarning() {
+  const warning = node('p', undefined, 'quota-local-warning');
+  warning.append(node('span', undefined, 'codicon codicon-warning'), node('span', LOCAL_QUOTA_WARNING));
+  warning.querySelector('.codicon')!.setAttribute('aria-hidden', 'true');
+  return warning;
 }
 function renderCost(cost: ApiCost) {
   const total = el('api-cost-total'); total.textContent = costLabel(cost); total.title = `${cost.usd.toFixed(6)} USD for priced token usage`;

@@ -24,7 +24,7 @@ export function dashboardAccountGroups(days: UsageDay[], filters: UsageFilters, 
   }
   return [...groups.values()].sort((a, b) => Number(!!b.active) - Number(!!a.active) || b.totals.total - a.totals.total);
 }
-export type UsageAccountSource = 'inferred' | 'manual' | 'matched';
+export type UsageAccountSource = 'inferred' | 'manual' | 'matched' | 'active';
 export interface UsageDay extends TokenTotals { day: string; provider: ConversationProvider; model: string; cost?: ApiCost; account?: UsageAccount; accountSource?: UsageAccountSource }
 export interface RecentUsage { timestamp: number; provider: ConversationProvider; total: number; accountId?: string; accountSource?: UsageAccountSource }
 export interface UsageConversation { key: string; id: string; provider: ConversationProvider; project?: string; firstAt: number; lastAt: number; days: UsageDay[]; transcriptDeleted?: boolean }

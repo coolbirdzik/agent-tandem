@@ -9,6 +9,7 @@ vi.mock('vscode', () => ({ window: {
 } }));
 import { AccountManager } from '../src/host/account-manager';
 import { AccountProfiles, type AccountProfile } from '../src/core/account-profiles';
+import { SharedAccountReads } from '../src/core/shared-account-reads';
 import type { ConversationProvider } from '../src/providers/conversations';
 import type { AccountReadOptions, ProviderAccountStatus } from '../src/providers/account-status';
 
@@ -287,6 +288,30 @@ describe('Account switching controller', () => {
       now += 60001; await reopened.refresh(undefined, true); expect(read).toHaveBeenCalledTimes(2);
       expect(reopened.state.managedAccounts?.[0]?.status?.quotaCached).toBeUndefined();
     } finally { clock.mockRestore(); await rm(root, { recursive: true, force: true }); }
+  });
+  it('reads a saved account once across windows, and skips it while another window is reading', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-shared-profile-'));
+    try {
+      const store = new AccountProfiles(root), row = await store.create('Claude', 'Work');
+      const identity = { signedIn: true, method: 'Claude account', email: 'work@test' }; await store.identify(row.id, identity);
+      const at = Date.now() - 1000;
+      const read = vi.fn(async () => ({ status: 'ready' as const, account: identity, updatedAt: at, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 25 }] } }));
+      const deps = (shared: SharedAccountReads) => ({ busy: () => false, project: () => root, current: () => undefined, read, executable: vi.fn(), changed: vi.fn(), update: vi.fn(), shared });
+      const one = new SharedAccountReads(path.join(root, 'shared')), two = new SharedAccountReads(path.join(root, 'shared'));
+      // A window open since before the read loaded its quota cache then, so only the shared read is new to it.
+      const other = new AccountManager(new AccountProfiles(root), deps(two)); await other['quotaCache'].load();
+      await new AccountManager(store, deps(one)).refresh(undefined, true); expect(read).toHaveBeenCalledOnce();
+      await other.refresh(undefined, true); expect(read).toHaveBeenCalledOnce();
+      expect(other.state.managedAccounts?.[0]?.status).toMatchObject({ updatedAt: at, quota: { windows: [{ usedPercent: 25 }] } });
+      expect(other.state.managedAccounts?.[0]?.status?.quotaCached).toBeFalsy();
+      // While another window holds the claim, this one leaves the account for that window.
+      const fresh = new AccountProfiles(path.join(root, 'fresh')), busy = await fresh.create('Claude', 'Busy'); await fresh.identify(busy.id, identity);
+      const third = new SharedAccountReads(path.join(root, 'other-shared')), holder = new SharedAccountReads(path.join(root, 'other-shared'));
+      expect((await holder.claim(`profile:${busy.id}`)).granted).toBe(true);
+      const waiting = new AccountManager(fresh, deps(third));
+      await waiting.refresh(undefined, true); expect(read).toHaveBeenCalledOnce();
+      await holder.release(`profile:${busy.id}`); await waiting.refresh(undefined, true); expect(read).toHaveBeenCalledTimes(2);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('interrupts a pending quota refresh to switch without waiting for other saved accounts', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'tandem-switch-refresh-')), home = path.join(root, 'native'); await mkdir(home);

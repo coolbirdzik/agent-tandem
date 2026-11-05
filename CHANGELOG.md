@@ -11,6 +11,7 @@ Historical version dates and boundaries are reconstructed from package version c
 ### Added
 
 - Earned Codex resets are listed with title, expiry and time left, soonest first. The status-bar hover shows them under **Reset usage**; Settings and dashboard account cards show a **Banked resets: N available** line that opens the list on hover, focus or click.
+- Usage from chats outside AgentTandem, such as the Claude Code or Codex extensions and terminal CLIs, is attributed to the **Active CLI sign-in** at that time when nothing more specific identifies the account, so recent responses no longer wait as **Unknown account** for a quota match. A later quota match or your own assignment still takes priority. Time right after an account switch stays unknown until you restart the extension host, and history from before this update is unchanged.
 
 ### Changed
 
@@ -23,9 +24,13 @@ Historical version dates and boundaries are reconstructed from package version c
 - Open the dashboard through **Open Dashboard** in the sidebar toolbar, command palette, quota hover and account picker. Its editor tab is named **AgentTandem Dashboard**.
 - Account picker shows each quota period's percentage left with its reset countdown, without exact reset times.
 - Settings page titles match their tab names and no longer show a small label above.
+- With several VS Code windows open, quota and sign-ins are read once per minute in total instead of once per window: a window reuses another's recent result, including for saved accounts every ten minutes. Account switches, sign-ins and CLI changes still read immediately.
+- Local and Device **Tokens per 1%** estimates now warn that they assume the account is used only on this device, since quota also counts other devices. Conversation quota equivalents from those estimates are marked **this device only**.
+- **Assign history** now opens a dialog over the current dashboard tab, from Unknown account cards, conversation details or the **History assignments** row in Details, instead of jumping to an expandable section. Saved assignments are listed and removable in the same dialog.
 
 ### Fixed
 
+- With several VS Code windows open, a quota reading that one window got late (such as 8% → 4% → 8%) no longer causes huge burn rates on the Quota tab, restarts the **Tokens per 1%** cycle, or creates false quota-rise matches. Such dips are dropped once a later reading returns to the earlier level, including ones already saved. A real drop is used after 5 minutes of readings.
 - Dashboard tabs stay clear of the account picker while scrolling, including in narrow panels. Switching pinned Overview, Quota, Conversations or Details tabs reveals the start of the new section, and scrolling content stays behind the account picker.
 - Keyboard navigation keeps the selected dashboard tab visible in narrow panels.
 - Quota-cycle views let you switch between Codex and Claude accounts without leaving the selected cycle range.

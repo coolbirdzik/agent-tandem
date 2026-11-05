@@ -7,11 +7,14 @@ import { withStorageLock } from '../core/storage-lock';
 import { randomUUID } from 'node:crypto';
 import type { AccountSwitchLog } from '../core/account-switch';
 import { AccountQuotaCache } from '../core/account-quota-cache';
-import { QuotaRefreshPolicy, quotaRetryAfter } from '../core/quota-refresh-policy';
+import { QuotaRefreshPolicy, quotaRetryAfter, SAVED_QUOTA_REFRESH_MS } from '../core/quota-refresh-policy';
+import type { SharedAccountReads } from '../core/shared-account-reads';
 import { assertAccountIdentity, accountIdentityMatches, sameAccountIdentity, AccountIdentityMismatchError } from '../core/account-identity';
 
 interface Dependencies {
   busy(): boolean; project(): string | undefined; current(provider: AccountProvider): ProviderAccountStatus | undefined;
+  /** Saved-account reads shared with other VS Code windows. */
+  shared?: Pick<SharedAccountReads, 'latest' | 'claim' | 'release' | 'publish'>;
   read(profile: AccountProfile | AccountProvider, signal?: AbortSignal, options?: AccountReadOptions): Promise<ProviderAccountStatus>;
   executable(provider: AccountProvider): Promise<string>; changed(provider: AccountProvider): Promise<void>; update(): void;
   openDesktop?(provider: 'Cursor' | 'Antigravity'): Promise<void>;
@@ -127,6 +130,19 @@ export class AccountManager {
         const refreshKey = id ?? row.id;
         const saved = this.statuses.get(row.id) ?? this.quotaCache.restore(row.provider, { status: 'ready', account: row.identity });
         if (!active && !signedInProfile && !authChanged && !this.quotaRefresh.due(refreshKey, background, saved.updatedAt)) continue;
+        // Background polls reuse another window's recent read of this saved account, or skip it while that window reads.
+        const sharedKey = `profile:${row.id}`, shared = !active && background && !signedInProfile && !authChanged ? this.deps.shared : undefined;
+        let claimed = false;
+        if (shared) {
+          const adopted = await shared.latest(sharedKey, SAVED_QUOTA_REFRESH_MS).catch(() => undefined);
+          if (adopted && accountIdentityMatches(row.identity, adopted.account)) {
+            // `due` keys on this updatedAt, so the next read waits a full interval from that window's read.
+            this.statuses.set(row.id, await this.rememberQuota(row.provider, adopted)); continue;
+          }
+          const claim = await shared.claim(sharedKey).catch(() => ({ granted: true }));
+          if (!claim.granted) continue;
+          claimed = true;
+        }
         try {
           if (!active) { markRefreshing(); this.quotaRefresh.start(refreshKey); }
           const status = active && native ? native : await this.deps.read(row, abort.signal);
@@ -143,6 +159,7 @@ export class AccountManager {
           if (status.status === 'ready' && status.account) await this.store.identify(row.id, status.account);
           if (!active) this.quotaRefresh.complete(refreshKey, status.status === 'error' || status.quota?.status === 'error', status.quota?.retryAfterAt);
           this.statuses.set(row.id, await this.rememberQuota(row.provider, status));
+          if (!active) await this.deps.shared?.publish(sharedKey, status).catch(() => undefined);
           // An old signed-out/error read must not consume credentials written
           // while the CLI query was in flight. Successful reads may rotate auth.
           this.authRevisions.set(row.id, status.status === 'ready' && status.account?.signedIn ? await this.store.authRevision(row) : revision);
@@ -152,6 +169,7 @@ export class AccountManager {
           if (!active) this.quotaRefresh.complete(refreshKey, true, quotaRetryAfter(error));
           this.statuses.set(row.id, this.quotaCache.restore(row.provider, { status: 'error', account: row.identity, error: error instanceof AccountIdentityMismatchError ? error.message : 'Could not refresh this sign-in.' }));
         } }
+        finally { if (claimed) await shared!.release(sharedKey).catch(() => undefined); }
         if (!abort.signal.aborted) await this.publish();
       }
       if (abort.signal.aborted) return;
