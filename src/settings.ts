@@ -39,8 +39,14 @@ function bankedResetPopover(resets: Parameters<typeof bankedResetDetails>[0]): H
   const trigger = node('button', summary, 'banked-reset-trigger quiet'); trigger.type = 'button'; trigger.setAttribute('aria-haspopup', 'true'); trigger.setAttribute('aria-expanded', 'false');
   const panel = node('div', undefined, 'banked-reset-popover'); panel.setAttribute('role', 'tooltip');
   for (const line of lines) panel.append(node('p', line));
-  trigger.onclick = () => { const open = wrap.dataset.open !== 'true'; wrap.dataset.open = String(open); trigger.setAttribute('aria-expanded', String(open)); };
-  wrap.onkeydown = event => { if (event.key === 'Escape' && wrap.dataset.open === 'true') { wrap.dataset.open = 'false'; trigger.setAttribute('aria-expanded', 'false'); trigger.focus(); event.stopPropagation(); } };
+  let pinned = false, hovered = false;
+  const setOpen = (open: boolean) => { wrap.dataset.open = String(open); trigger.setAttribute('aria-expanded', String(open)); };
+  wrap.onmouseenter = () => { hovered = true; setOpen(true); };
+  wrap.onmouseleave = () => { hovered = false; if (!pinned && !wrap.contains(document.activeElement)) setOpen(false); };
+  wrap.addEventListener('focusin', () => setOpen(true));
+  wrap.addEventListener('focusout', event => { if (!pinned && !hovered && !wrap.contains(event.relatedTarget as Node | null)) setOpen(false); });
+  trigger.onclick = () => { pinned = !pinned; setOpen(pinned); };
+  wrap.onkeydown = event => { if (event.key === 'Escape') { pinned = false; trigger.focus(); setOpen(false); event.stopPropagation(); } };
   wrap.append(trigger, panel); return wrap;
 }
 const numberFormat = new Intl.NumberFormat();
@@ -545,8 +551,15 @@ function renderApiActivity(filters: UsageFilters) {
   } else root.append(node('p', 'No API daily buckets were reported for the selected range. Local token usage below shows recorded activity on this device.', 'muted'));
   details.append(node('p', 'Claude: local token history, native API quota.', 'muted'));
 }
-const syncHeaderHeight = () => document.documentElement.style.setProperty('--settings-header-h', `${document.querySelector<HTMLElement>('.settings-header')?.offsetHeight ?? 0}px`);
-syncHeaderHeight(); window.addEventListener('resize', syncHeaderHeight); if (typeof ResizeObserver !== 'undefined') new ResizeObserver(syncHeaderHeight).observe(document.querySelector('.settings-header')!);
+function syncStickyLayout() {
+  document.documentElement.style.setProperty('--settings-header-h', `${document.querySelector<HTMLElement>('.settings-header')?.offsetHeight ?? 0}px`);
+  document.documentElement.style.setProperty('--account-picker-h', `${el('account-picker').offsetHeight}px`);
+}
+syncStickyLayout(); window.addEventListener('resize', syncStickyLayout);
+if (typeof ResizeObserver !== 'undefined') {
+  const observer = new ResizeObserver(syncStickyLayout);
+  observer.observe(document.querySelector('.settings-header')!); observer.observe(el('account-picker'));
+}
 const providerLabel = (provider: ConversationProvider) => provider === 'Claude' ? 'Claude Code' : provider;
 function accountPickerItem(choice: AccountChoice | undefined, element: 'button' | 'span' = 'span') {
   const item = node(element, undefined, 'account-picker-item');
@@ -1135,21 +1148,21 @@ function renderUsage() {
   el<HTMLSelectElement>('filter-group').disabled = !!window;
   // A specific account already implies its provider, so the Provider filter is hidden and must not narrow the account list.
   const pickedAccount = el<HTMLSelectElement>('filter-account').value, accountPinned = !!pickedAccount && pickedAccount !== UNKNOWN_ACCOUNT;
-  el('filter-provider').parentElement!.hidden = accountPinned;
   const provider = (accountPinned && !window ? '' : el<HTMLSelectElement>('filter-provider').value) as ConversationProvider | '', modelSelect = el<HTMLSelectElement>('filter-model');
+  const pickerProvider = accountPinned || target ? '' : provider;
   const accountSelect = el<HTMLSelectElement>('filter-account'), previousAccount = accountSelect.value;
   const accounts = new Map<string, string>(), choices = new Map<string, AccountChoice>();
   const choice = (account: UsageAccount, title = account.email): AccountChoice => ({ provider: account.provider, title, info: account.organization || account.nativeAccountId || (title === account.email ? account.method : account.email) });
-  for (const row of state.data?.days ?? []) if (!provider || row.provider === provider) {
+  for (const row of state.data?.days ?? []) if (!pickerProvider || row.provider === pickerProvider) {
     const id = row.account?.id ?? UNKNOWN_ACCOUNT;
     accounts.set(id, row.account ? `${usageAccountLabel(row.account)} · ${row.provider}` : 'Unknown account');
     choices.set(id, row.account ? choice(row.account) : { title: 'Unknown account', info: 'Unattributed history' });
   }
-  for (const agent of ['Codex', 'Claude'] as const) if (!provider || agent === provider) {
+  for (const agent of ['Codex', 'Claude'] as const) if (!pickerProvider || agent === pickerProvider) {
     const account = usageAccount(agent, state.accounts?.[agent]?.account);
     if (account) { accounts.set(account.id, `${usageAccountLabel(account)} · ${agent}`); choices.set(account.id, choice(account)); }
   }
-  for (const profile of state.managedAccounts ?? []) if (isChatAccount(profile.provider) && (!provider || profile.provider === provider)) {
+  for (const profile of state.managedAccounts ?? []) if (isChatAccount(profile.provider) && (!pickerProvider || profile.provider === pickerProvider)) {
     const account = usageAccount(profile.provider, profile.status?.account || profile.identity);
     if (account) { accounts.set(account.id, `${profile.label} · ${usageAccountLabel(account)} · ${profile.provider}`); choices.set(account.id, choice(account, profile.label)); }
   }
@@ -1162,6 +1175,7 @@ function renderUsage() {
   }
   if (target && accounts.has(target.id)) accountSelect.value = target.id;
   const accountId = accountSelect.value;
+  el('filter-provider').parentElement!.hidden = !!accountId && accountId !== UNKNOWN_ACCOUNT;
   accountChoices = choices; renderAccountPicker(accountOptions.map(([id]) => id));
   const models = [...new Set(state.data?.days.filter(row => (!provider || row.provider === provider) && (!accountId || (row.account?.id ?? UNKNOWN_ACCOUNT) === accountId)).map(row => row.model) ?? [])].sort();
   const signature = JSON.stringify(models);
