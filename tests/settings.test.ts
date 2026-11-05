@@ -366,6 +366,22 @@ describe('Settings usage dashboard', () => {
     render({ ...value, accountsBusy: true, accounts: { Codex: status } });
     expect(document.querySelector<HTMLButtonElement>('#accounts [data-reset-usage]')!.disabled).toBe(true);
   });
+  it('reopens banked reset details on focus and hover after Escape, including when opened without a click', () => {
+    const status = { status: 'ready' as const, account: { signedIn: true, email: 'codex@test', method: 'ChatGPT' }, quota: { status: 'available' as const, windows: [], bankedResets: { availableCount: 1, credits: [{ title: 'Earned reset', expiresAt: Date.now() + 3600000 }] } } };
+    render({ ...value, accounts: { Codex: status } });
+    document.querySelector<HTMLButtonElement>('#tab-quota')!.click();
+    const wrap = document.querySelector<HTMLElement>('#accounts .banked-reset')!, trigger = wrap.querySelector<HTMLButtonElement>('button')!;
+    const expanded = () => trigger.getAttribute('aria-expanded');
+    trigger.focus(); expect(expanded()).toBe('true');
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(expanded()).toBe('false');
+    trigger.blur(); trigger.focus(); expect(expanded()).toBe('true');
+    trigger.blur(); expect(expanded()).toBe('false');
+    wrap.dispatchEvent(new MouseEvent('mouseenter')); expect(expanded()).toBe('true');
+    trigger.click(); trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); expect(expanded()).toBe('false');
+    wrap.dispatchEvent(new MouseEvent('mouseleave')); trigger.blur();
+    wrap.dispatchEvent(new MouseEvent('mouseenter')); expect(expanded()).toBe('true');
+    wrap.dispatchEvent(new MouseEvent('mouseleave')); expect(expanded()).toBe('false');
+  });
   it('shows live switch progress, lets users hide and reopen it, and retains rollback/error logs without reopening on every update', () => {
     const operation: NonNullable<UsageDashboardState['accountSwitch']> = { id: 'operation-one', profileId: 'selected', provider: 'Codex', label: 'Work', startedAt: Date.now(), status: 'running', outcome: 'notChanged', logs: [{ at: Date.now(), level: 'info', message: 'Backing up the current sign-in.' }] };
     render({ ...value, accountsBusy: true, accountSwitch: operation });
@@ -484,6 +500,34 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe('today');
     expect(postMessage).toHaveBeenCalledWith({ type: 'usageWindow', value: null });
     expect(document.querySelector<HTMLElement>('#cycle-bar')!.hidden).toBe(true);
+  });
+  it.each(['cycle-5h', 'cycle-weekly'])('switches providers in %s without leaving the cycle or mixing their usage', range => {
+    const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const identities = { Codex: { signedIn: true, email: 'codex@test', method: 'ChatGPT', plan: 'plus' }, Claude: { signedIn: true, email: 'claude@test', method: 'Claude account', plan: 'pro' } };
+    const codex = usageAccount('Codex', identities.Codex)!, claude = usageAccount('Claude', identities.Claude)!;
+    const label = range === 'cycle-5h' ? '5h' : '7d', duration = label === '5h' ? 5 * 3600000 : 7 * 86400000;
+    const codexReset = now + duration / 2, claudeReset = now + duration / 3;
+    const status = (provider: 'Codex' | 'Claude', resetsAt: number) => ({ status: 'ready' as const, account: identities[provider], quota: { status: 'available' as const, windows: [{ id: label, label, usedPercent: 25, resetsAt }] } });
+    const fixture: UsageDashboardState = { ...value, activeProvider: 'Codex', accounts: { Codex: status('Codex', codexReset), Claude: status('Claude', claudeReset) }, quotaTicks: [
+      { provider: 'Codex', accountId: codex.id, plan: 'plus', windowId: label, label, resetsAt: codexReset, at: now, usedPercent: 25 },
+      { provider: 'Claude', accountId: claude.id, plan: 'pro', windowId: label, label, resetsAt: claudeReset, at: now, usedPercent: 25 },
+    ] };
+    render(fixture); choose('filter-account', codex.id); choose('filter-range', range);
+    const accountSelect = document.querySelector<HTMLSelectElement>('#filter-account')!, providerSelect = document.querySelector<HTMLSelectElement>('#filter-provider')!;
+    expect(providerSelect.parentElement!.hidden).toBe(true);
+    expect([...accountSelect.options].map(option => option.value)).toContain(claude.id);
+    postMessage.mockClear();
+    [...document.querySelectorAll<HTMLButtonElement>('#account-picker-menu [role=option]')].find(option => option.dataset.value === claude.id)!.click();
+    expect(document.querySelector<HTMLSelectElement>('#filter-range')!.value).toBe(range);
+    expect(accountSelect.value).toBe(claude.id); expect(providerSelect.value).toBe('Claude');
+    expect([...accountSelect.options].map(option => option.value)).toContain(codex.id);
+    const request = { from: claudeReset - duration, to: claudeReset };
+    expect(postMessage).toHaveBeenCalledWith({ type: 'usageWindow', value: request });
+    const bucket = label === '5h' ? 'hour' : 'day', day = label === '5h' ? '2026-10-13 12:00' : '2026-10-13';
+    render({ ...fixture, usageWindow: { ...request, bucket, days: [{ ...row(day, 'Codex', 'codex-model', 100), account: codex }, { ...row(day, 'Claude', 'claude-model', 700), account: claude }], conversations: [] } });
+    expect(document.querySelector('#totals strong')!.getAttribute('title')).toBe('700');
+    expect(document.querySelector('#account-picker-trigger')!.textContent).toContain('claude@test');
+    expect(providerSelect.parentElement!.hidden).toBe(true);
   });
   it('explains when a cycle has no account or no recorded cycles', () => {
     render({ ...value, accounts: {} }); choose('filter-range', 'cycle-weekly');

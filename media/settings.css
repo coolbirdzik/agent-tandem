@@ -789,8 +789,8 @@ html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-w
 .banked-reset-trigger { color: var(--muted); font-size: 12px; padding: 2px 0; background: transparent; border: 0; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
 .banked-reset-popover { display: none; position: absolute; z-index: 20; left: 0; bottom: calc(100% + 6px); width: max-content; max-width: min(380px, 80vw); padding: 8px 10px; background: color-mix(in srgb, var(--vscode-editorHoverWidget-background, var(--vscode-editor-background)) var(--tandem-popover-opacity), transparent); backdrop-filter: var(--tandem-popover-filter); -webkit-backdrop-filter: var(--tandem-popover-filter); color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground)); border: 1px solid var(--vscode-editorHoverWidget-border, var(--line)); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, #0004); }
 .banked-reset-popover p { margin: 0; padding: 3px 0; font-size: 12px; color: var(--muted); }
-.banked-reset:hover .banked-reset-popover, .banked-reset:focus-within .banked-reset-popover, .banked-reset[data-open=true] .banked-reset-popover { display: block; }
-.banked-reset[data-open=false] .banked-reset-popover { display: none; }
+.banked-reset[data-open=true] .banked-reset-popover { display: block; }
 
 /* Sub-tab bars stay pinned under the sticky settings header while the page scrolls. */
 .dashboard-tabs, .account-platforms, .storage-navigation { position: sticky; top: calc(var(--settings-header-h, 57px) - 1px); z-index: 1; background: var(--vscode-editor-background); }
+.dashboard-tabs { top: calc(var(--settings-header-h, 57px) + var(--account-picker-h, 54px) + 24px); }

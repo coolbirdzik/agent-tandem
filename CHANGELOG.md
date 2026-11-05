@@ -26,6 +26,8 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Fixed
 
+- Dashboard tabs stay clear of the account picker while scrolling, including in narrow panels, and quota-cycle views let you switch between Codex and Claude accounts without leaving the selected cycle range.
+- Banked reset details reopen on hover or focus after being dismissed with Escape.
 - Settings search boxes, date pickers, dropdowns and expandable sections use the themed styling, and date fields and their calendar follow the VS Code light or dark theme.
 - The quota status-bar item turns warning at 25% or less left and error when exhausted, matching its hover.
 - Status-bar quota hover opens immediately instead of waiting for the account refresh.
