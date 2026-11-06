@@ -61,6 +61,9 @@ export class HistoryStore {
     const hash = hashBytes(bytes);
     const directory = path.join(this.directory, 'blobs');
     await mkdir(directory, { recursive: true });
+    // Content-addressed: an existing blob needs verifying, never rewriting. Skipping the
+    // temporary file avoids a write (and an antivirus scan) for every repeated content.
+    if (await this.hasBlob(hash)) { await this.readBlob(hash); return hash; }
     // Publish only complete bytes; a crash cannot leave a partially written hash path.
     const temporary = path.join(directory, `${randomUUID()}.tmp`);
     try {
@@ -84,12 +87,20 @@ export class HistoryStore {
   async putFileBlob(file: string, signal?: AbortSignal): Promise<string> {
     return withStorageLock(this.lockDirectory, () => this.putFileBlobUnlocked(file, signal));
   }
+  private async hasBlob(hash: string): Promise<boolean> {
+    try { return (await lstat(path.join(this.directory, 'blobs', hash))).isFile(); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  }
   private async putFileBlobUnlocked(file: string, signal?: AbortSignal): Promise<string> {
     const directory = path.join(this.directory, 'blobs');
     await mkdir(directory, { recursive: true });
+    // Reading is far cheaper than writing a large temporary copy that an existing blob makes redundant.
+    const probe = await streamFile(file, { signal });
+    if (await this.hasBlob(probe.hash)) { await this.inspectBlob(probe.hash); return probe.hash; }
     const temporary = path.join(directory, `${randomUUID()}.tmp`);
     try {
       const { hash } = await streamFile(file, { target: temporary, signal });
+      if (hash !== probe.hash) throw new Error(`File changed while preparing review: ${file}`);
       await link(temporary, path.join(directory, hash)).catch(async error => {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
         await this.inspectBlob(hash); // Verify existing bytes without loading a large blob.

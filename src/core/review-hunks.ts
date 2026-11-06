@@ -1,16 +1,27 @@
 import { createHash } from 'node:crypto';
-import { diffLines } from 'diff';
 import { decodeText, decodeLegacy } from './history';
+import { computeLineParts, type DiffPart } from './diff-compute';
+import { diffLineParts } from './diff-async';
 
 export interface ReviewHunk {
   id: string; oldLine: number; oldLines: number; newLine: number; newLines: number;
   oldStart: number; oldEnd: number; newStart: number; newEnd: number;
 }
 
+const tooLong = () => new Error('This file needs file-level review: computing changes took too long.');
 /** Byte-preserving line edits; offsets address the exact immutable snapshot text. */
 export function reviewHunks(before: string, after: string): ReviewHunk[] {
-  const parts = diffLines(before, after, { timeout: 1000 });
-  if (!parts) throw new Error('This file needs file-level review: computing changes took too long.');
+  const parts = computeLineParts(before, after, 1000);
+  if (!parts) throw tooLong();
+  return hunksFromParts(before, after, parts);
+}
+/** The same hunks with the line diff computed off the extension host thread. */
+export async function reviewHunksAsync(before: string, after: string): Promise<ReviewHunk[]> {
+  const parts = await diffLineParts(before, after, 1000);
+  if (!parts) throw tooLong();
+  return hunksFromParts(before, after, parts);
+}
+function hunksFromParts(before: string, after: string, parts: DiffPart[]): ReviewHunk[] {
   let oldLine = 0, newLine = 0, oldOffset = 0, newOffset = 0;
   let current: Omit<ReviewHunk, 'id'> | undefined;
   const snapshots = createHash('sha256').update(before).update('\0').update(after).digest('hex');
@@ -22,12 +33,12 @@ export function reviewHunks(before: string, after: string): ReviewHunk[] {
   };
   for (const part of parts) {
     if (!part.added && !part.removed) {
-      finish(); oldOffset += part.value.length; newOffset += part.value.length;
+      finish(); oldOffset += part.length; newOffset += part.length;
       oldLine += part.count; newLine += part.count; continue;
     }
     current ??= { oldLine, newLine, oldLines: 0, newLines: 0, oldStart: oldOffset, oldEnd: oldOffset, newStart: newOffset, newEnd: newOffset };
-    if (part.removed) { oldOffset += part.value.length; oldLine += part.count; current.oldEnd = oldOffset; current.oldLines += part.count; }
-    if (part.added) { newOffset += part.value.length; newLine += part.count; current.newEnd = newOffset; current.newLines += part.count; }
+    if (part.removed) { oldOffset += part.length; oldLine += part.count; current.oldEnd = oldOffset; current.oldLines += part.count; }
+    if (part.added) { newOffset += part.length; newLine += part.count; current.newEnd = newOffset; current.newLines += part.count; }
   }
   finish(); return result;
 }

@@ -14,6 +14,9 @@ const value: UsageDashboardState = { status: 'ready', preferences: { showQuotaIn
   updatedAt: 1791570000000, files: 4, unreadableFiles: 0, malformedLines: 0, oversizedLines: 0, undatedRecords: 0, duplicates: 2, timezone: 'Asia/Saigon' },
   accounts: { Claude: { status: 'ready', account: { signedIn: true, email: 'claude@example.test', method: 'Claude account', plan: 'pro' }, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 25 }] } } } };
 const render = (state = value) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'state', state } }));
+/** The cycle table sits under the chart: one column per cycle, oldest first, so the latest cycle is the last cell of a row. */
+const cycleCells = (root: ParentNode, field: string) => [...root.querySelectorAll<HTMLElement>(`.quota-cycle-cell[data-field="${field}"]`)];
+const latestCell = (root: ParentNode, field: string) => cycleCells(root, field).at(-1)!;
 function choose(id: string, value: string) { const element = document.getElementById(id) as HTMLSelectElement; element.value = value; element.dispatchEvent(new Event('change')); }
 beforeEach(async () => {
   vi.resetModules(); postMessage.mockClear();
@@ -170,6 +173,65 @@ describe('Settings usage dashboard', () => {
     document.querySelector<HTMLButtonElement>('#storage-history-preview')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewHistoryDeletion', value: { ids: ['history-2', 'history-3'] } });
   });
+  it('lists each kind of saved data with who decides its removal, and sends the cleanup actions', () => {
+    const categories = [{ label: 'Review snapshots & tracking', bytes: 96 * 1024 ** 2, files: 840 }, { label: 'Message checkpoints & Undo', bytes: 1024 ** 2, files: 12 }, { label: 'Chat attachments', bytes: 28 * 1024 ** 2, files: 18 }, { label: 'Usage & account evidence', bytes: 3 * 1024 ** 2, files: 24 }, { label: 'Preferences & other data', bytes: 300 * 1024 ** 2, files: 2900 }];
+    const stats = { files: 700, bytes: 30 * 1024 ** 2, compressedFiles: 0, compressedBytes: 0, retainedFiles: 3, retainedBytes: 1024 ** 2 };
+    render({ ...value, storage: { status: 'ready', root: 'root', categories, cleanable: { bytes: 12 * 1024 ** 2, files: 2 } }, autoClean: { enabled: true, running: false, total: { bytes: 5 * 1024 ** 3, conversations: 0, files: 7000, runs: 2, lastAt: Date.now() - 120000, lastBytes: 1024 } },
+      tokenHistory: { stats }, data: { ...value.data!, retained: { conversations: 3, tokens: 1000 } } });
+    const row = (key: string) => document.querySelector<HTMLElement>(`[data-policy="${key}"]`)!;
+    expect([...document.querySelectorAll('[data-policy]')].map(item => (item as HTMLElement).dataset.policy)).toEqual(['review', 'restore', 'tokens', 'attachments', 'other']);
+    expect(row('review').textContent).toContain('Cleaned automatically'); expect(row('review').textContent).toContain('12.0 MB unused right now'); expect(row('review').textContent).toContain('5.00 GB cleaned automatically so far');
+    expect(row('restore').textContent).toContain('You decide'); expect(row('tokens').textContent).toContain('Never deleted automatically'); expect(row('attachments').textContent).toContain('Always kept');
+    expect(row('tokens').textContent).toContain('3 conversations kept after the chat was deleted');
+    expect(row('other').textContent).toContain('273.0 MB');
+    const toggle = document.querySelector<HTMLInputElement>('#autoclean-toggle')!; expect(toggle.checked).toBe(true);
+    toggle.checked = false; toggle.dispatchEvent(new Event('change')); expect(postMessage).toHaveBeenLastCalledWith({ type: 'setAutoCleanReview', value: { enabled: false } });
+    for (const [id, message] of [['autoclean-now', { type: 'autoCleanNow' }], ['autoclean-preview', { type: 'previewReviewCleanup', value: { scope: 'accepted' } }], ['token-compress', { type: 'compressTokenHistory' }], ['token-purge', { type: 'purgeRetainedUsage' }]] as const) {
+      document.querySelector<HTMLButtonElement>(`#${id}`)!.click(); expect(postMessage).toHaveBeenLastCalledWith(message);
+    }
+    render({ ...value, storage: { status: 'ready', root: 'root', categories, total: 2 * 1024 ** 3 }, storageLimit: { bytes: 5 * 1024 ** 3, running: false, total: { bytes: 1024 ** 3, conversations: 0, files: 40, runs: 1, lastAt: Date.now() - 60000 } } });
+    expect(row('restore').textContent).toContain('Oldest removed above 5.00 GB'); expect(row('restore').textContent).toContain('uses 2.00 GB of 5.00 GB'); expect(row('restore').textContent).toContain('1.00 GB removed to stay under the limit');
+    const limit = document.querySelector<HTMLInputElement>('#storage-limit')!; expect(limit.value).toBe('5');
+    limit.value = '2.5'; limit.dispatchEvent(new Event('change')); expect(postMessage).toHaveBeenLastCalledWith({ type: 'setStorageLimit', value: { gigabytes: 2.5 } });
+    render({ ...value, storage: { status: 'ready', root: 'root', categories }, storageLimit: { bytes: 5 * 1024 ** 3, running: false, total: { bytes: 0, conversations: 0, files: 0, runs: 0 }, blocked: true } });
+    expect(row('restore').textContent).toContain('Limit not met');
+    document.querySelector<HTMLButtonElement>('#data-restore')!.click();
+    expect((document.querySelector('#storage-restore-page') as HTMLElement).hidden).toBe(false);
+    document.querySelector<HTMLButtonElement>('[data-storage-page="unused"]')!.click();
+    render({ ...value, storage: { status: 'ready', root: 'root', categories }, autoClean: { enabled: false, running: false, total: { bytes: 0, conversations: 0, files: 0, runs: 0 } }, tokenHistory: { stats: { ...stats, compressedFiles: 700 } } });
+    expect(row('review').textContent).toContain('Automatic cleanup off');
+    expect(document.querySelector<HTMLButtonElement>('#token-compress')!.disabled).toBe(true);
+    expect(document.querySelector('#token-purge')).toBeNull();
+  });
+  it('shows storage errors and Refresh on the Restore history tab, and says when automatic cleanup is blocked', () => {
+    render({ ...value, storage: { status: 'error', root: 'root', error: 'Saved history changed. Preview deletion again.' } });
+    document.querySelector<HTMLButtonElement>('[data-page="storage"]')!.click();
+    document.querySelector<HTMLButtonElement>('[data-storage-page="restore"]')!.click();
+    const visible = (id: string) => { for (let node: HTMLElement | null = document.getElementById(id); node; node = node.parentElement) if (node.hidden) return false; return true; };
+    expect(visible('storage-error')).toBe(true); expect(document.querySelector('#storage-error')!.textContent).toContain('Saved history changed');
+    expect(visible('storage-refresh')).toBe(true); expect(visible('storage-clean-all')).toBe(true); expect(visible('data-policies')).toBe(false);
+    document.querySelector<HTMLButtonElement>('[data-storage-page="unused"]')!.click();
+    render({ ...value, storage: { status: 'ready', root: 'root', categories: [] }, autoClean: { enabled: true, running: false, total: { bytes: 0, conversations: 0, files: 0, runs: 0 }, error: 'Snapshot storage is still in use.' } });
+    const review = document.querySelector<HTMLElement>('[data-policy="review"]')!;
+    expect(review.textContent).toContain('Cleanup blocked'); expect(review.textContent).not.toContain('Cleaned automatically'); expect(review.textContent).toContain('could not finish: Snapshot storage is still in use.');
+  });
+  it('suggests an antivirus exclusion on Windows, sends its actions and collapses once acknowledged', () => {
+    render(value);
+    const tip = document.querySelector<HTMLDetailsElement>('#antivirus-tip')!;
+    expect(tip.hidden).toBe(true);
+    render({ ...value, antivirusTip: { path: 'C:\\data\\agent-tandem', dismissed: false } });
+    expect(tip.hidden).toBe(false); expect(tip.open).toBe(true);
+    expect(document.querySelector('#antivirus-tip-path')!.textContent).toBe('C:\\data\\agent-tandem');
+    for (const [id, action] of [['antivirus-copy-path', 'copyPath'], ['antivirus-copy-command', 'copyCommand'], ['antivirus-open', 'openSecurity'], ['antivirus-dismiss', 'dismiss']]) {
+      document.querySelector<HTMLButtonElement>(`#${id}`)!.click();
+      expect(postMessage).toHaveBeenLastCalledWith({ type: 'antivirusTip', value: { action } });
+    }
+    tip.open = false; render({ ...value, antivirusTip: { path: 'C:\\data\\agent-tandem', dismissed: false }, accountsBusy: true });
+    expect(tip.open).toBe(false);
+    render({ ...value, antivirusTip: { path: 'C:\\data\\agent-tandem', dismissed: true } });
+    expect(tip.open).toBe(false); expect(document.querySelector<HTMLButtonElement>('#antivirus-dismiss')!.hidden).toBe(true);
+    render(value); expect(tip.hidden).toBe(true);
+  });
   it('opens conversation cleanup first, scans once and keeps restore history and unused files in separate views', () => {
     render(value); postMessage.mockClear();
     document.querySelector<HTMLButtonElement>('[data-page="storage"]')!.click();
@@ -182,8 +244,12 @@ describe('Settings usage dashboard', () => {
     document.querySelector<HTMLButtonElement>('[data-storage-page="restore"]')!.click();
     expect((document.querySelector('#storage-conversations-page') as HTMLElement).hidden).toBe(true);
     expect((document.querySelector('#storage-restore-page') as HTMLElement).hidden).toBe(false);
+    // Status, errors and Refresh serve Restore history; the policy list is App data only.
     expect((document.querySelector('#storage-extension-summary') as HTMLElement).hidden).toBe(false);
+    expect((document.querySelector('#data-app') as HTMLElement).hidden).toBe(true);
     document.querySelector<HTMLButtonElement>('[data-storage-page="unused"]')!.click();
+    expect((document.querySelector('#storage-extension-summary') as HTMLElement).hidden).toBe(false);
+    expect((document.querySelector('#data-app') as HTMLElement).hidden).toBe(false);
     expect((document.querySelector('#storage-unused-page') as HTMLElement).hidden).toBe(false);
     expect((document.querySelector('#storage-restore-page') as HTMLElement).hidden).toBe(true);
   });
@@ -642,30 +708,40 @@ describe('Settings usage dashboard', () => {
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('37,500 tokens per percentage point');
     expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
     expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('title')).toContain('5,000,000 estimated tokens for 100% quota');
-    const latest = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
-    expect(latest[0]?.textContent).toContain('current'); expect(latest[0]?.getAttribute('title')).toContain('Partial observation');
-    expect(latest[1]?.textContent).toBe('Start unknown');
-    expect(latest[2]?.textContent).toBe('1,000,000');
-    expect(latest[3]?.textContent).toBe('20'); expect(latest[4]?.textContent).toBe('50,000');
-    expect(latest[5]?.getAttribute('title')).toBe('5,000,000'); expect(latest[6]?.textContent).toBe('+100%');
+    expect(latestCell(root, 'start').textContent).toContain('Current'); expect(latestCell(root, 'start').getAttribute('title')).toContain('Partial observation');
+    expect(latestCell(root, 'remaining').textContent).toBe('Start unknown');
+    expect(latestCell(root, 'tokens').textContent).toBe('1,000,000');
+    expect(latestCell(root, 'used').textContent).toBe('20'); expect(latestCell(root, 'rate').textContent).toBe('50,000');
+    expect(latestCell(root, 'capacity').getAttribute('title')).toBe('5,000,000'); expect(latestCell(root, 'change').textContent).toBe('+100%');
     expect(root.querySelector('.quota-calculation')?.textContent).toContain('1,500,000 recorded tokens ÷ 40 quota percentage points');
-    expect(root.querySelector('.quota-recorded-period')?.textContent).toContain(new Date(now).toLocaleString());
+    expect(latestCell(root, 'start').getAttribute('title')).toContain(new Date(now).toLocaleString());
+    expect(root.querySelector('.quota-stats')!.children).toHaveLength(4);
     expect(recent[0]).not.toHaveProperty('accountId');
     expect(document.querySelector('.quota-estimate-note details[open]')).toBeNull();
     expect(document.querySelector('.quota-estimate-note')?.tagName).toBe('DETAILS');
   });
-  it('keeps cycle history compact and lets users expand earlier resets', () => {
+  it('plots recent cycles with their figures underneath and lets users show earlier resets', () => {
     const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
     const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
-    const quotaHistory: QuotaObservation[] = Array.from({ length: 5 }, (_, i) => ({ provider: 'Codex',
+    const quotaHistory: QuotaObservation[] = Array.from({ length: 15 }, (_, i) => ({ provider: 'Codex',
       accountId: usageAccount('Codex', identity)!.id, plan: 'plus', label: '5h', from: now - (i + 1) * 5 * 3600000,
       resetsAt: now - i * 5 * 3600000, to: now - i * 5 * 3600000 - 60000, observedTokens: 1000 * (i + 1), usedPercent: 10 }));
     render({ ...value, accounts: { Codex: { status: 'ready', account: identity } }, quotaHistory });
-    const root = document.querySelector('.quota-trend-history')!, rows = [...root.querySelectorAll<HTMLElement>('tbody tr')];
-    expect(rows.filter(row => !row.hidden)).toHaveLength(3);
-    const button = root.querySelector('button')!; button.click();
-    expect(button.getAttribute('aria-expanded')).toBe('true'); expect(rows.every(row => !row.hidden)).toBe(true);
-    button.click(); expect(rows.filter(row => !row.hidden)).toHaveLength(3);
+    const root = document.querySelector('#quota-estimates')!;
+    expect(root.querySelector('.quota-trend-history table')).toBeNull();
+    expect(root.querySelectorAll('.quota-chart-mark')).toHaveLength(12); expect(cycleCells(root, 'tokens')).toHaveLength(12);
+    expect(root.querySelector('.quota-chart-caption')!.textContent).toContain('Latest 12 of 15');
+    const button = root.querySelector<HTMLButtonElement>('.quota-chart-more')!; expect(button.textContent).toBe('Show all 15 cycles');
+    button.click();
+    expect(root.querySelectorAll('.quota-chart-mark')).toHaveLength(15); expect(cycleCells(root, 'tokens')).toHaveLength(15);
+    expect(root.querySelector<HTMLElement>('.quota-chart-more')!.textContent).toBe('Show latest 12');
+    // A quota refresh rebuilds the panel without collapsing what the user opened.
+    render({ ...value, accounts: { Codex: { status: 'ready', account: identity } }, quotaHistory });
+    expect(cycleCells(document.querySelector('#quota-estimates')!, 'tokens')).toHaveLength(15);
+    // The cycle start heads each column for screen readers.
+    expect(root.querySelector('.quota-cycle-cell[data-field="start"]')?.tagName).toBe('TH');
+    expect(root.querySelector('.quota-cycle-cell[data-field="start"]')?.getAttribute('scope')).toBe('col');
+    document.querySelector<HTMLButtonElement>('#quota-estimates .quota-chart-more')!.click(); expect(cycleCells(document.querySelector('#quota-estimates')!, 'tokens')).toHaveLength(12);
   });
   it('collapses weekly reset jitter and labels only the current reading in both table and chart', () => {
     const now = Date.parse('2026-10-27T23:30:00+07:00'); vi.spyOn(Date, 'now').mockReturnValue(now);
@@ -679,10 +755,9 @@ describe('Settings usage dashboard', () => {
       windows: [{ id: 'weekly', label: '7d', resetsAt: latest.resetsAt + 500, usedPercent: 39 }] } };
     render({ ...value, data: undefined, accounts: { Codex: account }, quotaHistory: [first, latest, old] });
     const root = document.querySelector('#quota-estimates')!;
-    const rows = [...root.querySelectorAll('.quota-trend-history tbody tr')];
-    expect(rows).toHaveLength(2);
-    expect(rows.filter(row => row.children[0]!.textContent?.includes('current'))).toHaveLength(1);
-    expect(rows[0]?.children[2]?.textContent).toBe('222,856,032');
+    expect(cycleCells(root, 'start')).toHaveLength(2);
+    expect(cycleCells(root, 'start').filter(cell => cell.textContent?.includes('Current'))).toHaveLength(1);
+    expect(latestCell(root, 'tokens').textContent).toBe('222,856,032');
     expect(root.querySelectorAll('.quota-chart-point[data-current=true]')).toHaveLength(1);
     expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
     render({ ...value, data: undefined, accounts: { Codex: { ...account, quota: { ...account.quota, windows: [{ ...account.quota.windows[0]!, resetsAt: latest.resetsAt + 86400000 }] } } }, quotaHistory: [first, latest, old] });
@@ -701,19 +776,19 @@ describe('Settings usage dashboard', () => {
     const quotaCycleStarts = [{ ...scope, from, startUsedPercent: 0, usedPercent: 20, to: now }];
     render({ ...value, data: undefined, accounts: { Codex: account }, quotaCycleStarts, quotaHistory: [sample] });
     const root = document.querySelector('#quota-estimates')!;
-    expect(root.querySelector('th')?.textContent).toBe('Cycle start');
+    expect(root.querySelector('.quota-cycle-table th')?.textContent).toBe('Cycle start');
     expect(root.querySelectorAll('.quota-chart-point[data-current=true]')).toHaveLength(1);
-    expect(root.querySelector('.quota-recorded-period')?.textContent).toBe(`${new Date(from).toLocaleString()} – ${new Date(now).toLocaleString()}`);
+    expect(latestCell(root, 'start').getAttribute('title')).toContain(`${new Date(from).toLocaleString()} – ${new Date(now).toLocaleString()}`);
     expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
     vi.spyOn(Date, 'now').mockReturnValue(now + 60000);
     render({ ...value, data: undefined, accounts: { Codex: { ...account, updatedAt: now + 60000,
       quota: { ...account.quota, windows: [{ ...account.quota.windows[0]!, usedPercent: 0 }] } } }, quotaCycleStarts, quotaHistory: [sample] });
     expect(document.querySelectorAll('#quota-estimates .quota-chart-point[data-current=true]')).toHaveLength(0);
-    expect(document.querySelector('.quota-trend-history tbody td')?.textContent).not.toContain('current');
+    expect(latestCell(document, 'start').textContent).not.toContain('Current');
     expect(document.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('history');
     const partial = { ...sample, cycleStartKnown: false, startUsedPercent: 30, usedPercent: 10 };
     render({ ...value, data: undefined, accounts: { Codex: account }, quotaCycleStarts: [{ ...quotaCycleStarts[0]!, startUsedPercent: 30, usedPercent: 40 }], quotaHistory: [partial] });
-    expect(document.querySelector('.quota-trend-history tbody td')?.textContent).toContain('partial');
+    expect(latestCell(document, 'start').textContent).toContain('Partial');
     expect(document.querySelector('.quota-interval-chart')?.textContent).toContain('100% start not observed');
     expect(document.querySelector('.quota-interval-chart')?.textContent).toContain('70% → 60%');
     expect(document.querySelector('#quota-estimates')?.textContent).toMatch(/≈ 6[kK] tokens left/);
@@ -736,11 +811,10 @@ describe('Settings usage dashboard', () => {
     expect(root.querySelector('.quota-estimate-value')!.getAttribute('title')).toBe('100,000 tokens per percentage point');
     expect(root.querySelector('.quota-estimate-source')!.getAttribute('title')).toContain('API counters');
     expect(root.querySelector('.quota-local-warning')).toBeNull();
-    const cells = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
-    expect(cells[1]?.textContent).toBe('84% → 82%');
-    expect(cells[2]?.textContent).toBe('200,000');
-    expect(cells[3]?.textContent).toBe('2');
-    expect(cells[4]?.getAttribute('title')).toBe('200,000 tokens ÷ 2 percentage points');
+    expect(latestCell(root, 'remaining').textContent).toBe('84% → 82%');
+    expect(latestCell(root, 'tokens').textContent).toBe('200,000');
+    expect(latestCell(root, 'used').textContent).toBe('2');
+    expect(latestCell(root, 'rate').getAttribute('title')).toBe('200,000 tokens ÷ 2 percentage points');
     expect(root.textContent).toContain('8.2M tokens left');
     expect(root.querySelector('.quota-cycle-capacity')?.textContent).toContain('≈ 10M tokens / cycle');
     expect(root.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('current');
@@ -752,9 +826,8 @@ describe('Settings usage dashboard', () => {
     const sample: QuotaObservation = { provider: 'Codex', accountId: usageAccount('Codex', identity)!.id, plan: 'plus', label: '5h', source: 'API',
       from: now - 60000, to: now, resetsAt: now + 3600000, observedTokens: 200000, usedPercent: 2 };
     render({ ...value, data: undefined, accounts: { Codex: { status: 'ready', account: identity } }, quotaHistory: [sample] });
-    const cells = document.querySelectorAll('.quota-trend-history tbody tr:first-child td');
-    expect(cells[1]?.textContent).toBe('Start unknown'); expect(cells[2]?.textContent).toBe('200,000');
-    expect(cells[3]?.textContent).toBe('2');
+    expect(latestCell(document, 'remaining').textContent).toBe('Start unknown'); expect(latestCell(document, 'tokens').textContent).toBe('200,000');
+    expect(latestCell(document, 'used').textContent).toBe('2');
     expect(document.querySelector('.quota-cycle-capacity')?.getAttribute('title')).toContain('10,000,000 estimated tokens for 100% quota');
     expect(document.querySelector('.quota-cycle-capacity')?.getAttribute('data-basis')).toBe('history');
   });
@@ -1055,11 +1128,10 @@ describe('Settings usage dashboard', () => {
     expect(root.querySelector('.quota-estimate-value')?.getAttribute('title')).toBe('60,000 tokens per percentage point');
     expect(root.querySelector('.quota-trend-change')?.textContent).toContain('+100% vs earlier cycles');
     expect(root.textContent).toContain('Local · 2 cycles');
-    expect(root.querySelectorAll('.quota-trend-history tbody tr')).toHaveLength(2);
-    const cells = root.querySelectorAll('.quota-trend-history tbody tr:first-child td');
-    expect(cells[2]?.getAttribute('title')).toBe('2,000,000');
-    expect(cells[5]?.getAttribute('title')).toBe('8,000,000');
-    expect(cells[6]?.textContent).toBe('+100%');
+    expect(cycleCells(root, 'tokens')).toHaveLength(2);
+    expect(latestCell(root, 'tokens').getAttribute('title')).toBe('2,000,000');
+    expect(latestCell(root, 'capacity').getAttribute('title')).toBe('8,000,000');
+    expect(latestCell(root, 'change').textContent).toBe('+100%'); expect(latestCell(root, 'change').dataset.direction).toBe('up');
     const before = root.textContent;
     choose('filter-provider', 'Claude'); choose('filter-range', 'all');
     expect(root.textContent).toBe(before);

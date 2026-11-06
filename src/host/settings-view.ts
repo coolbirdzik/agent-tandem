@@ -30,7 +30,9 @@ export class SettingsView implements vscode.Disposable {
         if (data.type === 'ready') { this.update(true); if (this.page !== 'dashboard') await webview.postMessage({ type: 'page', page: this.page, ...(this.storagePage ? { storagePage: this.storagePage } : {}) }); return; }
         const commands: Record<string, string> = { usageAttribution: 'agentTandem.usageAttribution', accountAction: 'agentTandem.accountAction', refresh: 'agentTandem.refreshUsageDashboard', preferences: 'agentTandem.setDashboardPreferences', chat: 'agentTandem.open', clis: 'agentTandem.manageCLIs', vscodeSettings: 'agentTandem.openVSCodeSettings', storage: 'agentTandem.refreshStorage', previewCleanup: 'agentTandem.previewStorageCleanup', cleanup: 'agentTandem.cleanupStorage', revealStorage: 'agentTandem.revealStorage', previewHistoryDeletion: 'agentTandem.previewHistoryDeletion', previewCleanAll: 'agentTandem.previewCleanAll', scanConversations: 'agentTandem.scanConversationCleanup', previewConversationCleanup: 'agentTandem.previewConversationCleanup', deleteConversations: 'agentTandem.deleteConversations', deleteHistory: 'agentTandem.deleteHistory' };
         commands.previewReviewCleanup = 'agentTandem.previewReviewCleanup';
-        commands.purgeRetainedUsage = 'agentTandem.purgeRetainedUsage';
+        commands.antivirusTip = 'agentTandem.antivirusTip';
+        commands.setAutoCleanReview = 'agentTandem.setAutoCleanReview'; commands.autoCleanNow = 'agentTandem.autoCleanNow'; commands.compressTokenHistory = 'agentTandem.compressTokenHistory';
+        commands.purgeRetainedUsage = 'agentTandem.purgeRetainedUsage'; commands.setStorageLimit = 'agentTandem.setStorageLimit';
         commands.usageWindow = 'agentTandem.usageWindow';
         if (!Object.hasOwn(commands, data.type)) throw new Error('Unsupported settings request.');
         await this.invoke(commands[data.type]!, data.value);
@@ -43,7 +45,7 @@ export class SettingsView implements vscode.Disposable {
   update(force = false) {
     if (!this.panel) return;
     const state = this.state();
-    const signature = JSON.stringify([state.status, state.data?.updatedAt, state.error, state.accounts, state.storage, state.extensionStorage, state.conversationCleanup, state.storageFreed, state.preferences, state.activeProvider, state.quotaHistory, state.quotaHistoryError, state.quotaBaselines, state.quotaCycleStarts, state.quotaTicks, state.managedAccounts, state.accountsBusy, state.accountsError, state.accountsNotice, state.accountSwitch, state.accountSwitchBlocked, state.conversationTitles, state.attributionBusy, state.attributionError, state.attributionNotice]);
+    const signature = JSON.stringify([state.status, state.data?.updatedAt, state.error, state.accounts, state.storage, state.extensionStorage, state.autoClean, state.tokenHistory, state.antivirusTip, state.conversationCleanup, state.storageFreed, state.preferences, state.activeProvider, state.quotaHistory, state.quotaHistoryError, state.quotaBaselines, state.quotaCycleStarts, state.quotaTicks, state.managedAccounts, state.accountsBusy, state.accountsError, state.accountsNotice, state.accountSwitch, state.accountSwitchBlocked, state.conversationTitles, state.attributionBusy, state.attributionError, state.attributionNotice]);
     // Chat streaming, conversation sync and review capture don't change usage.
     if (!force && signature === this.lastUpdate && state.data === this.lastData) return;
     this.lastUpdate = signature; this.lastData = state.data;

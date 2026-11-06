@@ -6,10 +6,11 @@ import path from 'node:path';
 import { pipeline } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
 import * as zlib from 'node:zlib';
+import { promisify } from 'node:util';
 // Use the package's ESM build so esbuild can bundle its relative imports into VSIX.
 import { visit } from 'jsonc-parser/lib/esm/main.js';
 import type { ConversationProvider } from './conversations';
-import { addTotals, emptyTotals, localDay, type TokenTotals, type UsageDay, type UsageHistoryData, type RecentUsage, type UsageConversation, type UsageWindowData } from '../core/usage-dashboard';
+import { addTotals, emptyTotals, localDay, type TokenHistoryStats, type TokenTotals, type UsageDay, type UsageHistoryData, type RecentUsage, type UsageConversation, type UsageWindowData } from '../core/usage-dashboard';
 import { addApiCost, apiCost, emptyApiCost } from '../core/api-pricing';
 import type { UsageAccountStore } from '../core/usage-account-store';
 import { claudeHistoryOwner, type UsageAccount } from '../core/usage-account';
@@ -238,6 +239,17 @@ async function historyFiles(directory: string, signal?: AbortSignal): Promise<{ 
   }
   return { files: result.sort(), unreadable };
 }
+const gzip = promisify(zlib.gzip), gunzip = promisify(zlib.gunzip);
+/** Cache files are named by the plain `.json` form whether or not they are compressed. */
+const cacheName = (name: string) => name.endsWith('.gz') ? name.slice(0, -3) : name;
+/** Plain or compressed cache contents; undefined when neither exists or the file is too large to trust. */
+async function readCacheJson(filename: string): Promise<any | undefined> {
+  const limit = 64 * 1024 * 1024;
+  try { if ((await stat(filename)).size > limit) return undefined; return JSON.parse(await readFile(filename, 'utf8')); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const packed = await readFile(`${filename}.gz`).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; });
+  return packed && JSON.parse((await gunzip(packed, { maxOutputLength: limit })).toString('utf8'));
+}
 export class UsageHistory {
   private cache = new Map<string, ParsedFile>();
   private retainedCache = new Map<string, UsageRecord[]>();
@@ -252,9 +264,8 @@ export class UsageHistory {
   private async diskCache(file: string, provider: ConversationProvider, signature: string): Promise<ParsedFile | undefined> {
     if (!this.cacheDirectory) return;
     try {
-      const filename = this.cacheFile(file, provider);
-      if ((await stat(filename)).size > 64 * 1024 * 1024) return;
-      const data = JSON.parse(await readFile(filename, 'utf8'));
+      const data = await readCacheJson(this.cacheFile(file, provider));
+      if (!data) return;
       if (data.version !== cacheVersion || data.provider !== provider || data.signature !== signature || [data.malformed, data.oversized, data.undated].some(n => !Number.isSafeInteger(n) || n < 0)) return;
       const records = cachedRecords(data.records, provider);
       if (records) return { signature, records, malformed: data.malformed, oversized: data.oversized, undated: data.undated };
@@ -268,6 +279,8 @@ export class UsageHistory {
       const records = data.records.map(row => [row.id, row.model, row.timestamp, row.input, row.output, row.cacheRead, row.cacheWrite, row.reasoning, row.cacheWrite1h ?? null, row.accountKey ?? null, row.kind ?? null, row.equivalent ?? null, row.conversationId ?? null, row.project ?? null, row.creatorAccountId ?? null]);
       await writeFile(temporary, JSON.stringify({ version: cacheVersion, provider, signature: data.signature, malformed: data.malformed, oversized: data.oversized, undated: data.undated, records }), { flag: 'wx' });
       await rename(temporary, filename);
+      // The fresh counts supersede a compressed copy of older ones.
+      await unlink(`${filename}.gz`).catch(() => undefined);
     } catch { /* An optional cache must never hide otherwise readable usage. */ }
     finally { await unlink(temporary).catch(() => undefined); }
   }
@@ -279,7 +292,9 @@ export class UsageHistory {
   private async retainedFiles(sources: Array<{ provider: ConversationProvider; files: string[] }>) {
     if (!this.cacheDirectory) return [];
     const live = new Set(sources.flatMap(source => source.files.map(file => path.basename(this.cacheFile(file, source.provider)))));
-    return (await readdir(this.cacheDirectory).catch(() => [] as string[])).filter(name => name.endsWith('.json') && !live.has(name));
+    // A compressed cache is the same record as its plain name, and counts once even if both forms exist.
+    const names = (await readdir(this.cacheDirectory).catch(() => [] as string[])).filter(name => name.endsWith('.json') || name.endsWith('.json.gz')).map(cacheName);
+    return [...new Set(names)].filter(name => !live.has(name));
   }
   private async retainedRecords(sources: Array<{ provider: ConversationProvider; files: string[] }>) {
     const names = await this.retainedFiles(sources), present = new Set(names), rows: UsageRecord[][] = [];
@@ -290,11 +305,8 @@ export class UsageHistory {
         records = [];
         // These counts have no transcript left to reparse, so they outlive cacheVersion: a row format change must migrate them.
         try {
-          const filename = path.join(this.cacheDirectory!, name);
-          if ((await stat(filename)).size <= 64 * 1024 * 1024) {
-            const data = JSON.parse(await readFile(filename, 'utf8'));
-            if (data.provider === 'Codex' || data.provider === 'Claude') records = cachedRecords(data.records, data.provider) ?? [];
-          }
+          const data = await readCacheJson(path.join(this.cacheDirectory!, name));
+          if (data && (data.provider === 'Codex' || data.provider === 'Claude')) records = cachedRecords(data.records, data.provider) ?? [];
         } catch { /* A corrupt cache file carries no counts. */ }
         this.retainedCache.set(name, records);
       }
@@ -305,9 +317,51 @@ export class UsageHistory {
   /** Permanently forgets the kept counts. Caches of transcripts still on disk stay. */
   async purgeRetained() {
     const names = await this.retainedFiles(await this.historySources());
-    for (const name of names) await unlink(path.join(this.cacheDirectory!, name)).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
+    for (const name of names) for (const form of [name, `${name}.gz`]) await unlink(path.join(this.cacheDirectory!, form)).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
     this.retainedCache.clear();
     return names.length;
+  }
+  /** What the saved token counts occupy, and how much of it only exists because a transcript was deleted. */
+  async cacheStats(): Promise<TokenHistoryStats> {
+    const stats: TokenHistoryStats = { files: 0, bytes: 0, compressedFiles: 0, compressedBytes: 0, retainedFiles: 0, retainedBytes: 0 };
+    if (!this.cacheDirectory) return stats;
+    const retained = new Set(await this.retainedFiles(await this.historySources()));
+    const sizes = new Map<string, { bytes: number; compressed: boolean }>();
+    for (const name of await readdir(this.cacheDirectory).catch(() => [] as string[])) {
+      if (!name.endsWith('.json') && !name.endsWith('.json.gz')) continue;
+      const size = (await stat(path.join(this.cacheDirectory, name)).catch(() => undefined))?.size ?? 0, base = cacheName(name), known = sizes.get(base);
+      sizes.set(base, { bytes: (known?.bytes ?? 0) + size, compressed: name.endsWith('.gz') && (!known || known.compressed) });
+    }
+    for (const [name, entry] of sizes) {
+      stats.files++; stats.bytes += entry.bytes;
+      if (entry.compressed) { stats.compressedFiles++; stats.compressedBytes += entry.bytes; }
+      if (retained.has(name)) { stats.retainedFiles++; stats.retainedBytes += entry.bytes; }
+    }
+    return stats;
+  }
+  /**
+   * Lossless compression of every saved cache file. Each compressed copy is read back and compared with the original
+   * before the original is removed, so a failure leaves the plain file in place. Counts are unchanged and nothing is deleted.
+   */
+  async compressCache(): Promise<{ files: number; saved: number; failed: number }> {
+    const result = { files: 0, saved: 0, failed: 0 };
+    if (!this.cacheDirectory) return result;
+    for (const name of await readdir(this.cacheDirectory).catch(() => [] as string[])) {
+      if (!name.endsWith('.json')) continue;
+      const plain = path.join(this.cacheDirectory, name), packed = `${plain}.gz`, temporary = `${packed}.${randomUUID()}.tmp`;
+      try {
+        const info = await stat(plain);
+        if (info.size > 64 * 1024 * 1024) continue;
+        const bytes = await readFile(plain), compressed = await gzip(bytes, { level: 9 });
+        await writeFile(temporary, compressed, { flag: 'wx' });
+        if (!(await gunzip(await readFile(temporary))).equals(bytes)) throw new Error('Compressed copy does not match.');
+        await rename(temporary, packed); await unlink(plain);
+        result.files++; result.saved += Math.max(0, info.size - compressed.length);
+      } catch { result.failed++; }
+      finally { await unlink(temporary).catch(() => undefined); }
+    }
+    this.retainedCache.clear();
+    return result;
   }
   async read(signal?: AbortSignal): Promise<UsageHistoryData> {
     const start = performance.now(), stats: UsageReadStats = { discoveryMs: 0, parseMs: 0, aggregateMs: 0, parsedFiles: 0, memoryHits: 0, diskHits: 0 };

@@ -24,6 +24,7 @@ const configs = [
   { entryPoints: ['tests/extension/git-image-changes.ts'], outfile: 'dist/git-image-changes-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['tests/extension/checkpoints.ts'], outfile: 'dist/checkpoint-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { entryPoints: ['tests/extension/cli-manager-live.ts'], outfile: 'dist/cli-manager-live-tests.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
+  { entryPoints: ['src/core/diff-worker.ts'], outfile: 'dist/diff-worker.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20' },
   { entryPoints: ['src/providers/claude-history.ts'], outfile: 'dist/claude-history.mjs', bundle: true, platform: 'node', format: 'esm', target: 'node20' },
   { entryPoints: ['src/extension.ts'], outfile: 'dist/extension.js', bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'], sourcemap: true },
   { entryPoints: ['src/webview.ts'], outfile: 'dist/webview.js', bundle: true, platform: 'browser', format: 'iife', target: 'es2022', sourcemap: true },

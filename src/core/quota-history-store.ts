@@ -33,7 +33,7 @@ function meter(value: unknown): value is QuotaMeter {
   const row = value as QuotaMeter;
   return ['Codex', 'Claude'].includes(row.provider) && typeof row.accountId === 'string' && !!row.accountId && typeof row.plan === 'string' && ['5h', 'Weekly'].includes(row.label) &&
     [row.from, row.to, row.resetsAt, row.usedPercent].every(Number.isFinite) && row.from > 0 && row.from < row.to && row.to < row.resetsAt &&
-    Number.isSafeInteger(row.totalTokens) && row.totalTokens >= 0 && row.usedPercent >= 0 && row.usedPercent <= 100 && validCycleFields(row);
+    Number.isSafeInteger(row.totalTokens) && row.totalTokens > 0 && row.usedPercent >= 0 && row.usedPercent <= 100 && validCycleFields(row);
 }
 const cleanMeter = (row: QuotaMeter): QuotaMeter => ({ provider: row.provider, accountId: row.accountId, plan: row.plan, label: row.label,
   from: row.from, resetsAt: row.resetsAt, to: row.to, totalTokens: row.totalTokens, usedPercent: row.usedPercent, ...cycleFields(row) });

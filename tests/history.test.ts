@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, unlink, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, unlink, symlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -166,6 +166,20 @@ describe('snapshot inputs', () => {
     await writeFile(path.join(history.directory, 'blobs', hash), 'corrupt');
     await expect(history.inspectBlob(hash)).rejects.toThrow('corrupt');
     await expect(history.putFileBlob(source)).rejects.toThrow('corrupt');
+  });
+  it('verifies but never rewrites a blob that already exists', async () => {
+    const { root, history } = await fixture();
+    const bytes = Buffer.from('same content\n'), hash = await history.putBlob(bytes);
+    const blob = path.join(history.directory, 'blobs', hash), before = await stat(blob);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await history.putBlob(bytes)).toBe(hash);
+    const source = path.join(root, 'same.txt'); await writeFile(source, bytes);
+    expect(await history.putFileBlob(source)).toBe(hash);
+    const after = await stat(blob);
+    expect([after.ino, after.mtimeMs, after.ctimeMs]).toEqual([before.ino, before.mtimeMs, before.ctimeMs]);
+    expect((await readdir(path.join(history.directory, 'blobs'))).filter(name => name.endsWith('.tmp'))).toEqual([]);
+    await writeFile(blob, 'corrupt');
+    await expect(history.putBlob(bytes)).rejects.toThrow('corrupt');
   });
   it('classifies streamed UTF-16 and incomplete UTF-8 correctly and supports cancellation', async () => {
     const { root, history } = await fixture(); const source = path.join(root, 'stream.txt');

@@ -39,6 +39,8 @@ export interface UsageHistoryData {
 }
 /** Usage inside one time window, such as a quota cycle. `days` holds hourly ('YYYY-MM-DD HH:00') or daily buckets. */
 export interface UsageWindowData { from: number; to: number; bucket: 'hour' | 'day'; days: UsageDay[]; conversations: UsageConversation[] }
+/** Size of the saved token counts. `retained` ones belong to conversations whose transcripts are gone: the only copy. */
+export interface TokenHistoryStats { files: number; bytes: number; compressedFiles: number; compressedBytes: number; retainedFiles: number; retainedBytes: number }
 export interface UsageDashboardState {
   usageWindow?: UsageWindowData;
   quotaTicks?: import('./quota-pace').QuotaTick[];
@@ -53,6 +55,14 @@ export interface UsageDashboardState {
   quotaBaselines?: import('./quota-estimate').QuotaBaseline[];
   storage?: import('./storage').StorageState;
   extensionStorage?: import('./storage-usage').ExtensionStorageUsage;
+  /** Review data cleaned up without asking, plus the running total shown in Storage. */
+  autoClean?: { enabled: boolean; running: boolean; total: import('./storage-freed').StorageFreed; error?: string };
+  /** Size limit for AgentTandem data (0 = off): oldest restore points are removed above it. `blocked` means protected data alone is over it. */
+  storageLimit?: { bytes: number; running: boolean; total: import('./storage-freed').StorageFreed; blocked?: boolean; error?: string };
+  /** Saved token counts: never removed automatically, only compressed or deleted when the user chooses. */
+  tokenHistory?: { stats?: TokenHistoryStats; busy?: boolean; last?: { files: number; saved: number; failed: number }; error?: string };
+  /** Windows only: the data folder worth excluding from real-time antivirus scanning, and whether the tip was acknowledged. */
+  antivirusTip?: { path: string; dismissed: boolean };
   conversationCleanup?: import('./conversation-cleanup').ConversationCleanupState;
   storageFreed?: import('./storage-freed').StorageFreed;
   status: 'idle' | 'loading' | 'ready' | 'error'; data?: UsageHistoryData; error?: string;

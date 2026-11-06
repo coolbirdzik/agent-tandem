@@ -358,3 +358,114 @@ describe('Snapshot storage management', () => {
     await expect(f.manager.preview()).rejects.toThrow('Linked storage'); expect(await readFile(path.join(outside, 'keep.txt'), 'utf8')).toBe('keep');
   });
 });
+
+describe('Automatic review cleanup', () => {
+  const exists = (file: string) => lstat(file).then(() => true, () => false);
+  it('removes only old review snapshots nothing refers to, and keeps everything else', async () => {
+    const f = await fixture();
+    await f.reviews.begin(f.project, 'pending');
+    await writeFile(path.join(f.project, 'source.ts'), 'pending change\n');
+    const pending = await f.reviews.finish(f.project, 'pending');
+    const old = await f.orphan(f.reviews.history, 'old unused review data'), demo = await f.orphan(new HistoryStore(f.root), 'demo history');
+    const kept: Record<string, string> = { 'usage/history-cache/a.json': '{"tokens":1}', 'usage/quota-pace.json': '[]', 'accounts/profile.json': '{}', 'attachments/note.txt': 'attached' };
+    for (const [name, text] of Object.entries(kept)) { await mkdir(path.dirname(path.join(f.root, name)), { recursive: true }); await writeFile(path.join(f.root, name), text); }
+    const leftover = path.join(f.reviews.directory, `${randomUUID()}.git-review`); await writeFile(leftover, 'half-written');
+    await f.age();
+    const recent = await f.orphan(f.reviews.history, 'recent unused review data'), recentLeftover = path.join(f.reviews.directory, `${randomUUID()}.git-review`); await writeFile(recentLeftover, 'in use');
+    const result = await f.manager.autoCleanReview();
+    // The old snapshot and its blob, the half-written file, and the two manifests the finished turn left behind.
+    expect(result).toMatchObject({ failures: [], skipped: 0, remaining: 0 }); expect(result.removed).toBe(5);
+    expect(await exists(old.file)).toBe(false); expect(await exists(path.join(f.reviews.history.directory, 'blobs', old.blob))).toBe(false); expect(await exists(leftover)).toBe(false);
+    expect(await exists(recent.file)).toBe(true); expect(await exists(recentLeftover)).toBe(true);
+    expect(await exists(demo.file)).toBe(true); expect(await exists(path.join(f.root, 'blobs', demo.blob))).toBe(true);
+    for (const name of Object.keys(kept)) expect(await readFile(path.join(f.root, name), 'utf8')).toBe(kept[name]);
+    const review = await f.reviews.read(f.project); expect(review.files).toEqual(pending.files);
+    expect((await f.reviews.preview({ project: f.project, revision: review.revision, file: 'source.ts' })).before).toBe('user baseline\n');
+    expect(await f.manager.autoCleanReview()).toMatchObject({ removed: 0, remaining: 0 });
+  });
+  it('never touches tracking baselines, active captures, Undo or restore points, even when old', async () => {
+    const f = await fixture(), history = f.reviews.history;
+    // A pending change that was reverted: its Undo keeps the reverted bytes.
+    await f.reviews.begin(f.project, 'first'); await writeFile(path.join(f.project, 'source.ts'), 'agent edit\n');
+    const pending = await f.reviews.finish(f.project, 'first'), reverted = await f.reviews.revert({ project: f.project, revision: pending.revision });
+    // A restore point refers to a whole-workspace snapshot of its own.
+    const checkpoint = await history.capture(f.project); await f.checkpoints.record(f.project, 'Codex:one', ['message'], checkpoint.id);
+    await f.reviews.setExternalTracking(f.project, true);
+    await writeFile(path.join(f.project, 'source.ts'), 'edited outside\n'); await f.reviews.scanExternal(f.project);
+    await f.reviews.begin(f.project, 'active turn');
+    const referenced = async () => {
+      const state = JSON.parse(await readFile((await readdir(f.reviews.directory)).filter(name => name.endsWith('.json')).map(name => path.join(f.reviews.directory, name))[0]!, 'utf8'));
+      const snapshots = new Set<string>([state.external, state.active.before, checkpoint.id]), blobs = new Set<string>(state.revertUndo.files.map((entry: { after: string }) => entry.after));
+      for (const id of [...snapshots]) for (const blob of Object.values((await history.snapshot(id)).files)) blobs.add(blob);
+      return { snapshots: [...snapshots], blobs: [...blobs] };
+    };
+    const refs = await referenced();
+    await f.age();
+    await f.manager.autoCleanReview();
+    for (const id of refs.snapshots) expect(await exists(path.join(history.directory, 'snapshots', `${id}.json`))).toBe(true);
+    for (const blob of refs.blobs) expect(await exists(path.join(history.directory, 'blobs', blob))).toBe(true);
+    const finished = await f.reviews.finish(f.project, 'active turn');
+    expect(finished.files.map(file => file.path)).toEqual(['source.ts']);
+    expect((await f.reviews.preview({ project: f.project, revision: finished.revision, file: 'source.ts' })).before).toBe('user baseline\n');
+    expect(reverted.undo?.id).toBeTruthy();
+  });
+  it('asks for a new checkpoint preview when cleanup removed the old preview snapshot', async () => {
+    const f = await fixture(), target = await f.reviews.history.capture(f.project);
+    await f.checkpoints.record(f.project, 'Codex:preview', ['message'], target.id);
+    await writeFile(path.join(f.project, 'source.ts'), 'later edit\n');
+    const plan = await f.reviews.prepareCheckpoint(f.project, target.id);
+    await f.age(); await f.manager.autoCleanReview();
+    await expect(f.reviews.restoreCheckpoint(f.project, plan)).rejects.toThrow('Preview the checkpoint again');
+    expect(await readFile(path.join(f.project, 'source.ts'), 'utf8')).toBe('later edit\n');
+    expect(await exists(path.join(f.reviews.history.directory, 'snapshots', `${target.id}.json`))).toBe(true);
+  });
+  it('keeps data under the size limit by removing the oldest restore points first', async () => {
+    const f = await fixture(), history = f.reviews.history;
+    await writeFile(path.join(f.project, 'shared.ts'), 'shared '.repeat(4000));
+    const points: { id: string; blob: string }[] = [];
+    for (let index = 0; index < 4; index++) {
+      await writeFile(path.join(f.project, 'source.ts'), `version ${index} `.repeat(3000));
+      const snapshot = await history.capture(f.project);
+      await f.checkpoints.record(f.project, 'Codex:chat', Array.from({ length: index + 1 }, (_, n) => `message ${n}`), snapshot.id);
+      points.push({ id: snapshot.id, blob: snapshot.files['source.ts']! });
+    }
+    const backup = await history.capture(f.project); await f.checkpoints.saveUndo(f.project, backup.id);
+    const unique = (await lstat(path.join(history.directory, 'blobs', points[0]!.blob))).size, total = (await f.manager.usage()).total;
+    // Room for everything except about one and a half restore points: the two oldest go, nothing newer.
+    const result = await f.manager.enforceLimit(total - Math.round(unique * 1.5), { target: 1 });
+    expect(result).toMatchObject({ failures: [], checkpointsRemoved: 2, limitReached: true, remaining: false, total });
+    const manifest = (id: string) => path.join(history.directory, 'snapshots', `${id}.json`), blob = (hash: string) => path.join(history.directory, 'blobs', hash);
+    for (const point of points.slice(0, 2)) { expect(await exists(manifest(point.id))).toBe(false); expect(await exists(blob(point.blob))).toBe(false); }
+    for (const point of points.slice(2)) { expect(await exists(manifest(point.id))).toBe(true); expect(await exists(blob(point.blob))).toBe(true); }
+    expect(await exists(manifest(backup.id))).toBe(true);
+    expect(await exists(blob((await history.snapshot(points[3]!.id)).files['shared.ts']!))).toBe(true);
+    expect((await f.checkpoints.undo(f.project))?.id).toBeTruthy();
+    await expect(f.reviews.prepareCheckpoint(f.project, points[3]!.id)).resolves.toBeTruthy();
+    expect((await f.manager.usage()).total).toBeLessThanOrEqual(total - Math.round(unique * 1.5));
+  });
+  it('stops at protected data and does nothing under the limit or with the limit off', async () => {
+    const f = await fixture();
+    await f.reviews.begin(f.project, 'pending'); await writeFile(path.join(f.project, 'source.ts'), 'pending change\n'); const pending = await f.reviews.finish(f.project, 'pending');
+    await f.reviews.setExternalTracking(f.project, true);
+    const backup = await f.reviews.history.capture(f.project); await f.checkpoints.saveUndo(f.project, backup.id);
+    await mkdir(path.join(f.root, 'attachments'), { recursive: true }); await writeFile(path.join(f.root, 'attachments', 'note.txt'), 'attached');
+    const before = (await f.manager.usage()).total;
+    expect(await f.manager.enforceLimit(0)).toMatchObject({ removed: 0, limitReached: true });
+    expect(await f.manager.enforceLimit(before)).toMatchObject({ removed: 0, limitReached: true, total: before });
+    const blocked = await f.manager.enforceLimit(1);
+    expect(blocked).toMatchObject({ checkpointsRemoved: 0, trackingStopped: 0, limitReached: false, remaining: false });
+    expect((await f.reviews.read(f.project)).files).toEqual(pending.files);
+    expect((await f.checkpoints.undo(f.project))?.id).toBeTruthy();
+    expect(await readFile(path.join(f.root, 'attachments', 'note.txt'), 'utf8')).toBe('attached');
+    expect(await exists(path.join(f.reviews.history.directory, 'snapshots', `${backup.id}.json`))).toBe(true);
+  });
+  it('works in passes of a bounded size and never ages below the safety margin', async () => {
+    const f = await fixture(); for (const text of ['one', 'two']) await f.orphan(f.reviews.history, text); await f.age();
+    const fresh = await f.orphan(f.reviews.history, 'fresh');
+    const first = await f.manager.autoCleanReview({ maxFiles: 3, minAgeMs: 0 });
+    expect(first).toMatchObject({ removed: 3, remaining: 1 });
+    expect(await f.manager.autoCleanReview({ maxFiles: 3 })).toMatchObject({ removed: 1, remaining: 0 });
+    expect(await exists(fresh.file)).toBe(true);
+    expect(await f.manager.autoCleanReview({ minAgeMs: 0 })).toMatchObject({ removed: 0, remaining: 0 });
+  });
+});

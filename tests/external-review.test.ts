@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, unlink, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, unlink, rm, symlink, readdir, stat, utimes } from 'node:fs/promises';
 import * as fs from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -205,6 +205,57 @@ describe('External change tracking', () => {
     await f.store.decideHunk({ ...request, revision: partial.revision, hunk: remaining[0]!.id }, true);
     expect(await f.get('source.ts')).toBe('A\n' + 'same\n'.repeat(12) + 'z\n');
     expect((await f.store.scanExternal(f.project)).files).toEqual([]);
+  });
+  it('reads only the paths a watcher reported, including a removed directory, and a full scan finds the rest', async () => {
+    const f = await fixture();
+    await promisify(execFile)('git', ['init', '-q'], { cwd: f.project, windowsHide: true });
+    await f.set('other.ts', 'other\n'); await mkdir(path.join(f.project, 'dir')); await f.set('dir/inner.ts', 'inner\n');
+    await f.store.initializeExternalTracking(f.project);
+    await f.set('source.ts', 'edited\n'); await f.set('new.ts', 'new\n'); await f.set('other.ts', 'edited without an event\n');
+    const partial = await f.store.scanExternal(f.project, ['source.ts', 'new.ts']);
+    expect(partial.files.map(file => file.path)).toEqual(['new.ts', 'source.ts']);
+    await rm(path.join(f.project, 'dir'), { recursive: true });
+    const removed = await f.store.scanExternal(f.project, ['dir']);
+    expect(removed.files.map(file => `${file.kind}:${file.path}`)).toEqual(['deleted:dir/inner.ts', 'added:new.ts', 'modified:source.ts']);
+    const full = await f.store.scanExternal(f.project);
+    expect(full.files.map(file => file.path)).toEqual(['dir/inner.ts', 'new.ts', 'other.ts', 'source.ts']);
+  });
+  it('applies a changed ignore rule even when only the rule file was reported', async () => {
+    const f = await fixture();
+    await promisify(execFile)('git', ['init', '-q'], { cwd: f.project, windowsHide: true });
+    await f.set('keep.ts', 'keep\n'); await f.set('notes.log', 'log\n');
+    await f.store.initializeExternalTracking(f.project);
+    await f.set('notes.log', 'changed log\n'); await f.set('.gitignore', '*.log\n');
+    const scanned = await f.store.scanExternal(f.project, ['.gitignore']);
+    expect(scanned.files.map(file => file.path)).toEqual(['.gitignore']);
+  });
+  it('writes nothing when a background scan finds no changes', async () => {
+    const f = await fixture(); await f.store.setExternalTracking(f.project, true);
+    await f.set('source.ts', 'first\n'); await f.store.scanExternal(f.project);
+    const snapshots = path.join(f.store.history.directory, 'snapshots'), listing = async () => {
+      const entries = await readdir(f.store.directory), stamps = await Promise.all(entries.filter(name => name.endsWith('.json')).map(async name => [name, (await stat(path.join(f.store.directory, name))).mtimeMs]));
+      return { snapshots: await readdir(snapshots), reviews: stamps };
+    };
+    const before = await listing(); await new Promise(resolve => setTimeout(resolve, 20));
+    const idle = await f.store.scanExternal(f.project); await f.store.scanExternal(f.project, ['source.ts']);
+    expect(await listing()).toEqual(before);
+    expect(idle.files.map(file => file.path)).toEqual(['source.ts']);
+    await f.set('source.ts', 'second\n');
+    expect((await f.store.scanExternal(f.project)).files).toHaveLength(1);
+    expect((await listing()).snapshots).toHaveLength(before.snapshots.length + 1);
+  });
+  it('does not read files again when their size and timestamps are unchanged', async () => {
+    const f = await fixture(); await f.set('other.ts', 'other\n');
+    const old = new Date(Date.now() - 3600_000);
+    for (const name of ['source.ts', 'other.ts']) await utimes(path.join(f.project, name), old, old);
+    await f.store.setExternalTracking(f.project, true);
+    vi.mocked(fs.readFile).mockClear();
+    await f.store.scanExternal(f.project);
+    const reads = () => vi.mocked(fs.readFile).mock.calls.map(call => String(call[0])).filter(file => file.startsWith(f.project) && path.basename(file) !== '.gitignore');
+    expect(reads()).toEqual([]);
+    await f.set('other.ts', 'changed\n');
+    expect((await f.store.scanExternal(f.project)).files.map(file => file.path)).toEqual(['other.ts']);
+    expect(reads().map(file => path.basename(file))).toEqual(['other.ts']);
   });
   it('flushes final writes on stop, keeps pending review and excludes later edits until restarted', async () => {
     const f = await fixture(); await f.store.setExternalTracking(f.project, true);

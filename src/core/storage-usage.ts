@@ -6,6 +6,8 @@ export interface ExtensionStorageUsage {
   warningBytes: number;
 }
 export const storageWarningBytes = (megabytes: unknown) => (typeof megabytes === 'number' && Number.isFinite(megabytes) && megabytes >= 0 ? megabytes : 1024) * 1024 * 1024;
+/** `agentTandem.storageLimitGB`: 0 turns the limit off; anything invalid falls back to the 5 GB default. */
+export const storageLimitBytes = (gigabytes: unknown) => Math.round((typeof gigabytes === 'number' && Number.isFinite(gigabytes) && gigabytes >= 0 ? gigabytes : 5) * 1024 ** 3);
 export function storageUsageLevel(usage: ExtensionStorageUsage | undefined): 'unknown' | 'normal' | 'warning' | 'critical' {
   if (usage?.total === undefined) return 'unknown';
   if (!usage.warningBytes || usage.total < usage.warningBytes) return 'normal';

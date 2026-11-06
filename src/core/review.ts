@@ -1,22 +1,32 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import type { Stats } from 'node:fs';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rename, unlink, readdir, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import ignore from 'ignore';
-import { createTwoFilesPatch, diffLines } from 'diff';
+import { diffLineParts, diffPatch } from './diff-async';
 import { HistoryStore, assertPath } from './history';
 import type { FileChange, Manifest, Snapshot } from './types';
 import { streamFile } from './blob';
-import { reviewHunks, textSnapshots, encodeSnapshot, type ReviewHunk } from './review-hunks';
+import { reviewHunksAsync, textSnapshots, encodeSnapshot, type ReviewHunk } from './review-hunks';
 import { withStorageLock } from './storage-lock';
 import { captureConversations, editOverlapsCapture, type ReviewCapture, type ReviewConversation, type ConversationEdit } from './review-conversations';
 import { reviewGroup } from './review-groups';
 import { imageSnapshots, type ImageComparison } from './media-preview';
-import { reviewGitHead, reviewCommittedPaths, reviewCommittedFile, reviewUncommittedPaths, reviewGitEquivalentFiles, reviewIgnoredPaths } from './review-git';
+import { reviewGitHead, reviewCommittedPaths, reviewCommittedFile, reviewUncommittedPaths, reviewGitEquivalentFiles, reviewIgnoredPaths, reviewListedPaths } from './review-git';
 
 const execute = promisify(execFile);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+/** What a file looked like when it was last hashed. `seen` is the wall-clock time just before that stat. */
+interface StatEntry { size: number; mtimeMs: number; ctimeMs: number; ino: number; seen: number; id: string }
+/** A file modified within this window of being hashed can change without moving its timestamps (Git's "racy clean" rule). */
+const racyMs = 2000;
+const externalNotice = 'Already applied · Conversation groups use native edit history or manual links. Other saved edits remain unassigned.';
+const sameManifest =(left: Manifest, right: Manifest) => {
+  const names = Object.keys(left);
+  return names.length === Object.keys(right).length && names.every(name => left[name] === right[name]);
+};
 class ReviewTargetError extends Error {
   constructor(message: string, readonly nonFile = false) { super(message); }
 }
@@ -42,6 +52,10 @@ export interface CheckpointPlan { target: string; current: string; revision: str
 /** Workspace changes are already applied. Review owns snapshots and decisions only. */
 export class ReviewStore {
   readonly history: HistoryStore;
+  /** Per workspace root: unchanged files skip reading and hashing. Memory only; a reload rebuilds it with one full read. */
+  private statCache = new Map<string, Map<string, StatEntry>>();
+  /** A background scan that found nothing is not written to disk; its start time is kept here for the next capture interval. */
+  private idleScans = new Map<string, { external: string; at: number }>();
   constructor(readonly directory: string, private canReadGit = () => true) {
     this.history = new HistoryStore(path.join(directory, 'history'), undefined, path.dirname(directory));
   }
@@ -90,6 +104,8 @@ export class ReviewStore {
         }
       }
     }
+    const idle = this.idleScans.get(this.filename(project));
+    if (idle && idle.external === value.external && idle.at > (value.externalCapturedAt ?? 0)) value.externalCapturedAt = idle.at;
     if (value.revertUndo?.phase) await this.recoverRevert(value);
     if (reconcileCommits && !value.active && await this.acceptCommitted(value)) await this.save(value);
     return value;
@@ -204,7 +220,13 @@ export class ReviewStore {
     const full = await this.safePath(project, name);
     try { return (await streamFile(full)).hash; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   }
-  private async capture(project: string, known: string[] = [], previous?: Pick<Snapshot, 'files'>, signal?: AbortSignal, tolerateFileErrors = false, dropIgnored = false): Promise<Snapshot & { notice?: string; ignored: string[] }> {
+  /**
+   * `dirty` (paths a watcher saw change) limits the work to those paths and what lies below them; everything else is
+   * carried over from `previous`. Only a `previous` that is a stored snapshot qualifies. Anything unexpected, such as
+   * a non-repository, an old Git or a changed ignore rule, falls back to the full capture.
+   * An unchanged result reuses `previous` instead of writing another identical manifest.
+   */
+  private async capture(project: string, known: string[] = [], previous?: Pick<Snapshot, 'files'> & Partial<Pick<Snapshot, 'id'>>, signal?: AbortSignal, tolerateFileErrors = false, dropIgnored = false, dirty?: string[]): Promise<Snapshot & { notice?: string; ignored: string[] }> {
     signal?.throwIfAborted();
     const root = await realpath(project);
     const skipped = new Map<string, string>();
@@ -225,8 +247,35 @@ export class ReviewStore {
     };
     const skip = (name: string, error: unknown) => skipped.set(name, error instanceof Error ? error.message : String(error));
     const caseKey = (name: string) => process.platform === 'win32' ? name.toLowerCase() : name;
-    let names: string[], ignored: string[] = [];
-    try {
+    let names: string[] = [], ignored: string[] = [], incremental = false, seeds = known;
+    const touched = new Set<string>();
+    // Beyond a couple of hundred paths, several Git runs cost more than one full listing.
+    if (dirty?.length && dirty.length <= 200 && previous?.id) {
+      try {
+        const roots = new Set(dirty.map(caseKey));
+        for (const name of dirty) {
+          assertPath(name);
+          // Rule files change what every other path means; only a full capture can apply them.
+          if (/(^|\/)\.git(ignore|attributes)$/i.test(name)) throw new Error('Rules changed.');
+        }
+        const covered = (name: string) => {
+          const key = caseKey(name);
+          if (roots.has(key)) return true;
+          for (let at = key.indexOf('/'); at !== -1; at = key.indexOf('/', at + 1)) if (roots.has(key.slice(0, at))) return true;
+          return false;
+        };
+        const listed = await reviewListedPaths(project, dirty);
+        const rechecked = Object.keys(previous.files).filter(covered);
+        if (dropIgnored) {
+          const present = new Set(listed.map(caseKey)), unlisted = rechecked.filter(name => !present.has(caseKey(name)));
+          const matches = await reviewIgnoredPaths(project, unlisted);
+          ignored = unlisted.filter(name => matches.has(name));
+        }
+        for (const name of rechecked) touched.add(name);
+        names = listed; seeds = rechecked; incremental = true;
+      } catch { touched.clear(); ignored = []; names = []; seeds = known; incremental = false; }
+    }
+    if (!incremental) try {
       // Untranslated messages keep the "not a git repository" check working under a localized Git.
       const { stdout } = await execute('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: project, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } });
       names = stdout.split('\0').filter(Boolean);
@@ -263,11 +312,14 @@ export class ReviewStore {
       await scan(project, '', ignore().add(['.git/', 'node_modules/', '.test-runtime/', '.vscode-test/']));
     }
     const keys = new Set<string>(ignored.map(caseKey));
-    names = [...known, ...names].filter(name => {
+    names = [...seeds, ...names].filter(name => {
       const key = caseKey(name);
       if (keys.has(key)) return false; keys.add(key); return true;
     }).sort();
     const files: Manifest = Object.create(null);
+    // Untouched paths keep their saved bytes without being looked at again.
+    if (incremental) for (const [name, id] of Object.entries(previous!.files)) if (!touched.has(name)) files[name] = id;
+    const earlier = this.statCache.get(root), cache = incremental ? earlier ?? new Map<string, StatEntry>() : new Map<string, StatEntry>();
     // Workspace size is not a chat limit. Reuse immutable blobs for unchanged
     // files and identical contents; avoid publishing thousands of duplicate blobs.
     const blobs = new Map<string, Promise<string>>();
@@ -279,24 +331,32 @@ export class ReviewStore {
         const name = names[next++]!;
         try {
           const full = await this.safePath(project, name, root);
-          let info;
+          let info: Stats;
+          const seen = Date.now();
           try { info = await lstat(full); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+          const remember = (id: string) => { files[name] = id; cache.set(name, { size: info.size, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, ino: info.ino, seen, id }); };
+          const unchanged = earlier?.get(name);
+          // Same identity and timestamps, and old enough that a rewrite could not have kept them: no need to read it.
+          if (unchanged && previous?.files[name] === unchanged.id && unchanged.size === info.size && unchanged.mtimeMs === info.mtimeMs
+            && unchanged.ctimeMs === info.ctimeMs && unchanged.ino === info.ino && info.mtimeMs + racyMs < unchanged.seen) {
+            files[name] = unchanged.id; cache.set(name, unchanged); continue;
+          }
           if (info.size > 512 * 1024) {
             if (previous?.files[name]) {
               const current = await streamFile(full, { signal });
-              if (current.hash === previous.files[name]) { files[name] = current.hash; continue; }
+              if (current.hash === previous.files[name]) { remember(current.hash); continue; }
             }
-            files[name] = await this.history.putFileBlob(full, signal);
+            remember(await this.history.putFileBlob(full, signal));
             continue;
           }
           const content = await readFile(full);
           if (content.length !== info.size) throw new Error(`File changed while preparing review: ${name}`);
           const id = hash(content);
-          if (previous?.files[name] === id) files[name] = id;
+          if (previous?.files[name] === id) remember(id);
           else {
             let blob = blobs.get(id);
             if (!blob) { blob = this.history.putBlob(content); blobs.set(id, blob); }
-            files[name] = await blob;
+            remember(await blob);
           }
         } catch (error) {
           signal?.throwIfAborted();
@@ -312,9 +372,15 @@ export class ReviewStore {
     }));
     for (const worker of workers) if (worker.status === 'rejected') throw worker.reason;
     signal?.throwIfAborted();
-    const snapshot = { id: randomUUID(), files };
-    const directory = path.join(this.history.directory, 'snapshots'); await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, `${snapshot.id}.json`), JSON.stringify(snapshot), { flag: 'wx' });
+    for (const name of touched) if (!Object.hasOwn(files, name)) cache.delete(name);
+    this.statCache.set(root, cache);
+    const snapshot: Snapshot = { id: randomUUID(), files };
+    // Nothing changed: the stored manifest already describes these bytes, so write nothing.
+    if (previous?.id && sameManifest(previous.files, files)) snapshot.id = previous.id;
+    else {
+      const directory = path.join(this.history.directory, 'snapshots'); await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, `${snapshot.id}.json`), JSON.stringify(snapshot), { flag: 'wx' });
+    }
     const issues = [...skipped].sort(([a], [b]) => a.localeCompare(b));
     const notice = issues.length ? `Skipped ${issues.length} review ${issues.length === 1 ? 'path' : 'paths'}: ${issues.slice(0, 5).map(([name, reason]) => `${name} (${reason})`).join('; ')}${issues.length > 5 ? '; …' : ''}. Other files are still captured; skipped paths are checked again on the next capture.` : undefined;
     return { ...snapshot, notice, ignored };
@@ -381,9 +447,12 @@ export class ReviewStore {
       file.binary = left.binary || right.binary;
       if (!file.binary) {
         if (left.size + right.size <= 512 * 1024) {
-          const parts = diffLines(left.text!, right.text!);
-          file.additions = parts.filter(part => part.added).reduce((n, part) => n + part.count, 0);
-          file.deletions = parts.filter(part => part.removed).reduce((n, part) => n + part.count, 0);
+          // A pathological pair that takes too long simply shows no +/- counts.
+          const parts = await diffLineParts(left.text!, right.text!, 2000);
+          if (parts) {
+            file.additions = parts.filter(part => part.added).reduce((n, part) => n + part.count, 0);
+            file.deletions = parts.filter(part => part.removed).reduce((n, part) => n + part.count, 0);
+          }
         }
       }
       value.files.push(file);
@@ -428,24 +497,32 @@ export class ReviewStore {
     value.externalPreference = enabled;
     await this.save(value); return this.view(value);
   }
-  scanExternal(project: string) { return this.serial(async () => {
+  /** `dirty` lists paths a watcher saw change since the last scan; without it the whole workspace is read. */
+  scanExternal(project: string, dirty?: string[]) { return this.serial(async () => {
     const value = await this.load(project, true);
     if (!value.external) return this.view(value);
     if (value.active) throw new Error('Wait for the active agent turn to finish.');
-    await this.scanExternalValue(value); await this.save(value); return this.view(value);
+    if (!await this.scanExternalValue(value, dirty)) await this.save(value);
+    return this.view(value);
   }); }
-  private async scanExternalValue(value: PendingReview) {
+  /** Returns true when the scan found nothing new: no review, snapshot or notice changed, so there is nothing to write. */
+  private async scanExternalValue(value: PendingReview, dirty?: string[]): Promise<boolean> {
     const saved = await this.history.snapshot(value.external!), started = Date.now();
-    const after = await this.capture(value.project, [...Object.keys(saved.files), ...value.files.map(file => file.path)], saved, undefined, true, true);
+    const after = await this.capture(value.project, [...Object.keys(saved.files), ...value.files.map(file => file.path)], saved, undefined, true, true, dirty);
     const to = Date.now(), [before, ignored] = this.dropIgnored(value, saved, after.ignored);
+    if (after.id === saved.id && !ignored && !after.notice && (value.notice === undefined || value.notice === externalNotice)) {
+      this.idleScans.set(this.filename(value.project), { external: saved.id, at: Math.max(started, value.externalCapturedAt ?? 0) });
+      return true;
+    }
     if (await this.mergeChanges(value, before, after, { from: value.externalCapturedAt ?? to, to })) value.revision = randomUUID();
     value.external = after.id;
     // A write landing while this capture runs can be read by the next one only.
     // Its native tool timestamp is never earlier than this capture's start.
     value.externalCapturedAt = started;
     value.externalDecidedAt = undefined;
-    value.notice = 'Already applied · Conversation groups use native edit history or manual links. Other saved edits remain unassigned.';
+    value.notice = externalNotice;
     for (const extra of [ignored, after.notice]) if (extra) value.notice += ` ${extra}`;
+    return false;
   }
   bindConversation(project: string, previous: string, conversation: ReviewConversation) { return this.serial(async () => {
     const value = await this.load(project);
@@ -488,7 +565,9 @@ export class ReviewStore {
     if (value.active) throw new Error('Wait for the agent and change capture to finish.');
     if (value.external) throw new Error('Stop external change tracking before restoring a checkpoint.');
     if (value.revision !== plan.revision) throw new Error('Changes were reviewed after this preview. Preview the checkpoint again.');
-    const [before, target] = await Promise.all([this.history.snapshot(plan.current), this.history.snapshot(plan.target)]);
+    // The preview's own snapshot is unreferenced until restore starts, so automatic cleanup may have removed an old one.
+    const [before, target] = await Promise.all([this.history.snapshot(plan.current), this.history.snapshot(plan.target)])
+      .catch(error => { throw (error as NodeJS.ErrnoException).code === 'ENOENT' ? new Error('This checkpoint preview expired. Preview the checkpoint again.') : error; });
     const fresh = await this.capture(project, [...Object.keys(before.files), ...Object.keys(target.files)], before);
     const names = new Set([...Object.keys(before.files), ...Object.keys(fresh.files)]);
     for (const name of names) if (before.files[name] !== fresh.files[name]) throw new Error(`Cannot restore ${name}: it changed after the preview. Preview the checkpoint again; your edits were kept.`);
@@ -649,7 +728,7 @@ export class ReviewStore {
       file.after ? this.history.readBlob(file.after) : Buffer.alloc(0),
     ]);
     const texts = textSnapshots(left, right), { before, after } = texts;
-    let hunks = reviewHunks(before, after);
+    let hunks = await reviewHunksAsync(before, after);
     // Creating/deleting even an empty file is one complete change.
     if (!hunks.length && (!file.before || !file.after)) hunks = [{ id: hash(`${file.before}:${file.after}`), oldLine: 0, newLine: 0, oldLines: 0, newLines: 0, oldStart: 0, oldEnd: before.length, newStart: 0, newEnd: after.length }];
     return { left, right, ...texts, hunks };
@@ -677,7 +756,7 @@ export class ReviewStore {
       const updated = result ? await this.history.putBlob(result) : undefined;
       let remaining: ReviewFile | undefined;
       if (file.before && file.after && file.before !== updated) {
-        const pending = reviewHunks(data.before, text);
+        const pending = await reviewHunksAsync(data.before, text);
         remaining = { ...structuredClone(file), after: updated, additions: pending.reduce((n, h) => n + h.newLines, 0), deletions: pending.reduce((n, h) => n + h.oldLines, 0) };
       }
       return this.applyRevert(value, [{ original: file, after: updated, remaining }]);
@@ -691,7 +770,7 @@ export class ReviewStore {
       if (before === after) value.files = value.files.filter(item => item !== file);
       else {
         file.before = before; file.after = after;
-        const pending = reviewHunks(text, data.after);
+        const pending = await reviewHunksAsync(text, data.after);
         file.additions = pending.reduce((n, h) => n + h.newLines, 0); file.deletions = pending.reduce((n, h) => n + h.oldLines, 0);
       }
     }
@@ -737,6 +816,6 @@ export class ReviewStore {
     const [left, right] = await Promise.all([file.before ? this.history.inspectBlob(file.before) : { size: 0, binary: false, text: '' }, file.after ? this.history.inspectBlob(file.after) : { size: 0, binary: false, text: '' }]);
     const before = left.text, after = right.text;
     if (before === undefined || after === undefined || left.size + right.size > 512 * 1024) return { path: file.path, before: `${left.size} bytes`, after: `${right.size} bytes`, notice: file.binary ? 'Binary file · saved snapshots' : 'Large file · saved snapshots' };
-    return { path: file.path, before, after, patch: createTwoFilesPatch(`before/${file.path}`, `after/${file.path}`, before, after, '', '', { context: 3, timeout: 1000 }) };
+    return { path: file.path, before, after, patch: await diffPatch(file.path, before, after) };
   }); }
 }

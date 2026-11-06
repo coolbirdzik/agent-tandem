@@ -33,6 +33,11 @@ export interface HistoryDeletionPlan extends CleanupPlan {
 export const CLEANUP_KINDS = ['checkpoints', 'undo', 'tracking', 'unused'] as const;
 export type CleanupKind = typeof CLEANUP_KINDS[number];
 export interface HistoryDeletionResult extends CleanupResult { checkpointsRemoved: number; trackingStopped: number }
+export interface AutoCleanResult extends CleanupResult { remaining: number }
+/** `total` is the size before this pass; `limitReached` is false only when protected data alone stays above the limit. */
+export interface StorageLimitResult extends HistoryDeletionResult { total: number; limitReached: boolean; remaining: boolean }
+// Automatic cleanup waits far longer than the manual one: it runs unattended.
+const autoCleanAge = 60 * 60 * 1000, autoCleanBatch = 3000;
 /** Deletion progress: reference checks and history edits are indeterminate; removal counts approved files. */
 export interface StorageProgress { phase: 'checking' | 'history' | 'removing' | 'refreshing'; done: number; total: number; bytes: number; totalBytes: number }
 export type StorageProgressListener = (progress: StorageProgress) => void;
@@ -111,7 +116,7 @@ export class StorageManager {
     }
     return value as { project: string; external?: string; externalCapturedAt?: number };
   }
-  private async candidates(files: StoredFile[], now: number, overrides = new Map<string, unknown>(), released = new Set<string>(), selectedOnly = false): Promise<StoredFile[]> {
+  private async candidates(files: StoredFile[], now: number, overrides = new Map<string, unknown>(), released = new Set<string>(), selectedOnly = false, minAge = grace): Promise<StoredFile[]> {
     const snapshots = { review: new Set<string>(), demo: new Set<string>() }, blobs = { review: new Set<string>(), demo: new Set<string>() };
     for (const file of files) {
       if (reviewFile.test(file.relative)) await this.reviewReferences(file, snapshots.review, blobs.review, overrides.get(file.relative));
@@ -139,7 +144,7 @@ export class StorageManager {
       const value = await this.json(file);
       if (value.id !== id || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) throw new Error(`Invalid snapshot: ${file.relative}`);
       manifests.add(`${scope}:${id}`);
-      const unused = !snapshots[scope].has(id) && (released.has(file.relative) || (!selectedOnly && now - file.modified >= grace));
+      const unused = !snapshots[scope].has(id) && (released.has(file.relative) || (!selectedOnly && now - file.modified >= minAge));
       for (const [name, blob] of Object.entries(value.files)) { assertPath(name); if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${file.relative}`); if (!unused) blobs[scope].add(blob); }
       if (unused) removable.push(file);
     }
@@ -148,7 +153,7 @@ export class StorageManager {
     for (const scope of ['review', 'demo'] as const) for (const id of blobs[scope]) if (!blobFiles.has(`${scope === 'review' ? 'reviews/history/' : ''}blobs/${id}`)) throw new Error('A protected snapshot blob is missing. Repair storage before cleanup.');
     for (const file of files) {
       const match = /^(reviews\/history\/)?blobs\/([a-f0-9]{64})$/.exec(file.relative);
-      if (match && (released.has(file.relative) || (!selectedOnly && now - file.modified >= grace)) && !blobs[match[1] ? 'review' : 'demo'].has(match[2]!)) removable.push(file);
+      if (match && (released.has(file.relative) || (!selectedOnly && now - file.modified >= minAge)) && !blobs[match[1] ? 'review' : 'demo'].has(match[2]!)) removable.push(file);
     }
     return removable;
   }
@@ -356,6 +361,104 @@ export class StorageManager {
       }
       catch (error) { state.cleanupBlocked = error instanceof Error ? error.message : String(error); }
       return state;
+    });
+  }
+  /**
+   * Automatic cleanup of Review data nothing needs any more: snapshots and blobs that no tracking baseline, pending
+   * change, Undo, active capture or restore point refers to, once they are older than `minAgeMs`. Everything else
+   * stays: references, demo history, restore points, usage, accounts and attachments are never candidates.
+   * One pass holds the storage lock only briefly, so it removes at most `maxFiles` files; `remaining` says whether
+   * another pass is worth running.
+   */
+  async autoCleanReview(options: { minAgeMs?: number; maxFiles?: number } = {}): Promise<AutoCleanResult> {
+    const minAge = Math.max(grace, options.minAgeMs ?? autoCleanAge), maxFiles = Math.max(1, options.maxFiles ?? autoCleanBatch);
+    return withStorageLock(this.root, async () => {
+      const now = Date.now(), inventory = await this.inventory();
+      const orphans = (await this.candidates(inventory, now, new Map(), new Set(), false, minAge)).filter(file => file.relative.startsWith('reviews/history/'));
+      // Leftovers of an interrupted capture. Captures hold this lock, so nothing live can match while we hold it.
+      const leftovers = inventory.filter(file => now - file.modified >= minAge && /^reviews\/[a-f0-9-]{36}\.git-review(?:\.normalized)?$|^reviews\/history\/(?:blobs|snapshots)\/[^/]+\.tmp$/i.test(file.relative));
+      const all = [...orphans, ...leftovers], batch = all.slice(0, maxFiles);
+      const result = batch.length ? await this.removeFiles(batch, batch) : { removed: 0, bytes: 0, skipped: 0, failures: [] };
+      return { ...result, remaining: all.length - batch.length };
+    });
+  }
+  /**
+   * Keep AgentTandem data under `limitBytes`, rolling: unused review snapshots go first (ten minutes old or more),
+   * then message checkpoints, oldest first across projects, until the total is back to `target` of the limit.
+   * Pending review changes, tracking baselines, the restore backup (Undo), active captures, token usage, accounts and
+   * attachments are never removed. `limitReached` is false when only protected data is left above the limit;
+   * `remaining` says another pass is needed because this one hit `maxRecords`.
+   */
+  async enforceLimit(limitBytes: number, options: { target?: number; maxRecords?: number } = {}): Promise<StorageLimitResult> {
+    const empty = { removed: 0, bytes: 0, skipped: 0, failures: [] as string[], checkpointsRemoved: 0, trackingStopped: 0 };
+    if (!Number.isFinite(limitBytes) || limitBytes <= 0) return { ...empty, total: 0, limitReached: true, remaining: false };
+    const target = Math.floor(limitBytes * Math.min(1, Math.max(0.5, options.target ?? 0.9))), maxRecords = Math.max(1, options.maxRecords ?? 500);
+    return withStorageLock(this.root, async () => {
+      let inventory = await this.inventory();
+      const total = inventory.reduce((sum, file) => sum + file.bytes, 0);
+      if (total <= limitBytes) return { ...empty, total, limitReached: true, remaining: false };
+      const unused = await this.autoCleanReview({ minAgeMs: grace });
+      if (unused.removed) inventory = await this.inventory();
+      let current = inventory.reduce((sum, file) => sum + file.bytes, 0);
+      const swept = { ...empty, removed: unused.removed, bytes: unused.bytes, skipped: unused.skipped, failures: unused.failures };
+      if (current <= target || unused.remaining) return { ...swept, total, limitReached: current <= limitBytes || unused.remaining > 0, remaining: unused.remaining > 0 };
+      const byPath = new Map(inventory.map(file => [file.relative, file]));
+      // Everything Review keeps, including tracking baselines and active captures, stays.
+      const kept = new Set<string>(), busy = new Set<string>(), snapshots = new Set<string>(), blobs = new Set<string>();
+      for (const file of inventory.filter(file => reviewFile.test(file.relative))) {
+        await this.reviewReferences(file, snapshots, blobs);
+        if ((await this.json(file)).active) busy.add(path.basename(file.relative, '.json'));
+      }
+      const manifest = async (id: string) => {
+        const relative = `reviews/history/snapshots/${id}.json`, file = byPath.get(relative);
+        if (!file) throw new Error('A referenced snapshot is missing. Repair storage before cleanup.');
+        const value = await this.json(file);
+        if (value.id !== id || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) throw new Error(`Invalid snapshot: ${relative}`);
+        return [relative, ...Object.values(value.files).map(blob => { if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${relative}`); return `reviews/history/blobs/${blob}`; })];
+      };
+      const paths = new Map<string, string[]>(), pathsOf = async (id: string) => { let list = paths.get(id); if (!list) { list = await manifest(id); paths.set(id, list); } return list; };
+      for (const blob of blobs) kept.add(`reviews/history/blobs/${blob}`);
+      for (const id of snapshots) for (const relative of await pathsOf(id)) kept.add(relative);
+      const records: { relative: string; record: CheckpointRecord; removable: boolean }[] = [];
+      for (const file of inventory.filter(file => checkpointFile.test(file.relative))) {
+        const saved = await this.json(file);
+        if (!Array.isArray(saved)) throw new Error(`Invalid checkpoint metadata: ${file.relative}`);
+        for (const record of saved as CheckpointRecord[]) {
+          if (!record || !uuid.test(record.id) || !uuid.test(record.snapshot) || !Number.isFinite(record.createdAt)) throw new Error(`Invalid checkpoint record: ${file.relative}`);
+          records.push({ relative: file.relative, record, removable: !record.undo && !busy.has(path.basename(file.relative, '.json')) });
+        }
+      }
+      // Snapshots no checkpoint names (recent captures still inside the grace period) keep their blobs too.
+      const named = new Set(records.map(entry => entry.record.snapshot));
+      for (const file of inventory) {
+        const match = /^reviews\/history\/snapshots\/([a-f0-9-]{36})\.json$/i.exec(file.relative);
+        if (match && !named.has(match[1]!)) for (const relative of await pathsOf(match[1]!)) kept.add(relative);
+      }
+      // Consecutive checkpoints share most blobs; a file frees space only once its last checkpoint goes.
+      const owners = new Map<string, number>();
+      for (const entry of records) for (const relative of await pathsOf(entry.record.snapshot)) owners.set(relative, (owners.get(relative) ?? 0) + 1);
+      const chosen = new Map<string, Set<string>>(), released = new Set<string>();
+      let freed = 0, count = 0;
+      for (const entry of records.filter(entry => entry.removable).sort((a, b) => a.record.createdAt - b.record.createdAt)) {
+        if (current - freed <= target || count >= maxRecords) break;
+        const ids = chosen.get(entry.relative) ?? new Set<string>(); ids.add(entry.record.id); chosen.set(entry.relative, ids); count++;
+        for (const relative of await pathsOf(entry.record.snapshot)) {
+          const left = owners.get(relative)! - 1; owners.set(relative, left);
+          if (!left && !kept.has(relative)) { released.add(relative); freed += byPath.get(relative)?.bytes ?? 0; }
+        }
+      }
+      if (!count) return { ...swept, total, limitReached: current <= limitBytes, remaining: false };
+      const more = current - freed > target && records.some(entry => entry.removable && !chosen.get(entry.relative)?.has(entry.record.id));
+      const overrides = new Map<string, unknown>(), edits: HistoryDeletionPlan['records'] = [];
+      for (const [relative, ids] of chosen) {
+        const text = await readFile(path.join(this.root, relative), 'utf8');
+        overrides.set(relative, (JSON.parse(text) as CheckpointRecord[]).filter(record => !ids.has(record.id)));
+        edits.push({ relative, digest: digest(text), ids: [...ids] });
+      }
+      const files = await this.candidates(inventory, Date.now(), overrides, released, true);
+      const result = await this.deleteHistory({ token: randomUUID(), createdAt: Date.now(), histories: [], records: edits, files, bytes: files.reduce((sum, file) => sum + file.bytes, 0) });
+      current -= result.bytes;
+      return { ...result, removed: result.removed + swept.removed, bytes: result.bytes + swept.bytes, skipped: result.skipped + swept.skipped, failures: [...swept.failures, ...result.failures], total, limitReached: current <= limitBytes || more, remaining: more && !result.failures.length };
     });
   }
   /** Size-only background inventory: no snapshot parsing or cleanup planning. */

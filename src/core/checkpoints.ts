@@ -67,7 +67,7 @@ export class CheckpointStore {
     if (!uuid.test(snapshot)) throw new Error('Invalid restore backup.');
     const records = await this.load(project);
     const entry: SavedCheckpoint = { id: randomUUID(), snapshot, key: '', prefix: [], createdAt: Date.now(), undo: true };
-    // Keep the last restore backup. Message checkpoints remain indefinitely available.
+    // Keep the last restore backup. Message checkpoints stay until the user deletes them or the storage limit removes the oldest.
     await this.save(project, [...records.filter(record => !record.undo), entry]); return { id: entry.id, createdAt: entry.createdAt };
   }); }
   undo(project: string) { return this.serial(async () => {

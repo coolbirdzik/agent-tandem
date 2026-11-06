@@ -17,8 +17,13 @@ describe('Quota cycle charts', () => {
     const marks = root.querySelectorAll('.quota-chart-hit'); expect(marks).toHaveLength(2);
     expect(marks[0]?.getAttribute('tabindex')).toBe('0');
     marks[0]!.dispatchEvent(new FocusEvent('focus'));
-    expect(root.querySelector('output')?.textContent).toContain('100,000 tokens');
-    expect(root.querySelector('output')?.textContent).toContain('50,000 tokens / 1%');
+    // Focusing a cycle highlights its column in the table, where every figure for that cycle is listed.
+    const selected = [...root.querySelectorAll<HTMLElement>('.quota-cycle-cell.is-selected')];
+    expect(selected.map(cell => cell.dataset.field)).toEqual(['start', 'remaining', 'tokens', 'used', 'rate', 'capacity', 'change']);
+    expect(selected.every(cell => cell.dataset.index === '0')).toBe(true);
+    expect(selected.find(cell => cell.dataset.field === 'tokens')?.textContent).toBe('100,000');
+    expect(selected.find(cell => cell.dataset.field === 'rate')?.textContent).toBe('50,000');
+    expect(root.querySelector('output')).toBeNull();
     expect(root.querySelector('.quota-chart-caption')?.textContent).toContain('weighted average 75');
   });
   it('switches from a rate line to token bars and preserves only the same account selection', () => {
@@ -58,13 +63,16 @@ describe('Quota cycle charts', () => {
     expect(root.querySelector('.quota-chart-mark[data-direction=down]')).not.toBeNull();
     expect(root.querySelector('.quota-chart-average')).toBeNull();
     expect(root.querySelector('.quota-chart-hit')?.getAttribute('aria-label')).toContain('No previous cycle');
-    expect(root.querySelectorAll('.quota-cycle-axis > span')).toHaveLength(4);
+    expect(root.querySelectorAll('.quota-cycle-cell[data-field="start"]')).toHaveLength(4);
+    expect([...root.querySelectorAll('.quota-cycle-cell[data-field="change"]')].map(cell => cell.textContent)).toEqual(['—', '+100%', '-75%', '0%']);
+    expect(root.querySelector('tr[data-field="change"]')?.classList.contains('is-metric')).toBe(true);
     expect(root.querySelectorAll('[data-current=true]')).toHaveLength(1);
     const marks = root.querySelectorAll<SVGRectElement>('.quota-chart-hit'); document.body.append(root);
     marks[3]!.focus(); marks[3]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     expect(document.activeElement).toBe(marks[2]);
-    expect(root.querySelector('output')?.textContent).toContain('-75% tokens / 1% vs previous cycle');
+    expect(root.querySelector('.quota-cycle-cell.is-selected[data-field="change"]')?.textContent).toBe('-75%');
     select.value = 'capacityTokens'; select.dispatchEvent(new Event('change'));
+    expect(root.querySelector('tr[data-field="capacity"]')?.classList.contains('is-metric')).toBe(true); expect(root.querySelector('tr[data-field="change"]')?.classList.contains('is-metric')).toBe(false);
     expect(root.querySelector('.quota-chart-point.is-selected')).toBe(root.querySelectorAll('.quota-chart-point')[2]);
     expect(root.innerHTML).not.toMatch(/NaN|Infinity/); root.remove();
   });

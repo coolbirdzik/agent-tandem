@@ -1,4 +1,4 @@
-import { createTwoFilesPatch } from 'diff';
+import { diffPatch } from './diff-async';
 import { decodeText, type HistoryStore } from './history';
 import type { FileChange, Session } from './types';
 export interface Selection { sessionId: string; stepId: string; file?: string }
@@ -24,7 +24,7 @@ export async function readChangePreview(history: HistoryStore, sessions: Session
   } else if (left.length + right.length > 512 * 1024) {
     preview.file = { change, before: metadata(left), after: metadata(right), notice: 'Large file · use Open diff in editor to inspect the complete snapshots.' };
   } else {
-    const patch = createTwoFilesPatch(`before/${change.path}`, `after/${change.path}`, before, after, '', '', { context: 3, timeout: 1000 });
+    const patch = await diffPatch(change.path, before, after);
     preview.file = { change, before, after, patch, notice: patch === undefined ? 'Diff exceeded the inline calculation limit. Open diff in editor to compare the snapshots.' : undefined };
   }
   return preview;

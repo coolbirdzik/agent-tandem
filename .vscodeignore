@@ -6,6 +6,7 @@
 !LICENSE.txt
 !media/**
 !dist/extension.js
+!dist/diff-worker.js
 !dist/release.json
 !dist/webview.js
 !dist/review-webview.js

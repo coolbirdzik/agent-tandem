@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, appendFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { constants as zlibConstants, createZstdCompress, zstdCompressSync } from 'node:zlib';
+import { constants as zlibConstants, createZstdCompress, zstdCompressSync, gunzipSync } from 'node:zlib';
+import { randomUUID } from 'node:crypto';
 import { UsageHistory, UsageParser, assertCompleteZstd } from '../src/providers/usage-history';
 import { usageBreakdown } from '../src/core/usage-dashboard';
 import { UsageAccountStore } from '../src/core/usage-account-store';
@@ -92,6 +93,39 @@ describe('Keeping tokens of deleted transcripts', () => {
       const purged = await history.read();
       expect(total(purged)).toBe(240); expect(purged.retained).toBeUndefined(); expect(purged.conversations!.map(row => row.id)).toEqual(['live']);
       expect((await new UsageHistory(f.homes, undefined, f.cache).read()).conversations!.map(row => row.id)).toEqual(['live']);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+  it('compresses saved token counts without changing them, counts a plain-and-compressed pair once, and purges both forms', async () => {
+    const f = await setup();
+    try {
+      await writeFile(path.join(f.sessions, 'kept.jsonl'), rollout('kept', 'r-kept', 100, 20));
+      await writeFile(path.join(f.sessions, 'live.jsonl'), rollout('live', 'r-live', 200, 40));
+      const history = new UsageHistory(f.homes, undefined, f.cache), first = await history.read();
+      await rm(path.join(f.sessions, 'kept.jsonl'));
+      const plainBytes = (await history.cacheStats()).bytes;
+      expect(await history.cacheStats()).toMatchObject({ files: 2, compressedFiles: 0, retainedFiles: 1 });
+      const packed = await history.compressCache();
+      expect(packed).toMatchObject({ files: 2, failed: 0 });
+      const names = (await readdir(f.cache)).sort(); expect(names.every(name => name.endsWith('.json.gz'))).toBe(true); expect(names).toHaveLength(2);
+      const stats = await history.cacheStats();
+      expect(stats).toMatchObject({ files: 2, compressedFiles: 2, retainedFiles: 1 }); expect(stats.bytes).toBeLessThan(plainBytes);
+      // A fresh reader sees the same counts, and the deleted transcript is still counted once.
+      const reload = await new UsageHistory(f.homes, undefined, f.cache).read();
+      expect(total(reload)).toBe(total(first)); expect(reload.retained).toEqual({ conversations: 1, tokens: 120 });
+      // A plain copy left next to a compressed one (interrupted compression) is one record, not two.
+      const [name] = names; await writeFile(path.join(f.cache, name!.slice(0, -3)), await readFile(path.join(f.cache, name!)).then(bytes => gunzipSync(bytes)));
+      await writeFile(path.join(f.cache, `${name}.${randomUUID()}.tmp`), 'partial');
+      expect(await history.cacheStats()).toMatchObject({ files: 2 });
+      expect(total(await new UsageHistory(f.homes, undefined, f.cache).read())).toBe(360);
+      // A live transcript that changes rewrites its plain cache and supersedes the compressed one.
+      await writeFile(path.join(f.sessions, 'live.jsonl'), rollout('live', 'r-live', 300, 60));
+      expect(total(await new UsageHistory(f.homes, undefined, f.cache).read())).toBe(120 + 360);
+      expect((await readdir(f.cache)).filter(entry => entry.endsWith('.gz'))).toHaveLength(1);
+      expect(await history.purgeRetained()).toBe(1);
+      expect((await readdir(f.cache)).filter(entry => /\.json(\.gz)?$/.test(entry))).toHaveLength(1);
+      expect(total(await new UsageHistory(f.homes, undefined, f.cache).read())).toBe(360);
+      expect(await history.compressCache()).toMatchObject({ files: 1, failed: 0 });
+      expect(await history.compressCache()).toMatchObject({ files: 0, failed: 0 });
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
   it('does not count a compressed or archived rollout twice or report it as deleted', async () => {

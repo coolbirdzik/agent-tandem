@@ -120,11 +120,11 @@ On the **Quota** tab, each quota window (Codex/Claude Code × 5h/7d) gets a card
 
 ### Tokens per 1% quota
 
-Each provider has separate **5h** and **Weekly** windows. **Estimated full cycle** shows approximately how many tokens a full reset cycle represents: recorded tokens ÷ quota percentage points used × 100. It uses the current cycle's recorded ratio when available, or the weighted average of recorded cycles, with the basis shown below the estimate. Estimated tokens left appear alongside it.
+Each provider has separate **5h** and **Weekly** windows. Every window starts with four figures side by side: the **tokens per 1%** rate (with its source, cycle count and change against earlier cycles), the **estimated full cycle**, the **tokens left** in this cycle and the current cycle's quota interval. The full cycle is approximately how many tokens a full reset cycle represents: recorded tokens ÷ quota percentage points used × 100. It uses the current cycle's recorded ratio when available, or the weighted average of recorded cycles, with the basis shown below the estimate.
 
-The interval bar shows the quota readings and their recorded tokens, such as **100% → 75% remaining: 804,531 tokens**. Recording that starts partway through a cycle shows that actual interval, such as **84% → 82%**. Older API records without a saved starting reading show **Start unknown**.
+The interval figure shows the quota readings and their recorded tokens, such as **100% → 75% remaining: 804,531 tokens**. Recording that starts partway through a cycle shows that actual interval, such as **84% → 82%**. Older API records without a saved starting reading show **Start unknown**.
 
-![Codex 5h and Weekly full-cycle token estimates, quota intervals, token-per-percent line charts and detailed cycle tables](media/screenshots/tokens-per-quota.png)
+![Codex 5h and Weekly figures in columns, with a token-per-percent line chart and a table of every cycle aligned under it](media/screenshots/tokens-per-quota.png)
 
 Use **Chart metric** to switch between:
 
@@ -132,7 +132,7 @@ Use **Chart metric** to switch between:
 - **Recorded tokens** — bars showing the tokens actually recorded in each cycle.
 - **Full quota estimate** — bars extrapolating each observed ratio to a full cycle.
 
-Hover or focus a chart point to inspect its reset date, quota interval, recorded tokens and token/1% ratio. Charts show the latest 12 cycles. **Tokens per reset cycle** lists exact recorded counts, quota used, observation times and estimated capacity; **Calculation details** explains the formula. The overall average divides total recorded tokens by total quota percentage points across all recorded cycles.
+The cycles are part of the chart: the figures for each one sit in a table directly under its column, so there is no separate list. A column shows the cycle start (marked **Current**, **Partial** or **Legacy** where that applies), quota remaining, recorded tokens, quota used in percentage points, tokens / 1%, the full-quota estimate and the change against the previous cycle. The row for the chosen metric is emphasized, and hovering or focusing a cycle highlights its whole column; hover a cell for the reset time and the exact recorded period. The columns stretch to the panel and scroll sideways when there are many. Charts show the latest 12 cycles, and **Show all** reveals up to 30. **Calculation details** explains the formula. The overall average divides total recorded tokens by total quota percentage points across all recorded cycles.
 
 <details>
 <summary>Recorded tokens and full-cycle estimate charts</summary>
@@ -191,7 +191,7 @@ Open **Settings → Preferences** to show both agents, the selected chat agent, 
 
 Open **Settings → Storage** to see what agent history takes up and how much cleanup has reclaimed.
 
-The status-bar hover also shows **Extension storage**, its measured size and the largest data categories. **Manage storage** opens the extension's **Unused files** tab directly, where you can inspect categories, choose what to clean and preview the exact files. AgentTandem checks its own data folder in the background every five minutes and refreshes after cleanup. Native Codex/Claude transcripts are managed separately in **Conversations**.
+The status-bar hover also shows **Extension storage**, its measured size and the largest data categories. **Manage storage** opens the extension's **App data** tab directly, where you can see what each kind of saved data is, who decides when it goes, and preview the exact files. AgentTandem checks its own data folder in the background every five minutes and refreshes after cleanup. Native Codex/Claude transcripts are managed separately in **Conversations**.
 
 At **1 GB** by default, the hover and Storage page show a warning and a notification offers **Manage storage**. Notifications appear at most once per day. Change **AgentTandem: Storage Warning MB** (`agentTandem.storageWarningMB`) in VS Code Settings; set it to `0` to disable size warnings. Monitoring does not delete anything.
 
@@ -202,7 +202,14 @@ Two headline cards stay visible on every Storage tab:
 
 ![Storage overview with In use now and Freed so far cards above the conversation cleanup list](media/screenshots/storage.png)
 
-The **Restore history** and **Unused files** tabs inspect the extension data folder and storage categories. Filter saved restore history by project/type, select entries and **Review deletion** before removing them.
+The **App data** tab lists each kind of data AgentTandem keeps with its size, a policy label and its main action:
+
+- **Review snapshots** are **cleaned automatically**. Snapshots and blobs that no tracking baseline, pending change, Undo, active capture or restore point refers to, for example after you accept changes, are removed once they are at least an hour old. A pass runs shortly after VS Code starts, every few hours and after you accept or revert, never during an agent turn or other storage work, and holds the storage lock only briefly. The first run can free a lot of space, so it shows one notification with the amount and a **Turn off auto-clean** button. Switch it off with **Clean automatically** here or `agentTandem.autoCleanReviewData`; **Clean now** runs it once, and **Preview unused files…** lists them first (the preview includes files from ten minutes old, the automatic pass only those over an hour).
+- **Restore points** follow a rolling **Size limit** for AgentTandem's data folder, 5 GB by default (`agentTandem.storageLimitGB`, 0 turns it off). Above it, unused review snapshots and then the oldest restore points are removed, oldest first, until the data is back to about 90% of the limit. Pending changes, tracking baselines, the last restore backup, token usage history, accounts and attachments are never removed to meet it. Codex and Claude Code chats are not counted.
+- **Token usage history** is never deleted automatically. **Compress** shrinks the saved token counts without changing them (each compressed file is read back and compared before the original is removed), and **Delete kept history…** removes the counts of conversations whose transcripts are gone, after asking. Counts kept only because their chat was deleted are the sole copy.
+- **Chat attachments** and **Accounts and other data** are always kept.
+
+The **Restore history** tab filters saved restore history by project/type; select entries and **Review deletion** before removing them.
 
 **Review snapshots & tracking** has two shortcuts, also available in the status-bar hover: **Clean accepted** previews unreferenced review snapshots left after Accept or other review actions, while keeping tracking baselines, checkpoints and Undo. **Clean all** also removes every message checkpoint and restore backup and stops change tracking across projects. Pending review and its revert Undo remain protected, so some space can remain. Both actions show the exact files and bytes before the final cleanup button. Captures less than 10 minutes old stay protected unless their saved history is explicitly removed. Workspace files, chats and recorded demos are kept.
 

@@ -328,6 +328,8 @@ function storagePage(value: string) {
   currentStoragePage = value;
   el('storage-conversations-page').hidden = value !== 'conversations';
   el('storage-extension-summary').hidden = value === 'conversations';
+  // The policy list belongs to App data; the status, errors and Refresh above it serve both tabs.
+  el('data-intro').hidden = el('data-app').hidden = value !== 'unused';
   el('storage-restore-page').hidden = value !== 'restore'; el('storage-unused-page').hidden = value !== 'unused';
   document.querySelectorAll<HTMLButtonElement>('[data-storage-page]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storagePage === value)));
   if (value === 'conversations' && (!state?.conversationCleanup || state.conversationCleanup.status === 'idle') && !nativeScanRequested) {
@@ -366,6 +368,7 @@ el('attribution-form').onsubmit = event => {
   if (!state?.attributionBusy && validAssignmentScope(scope) && accountId) send('usageAttribution', { action: 'assign', scope, accountId: accountId === UNKNOWN_ACCOUNT ? null : accountId });
 };
 el('storage-refresh').onclick = () => send('storage'); el('storage-reveal').onclick = () => send('revealStorage');
+for (const [id, action] of [['antivirus-copy-path', 'copyPath'], ['antivirus-copy-command', 'copyCommand'], ['antivirus-open', 'openSecurity'], ['antivirus-dismiss', 'dismiss']] as const) el(id).onclick = () => send('antivirusTip', { action });
 el('storage-preview').onclick = () => send('previewCleanup'); el('storage-cancel').onclick = () => send('storage');
 el('storage-clean').onclick = () => { if (state?.storage?.plan) send('cleanup', { token: state.storage.plan.token }); };
 const selectedNativeHistory = new Set<string>();
@@ -1016,11 +1019,13 @@ function renderQuotaEstimates() {
         row.append(pending);
       }
       else {
+        // Three figures side by side: the rate, the full-cycle estimate and what is left. The cycles follow in the chart.
+        const stats = node('div', undefined, 'quota-stats'), rateStat = node('div', undefined, 'quota-stat'), capacityStat = node('div', undefined, 'quota-stat'), leftStat = node('div', undefined, 'quota-stat');
         const amount = node('strong', `≈ ${compact(trend.tokensPerPercent)} tokens / 1%`, 'quota-estimate-value'); amount.title = `${number(Math.round(trend.tokensPerPercent))} tokens per percentage point`;
         const source = node('p', `${trend.source === 'Device' ? 'Device estimate' : trend.source} · ${trend.observations.length} ${trend.observations.length === 1 ? 'cycle' : 'cycles'}`, 'muted quota-estimate-source');
         source.title = trend.source === 'API' ? 'API counters · token increase ÷ quota percentage-point increase' : trend.source === 'Device'
           ? 'Local history includes unknown, inferred and user-confirmed sessions. Other accounts with native turn evidence are excluded; usage on other devices is not recorded.' : 'Local · account-matched native turn history';
-        row.append(amount, source);
+        rateStat.append(node('span', 'Per 1% of quota', 'quota-stat-label'), amount, source);
         const currentReset = account?.quota?.windows.find(window => window.label === (trend.label === '5h' ? '5h' : '7d'))?.resetsAt;
         const cycleStart = identity && cycleStarts?.find(start => quotaCycleScope(start) === quotaCycleScope({ provider, accountId: identity.id, plan: account?.account?.plan ?? '', label: trend.label }));
         const allCycles = quotaCycles(trend.observations, Date.now(), currentReset, cycleStart?.from);
@@ -1029,32 +1034,37 @@ function renderQuotaEstimates() {
         const cycleRate = current ? current.observedTokens / current.usedPercent : trend.tokensPerPercent;
         const capacity = node('div', undefined, 'quota-cycle-capacity');
         capacity.dataset.basis = current ? 'current' : 'history';
-        capacity.append(node('span', 'Estimated full cycle', 'muted'), node('strong', `≈ ${compact(cycleRate * 100)} tokens / cycle`),
+        capacity.append(node('span', 'Estimated full cycle', 'quota-stat-label'), node('strong', `≈ ${compact(cycleRate * 100)} tokens / cycle`),
           node('small', current ? 'Based on this cycle’s recorded usage' : 'Based on the weighted average of recorded cycles', 'muted'));
         capacity.title = `${number(Math.round(cycleRate * 100))} estimated tokens for 100% quota · ${number(cycleRate)} tokens / 1% × 100`;
-        row.append(capacity);
-        if (trend.source === 'Device') row.append(node('small', 'Includes history without native turn identity', 'muted'));
+        capacityStat.append(capacity);
+        if (trend.source === 'Device') rateStat.append(node('small', 'Includes history without native turn identity', 'muted'));
         if (trend.changePercent !== undefined) {
           const change = Math.round(trend.changePercent * 10) / 10;
           const direction = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
           const comparison = node('p', `${change > 0 ? '+' : ''}${change}% vs earlier cycles`, 'quota-trend-change');
           comparison.dataset.direction = direction;
           comparison.title = `Earlier cycles: ${number(Math.round(trend.baselineTokensPerPercent!))} tokens / 1%`;
-          row.append(comparison);
+          rateStat.append(comparison);
         }
+        leftStat.append(node('span', 'Left in this cycle', 'quota-stat-label'));
         if (trend.source === 'API') {
           if (latestApi) {
             const rate = latestApi.observedTokens / latestApi.usedPercent;
-            row.append(node('p', `≈ ${compact(rate * (100 - meter!.usedPercent))} tokens left`, 'muted'));
-          } else row.append(node('p', waiting, 'muted'));
+            leftStat.append(node('strong', `≈ ${compact(rate * (100 - meter!.usedPercent))} tokens left`));
+          } else leftStat.append(node('p', waiting, 'muted'));
         } else {
-          const detail = node('p', current ? `≈ ${compact(current.observedTokens / current.usedPercent * Math.max(0, 100 - (current.startUsedPercent ?? 0) - current.usedPercent))} tokens left` : 'Waiting for current cycle usage', 'muted');
+          const detail = current ? node('strong', `≈ ${compact(current.observedTokens / current.usedPercent * Math.max(0, 100 - (current.startUsedPercent ?? 0) - current.usedPercent))} tokens left`) : node('p', 'Waiting for current cycle usage', 'muted');
           if (current) detail.title = `${number(current.observedTokens)} tokens from ${new Date(current.from).toLocaleString()} to ${new Date(current.to).toLocaleString()}`;
-          row.append(detail);
+          leftStat.append(detail);
         }
-        row.append(quotaCycleCharts(allCycles, trend.tokensPerPercent, JSON.stringify([provider, identity?.id, account?.account?.plan, trend.label, trend.source])));
+        stats.append(rateStat, capacityStat, leftStat);
+        const charts = quotaCycleCharts(allCycles, trend.tokensPerPercent, JSON.stringify([provider, identity?.id, account?.account?.plan, trend.label, trend.source]));
+        // The current cycle's progress is one more figure beside the others; the cycle chart takes the full width below.
+        const interval = charts.querySelector('.quota-interval-chart');
+        if (interval) { const intervalStat = node('div', undefined, 'quota-stat'); intervalStat.append(interval); stats.append(intervalStat); }
+        row.append(stats, charts);
         const details = node('div', undefined, 'quota-trend-history');
-        details.append(node('h4', 'Tokens per cycle'));
         const calculation = node('details', undefined, 'usage-details quota-calculation');
         calculation.append(node('summary', 'Calculation details'));
         const totalTokens = trend.observations.reduce((sum, sample) => sum + sample.observedTokens, 0);
@@ -1065,34 +1075,7 @@ function renderQuotaEstimates() {
           : `Recorded tokens are the ${trend.source === 'Device' ? 'device' : 'account-matched local'} history after the last observed full-quota reading. Without a 100% reading, only usage after the first recorded sample is included and the cycle is partial.`));
         calculation.append(node('p', 'Full quota = recorded tokens ÷ quota used × 100. This is an extrapolation; model mix, cached tokens and usage on other devices can change the ratio.'));
         details.append(calculation);
-        const tableRoot = node('div', undefined, 'table-wrap');
-        const cycles = allCycles.slice(-30).reverse();
-        table(tableRoot, ['Cycle start', 'Quota remaining', 'Recorded tokens', 'Quota used (pp)', '≈ Tokens / 1%', '≈ Full quota', 'vs prev.'], cycles.map(sample => [
-          `${new Date(sample.cycleStartedAt ?? sample.from).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${sample.active ? ' · current' : ''}${sample.cycleStartKnown === false ? ' · partial' : sample.cycleStartedAt === undefined ? ' · legacy sample' : ''}`,
-          sample.remainingFrom === undefined ? 'Start unknown' : `${number(sample.remainingFrom)}% → ${number(sample.remainingTo!)}%`,
-          number(sample.observedTokens), number(sample.usedPercent), number(Math.round(sample.tokensPerPercent)), Math.round(sample.capacityTokens),
-          sample.changePercent === undefined ? '—' : `${sample.changePercent > 0 ? '+' : ''}${Math.round(sample.changePercent * 10) / 10}%`,
-        ]), 2);
-        tableRoot.querySelectorAll('tbody tr').forEach((line, index) => {
-          const cycle = cycles[index]!;
-          line.querySelector('td')!.title = `Reset ${new Date(cycle.resetsAt).toLocaleString()} · ${cycle.partial ? 'Partial observation' : 'Full cycle'} · ${number(cycle.usedPercent)}% quota observed\n${new Date(cycle.from).toLocaleString()} – ${new Date(cycle.to).toLocaleString()}`;
-          const period = node('small', `${new Date(cycle.cycleStartedAt ?? cycle.from).toLocaleString()} – ${new Date(cycle.to).toLocaleString()}`, 'muted quota-recorded-period');
-          line.querySelector('td')!.append(period);
-          line.children[1]!.setAttribute('title', 'Quota remaining at the first and last readings; recorded local tokens may be incomplete');
-          line.children[2]!.setAttribute('title', number(cycle.observedTokens));
-          line.children[4]!.setAttribute('title', `${number(cycle.observedTokens)} tokens ÷ ${number(cycle.usedPercent)} percentage points`);
-          if (index >= 3) (line as HTMLElement).hidden = true;
-        });
-        details.append(tableRoot);
-        if (cycles.length > 3) {
-          const more = node('button', `Show ${cycles.length - 3} more cycles`, 'quiet'); more.setAttribute('aria-expanded', 'false');
-          more.onclick = () => {
-            const expanded = more.getAttribute('aria-expanded') !== 'true'; more.setAttribute('aria-expanded', String(expanded));
-            tableRoot.querySelectorAll<HTMLElement>('tbody tr').forEach((line, index) => { if (index >= 3) line.hidden = !expanded; });
-            more.textContent = expanded ? 'Show fewer cycles' : `Show ${cycles.length - 3} more cycles`;
-          }; details.append(more);
-        }
-        if (trend.observations.length > 30) details.title = 'Latest 30 cycles shown; average includes all recorded cycles.';
+        if (trend.observations.length > 30) details.title = 'The chart shows up to the latest 30 cycles; the average includes all recorded cycles.';
         row.append(details);
       }
       windows.append(row);
@@ -1622,7 +1605,7 @@ function renderStorage(storage: UsageDashboardState['storage']) {
   el('storage').setAttribute('aria-busy', String(busy));
   el('storage-path').textContent = storage?.root ?? 'Available when connected to the extension';
   const removing = storage?.status === 'cleaning' && storage.progress?.phase === 'removing' ? storage.progress : undefined;
-  el('storage-status').textContent = removing ? `Removing selected storage data · ${removing.done} / ${removing.total} files…` : storage?.status === 'cleaning' ? 'Removing selected storage data…' : busy ? 'Reading AgentTandem storage…' : 'Stored locally on this machine. Select restore history below to review deletion.';
+  el('storage-status').textContent = removing ? `Removing selected storage data · ${removing.done} / ${removing.total} files…` : storage?.status === 'cleaning' ? 'Removing selected storage data…' : busy ? 'Reading AgentTandem storage…' : 'Stored locally on this machine.';
   const error = storage?.error ?? storage?.cleanupBlocked;
   el('storage-error').hidden = !error; el('storage-error').textContent = error ?? '';
   el<HTMLButtonElement>('storage-refresh').disabled = !!storage && ['loading', 'cleaning'].includes(storage.status);
@@ -1671,6 +1654,101 @@ const sinceLabel = (at: number) => {
   const minutes = Math.round((Date.now() - at) / 60000);
   return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} min ago` : minutes < 24 * 60 ? `${Math.round(minutes / 60)} h ago` : new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
+type PolicyTone = 'auto' | 'choice' | 'protected' | 'kept';
+interface PolicyRow { key: string; title: string; text: string; bytes?: number; chip: string; tone: PolicyTone; facts: string[]; actions: HTMLElement[] }
+let policySignature = '';
+/** One list: what each kind of saved data is, how big it is, who decides when it goes, and its single main action. */
+function renderDataPolicies(value: UsageDashboardState) {
+  const categories = value.storage?.categories ?? value.extensionStorage?.categories;
+  const size = (...labels: string[]) => categories ? categories.filter(row => labels.includes(row.label)).reduce((sum, row) => sum + row.bytes, 0) : undefined;
+  const auto = value.autoClean, tokens = value.tokenHistory, retained = value.data?.retained, unused = value.storage?.cleanable, limit = value.storageLimit;
+  const signature = JSON.stringify([categories, auto, tokens, retained, unused, limit, value.extensionStorage?.total ?? value.storage?.total]);
+  if (signature === policySignature) return;
+  policySignature = signature;
+  const button = (label: string, icon: string, id: string, onclick: () => void, disabled = false) => {
+    const item = node('button', undefined, 'quiet'); item.id = id; item.type = 'button'; item.disabled = disabled;
+    const glyph = node('span', undefined, `codicon codicon-${icon}`); glyph.setAttribute('aria-hidden', 'true');
+    item.append(glyph, document.createTextNode(label)); item.onclick = onclick; return item;
+  };
+  const rows: PolicyRow[] = [];
+  const toggle = node('label', undefined, 'policy-toggle'), box = node('input');
+  box.type = 'checkbox'; box.id = 'autoclean-toggle'; box.checked = !!auto?.enabled; box.disabled = !auto;
+  box.onchange = () => send('setAutoCleanReview', { enabled: box.checked });
+  toggle.append(box, document.createTextNode(' Clean automatically'));
+  const total = auto?.total;
+  rows.push({
+    key: 'review', title: 'Review snapshots', bytes: size('Review snapshots & tracking'),
+    chip: auto?.error ? 'Cleanup blocked' : auto?.enabled ? 'Cleaned automatically' : 'Automatic cleanup off', tone: auto?.error ? 'protected' : auto?.enabled ? 'auto' : 'choice',
+    text: 'Copies of your files that let you review, accept and undo agent changes. Ones nothing needs any more, for example after you accept changes, are removed once they are an hour old. Pending changes, tracking baselines and Undo are always kept.',
+    facts: [
+      unused ? (unused.bytes ? `${fileSize(unused.bytes)} unused right now` : 'Nothing unused right now') : 'Measuring…',
+      total?.runs ? `${fileSize(total.bytes)} cleaned automatically so far${total.lastAt ? ` · last ${sinceLabel(total.lastAt)}` : ''}` : 'Nothing cleaned automatically yet',
+      ...(auto?.error ? [`Automatic cleanup could not finish: ${auto.error}`] : []),
+    ],
+    actions: [toggle, button(auto?.running ? 'Cleaning…' : 'Clean now', 'sparkle', 'autoclean-now', () => send('autoCleanNow'), !auto || auto.running),
+      button('Preview unused files…', 'search', 'autoclean-preview', () => send('previewReviewCleanup', { scope: 'accepted' }))],
+  });
+  const cap = limit?.bytes ?? 0, limitField = node('label', undefined, 'policy-toggle'), limitInput = node('input');
+  limitInput.type = 'number'; limitInput.id = 'storage-limit'; limitInput.min = '0'; limitInput.max = '1024'; limitInput.step = '0.5'; limitInput.disabled = !limit;
+  limitInput.value = String(Math.round(cap / 1024 ** 3 * 100) / 100); limitInput.setAttribute('aria-label', 'Size limit in GB, 0 turns it off');
+  limitInput.onchange = () => { const gigabytes = Number(limitInput.value); if (limitInput.value !== '' && Number.isFinite(gigabytes) && gigabytes >= 0 && gigabytes <= 1024) send('setStorageLimit', { gigabytes }); };
+  limitField.append(document.createTextNode('Size limit '), limitInput, document.createTextNode(' GB'));
+  const limitTotal = limit?.total, used = value.extensionStorage?.total ?? value.storage?.total;
+  rows.push({
+    key: 'restore', title: 'Restore points', bytes: size('Message checkpoints & Undo'),
+    chip: limit?.error || limit?.blocked ? 'Limit not met' : cap ? `Oldest removed above ${fileSize(cap)}` : 'You decide', tone: limit?.error || limit?.blocked ? 'protected' : cap ? 'auto' : 'choice',
+    text: cap
+      ? `A checkpoint is saved before each message so you can restore your code, plus the last restore backup. When AgentTandem data goes over ${fileSize(cap)}, the oldest checkpoints are removed first until it is back to about 90% of the limit. The last restore backup is kept. Set 0 to turn the limit off.`
+      : 'A checkpoint is saved before each message so you can restore your code, plus the last restore backup. The size limit is off, so they are never deleted automatically.',
+    facts: [
+      ...(cap && used !== undefined ? [`AgentTandem data uses ${fileSize(used)} of ${fileSize(cap)}`] : []),
+      ...(limitTotal?.runs ? [`${fileSize(limitTotal.bytes)} removed to stay under the limit${limitTotal.lastAt ? ` · last ${sinceLabel(limitTotal.lastAt)}` : ''}`] : []),
+      ...(limit?.blocked ? ['Still above the limit: what is left is pending changes, tracking baselines, Undo, token usage, accounts or attachments, which are never removed to meet it.'] : []),
+      ...(limit?.error ? [`Limit cleanup could not finish: ${limit.error}`] : []),
+    ],
+    actions: [limitField, button('Review restore history', 'history', 'data-restore', () => storagePage('restore'))],
+  });
+  const stats = tokens?.stats, packed = !!stats && stats.files > 0 && stats.compressedFiles === stats.files;
+  const tokenFacts = stats ? [`${plural(stats.files, 'file')} · ${fileSize(stats.bytes)}${stats.compressedFiles ? ` · ${stats.compressedFiles} compressed` : ''}`] : ['Measuring…'];
+  if (stats?.retainedFiles) tokenFacts.push(`${plural(retained?.conversations ?? stats.retainedFiles, 'conversation')} kept after the chat was deleted. This is the only copy of those counts.`);
+  if (tokens?.last) tokenFacts.push(tokens.last.files ? `Compressed ${plural(tokens.last.files, 'file')}, saved ${fileSize(tokens.last.saved)}${tokens.last.failed ? ` · ${tokens.last.failed} left as they were` : ''}.` : 'Already compressed.');
+  if (tokens?.error) tokenFacts.push(`Compression failed: ${tokens.error}`);
+  const tokenActions = [button(tokens?.busy ? 'Compressing…' : packed ? 'Compressed' : 'Compress', 'archive', 'token-compress', () => send('compressTokenHistory'), !stats || !!tokens?.busy || packed)];
+  if (retained?.conversations) tokenActions.push(button('Delete kept history…', 'trash', 'token-purge', () => send('purgeRetainedUsage'), !!tokens?.busy));
+  rows.push({
+    key: 'tokens', title: 'Token usage history', bytes: stats?.bytes, chip: 'Never deleted automatically', tone: 'protected',
+    text: 'The saved token counts behind your Dashboard. Compressing keeps every count and only makes the files smaller; a chat that is still active may turn its file back into plain text. Deleting is permanent and always asks first.',
+    facts: tokenFacts, actions: tokenActions,
+  });
+  rows.push({ key: 'attachments', title: 'Chat attachments', bytes: size('Chat attachments'), chip: 'Always kept', tone: 'kept', text: 'Files and images you attached to chats.', facts: [], actions: [] });
+  rows.push({
+    key: 'other', title: 'Accounts and other data', chip: 'Always kept', tone: 'kept', text: 'Saved sign-ins, preferences and quota history. Needed for account switching and your Dashboard.', facts: [], actions: [],
+    bytes: categories ? Math.max(0, size('Usage & account evidence', 'Preferences & other data', 'Recorded demo history')! - (stats?.bytes ?? 0)) : undefined,
+  });
+  const known = rows.reduce((sum, row) => sum + (row.bytes ?? 0), 0), list = el('data-policies');
+  list.replaceChildren();
+  for (const row of rows) {
+    const item = node('li', undefined, 'data-policy'); item.dataset.policy = row.key;
+    const main = node('div', undefined, 'data-policy-main'), head = node('div', undefined, 'data-policy-title'), chip = node('span', row.chip, 'policy-chip');
+    chip.dataset.tone = row.tone; head.append(node('strong', row.title), chip); main.append(head, node('p', row.text, 'muted'));
+    for (const fact of row.facts) main.append(node('p', fact, 'data-policy-fact'));
+    if (row.actions.length) { const actions = node('div', undefined, 'data-policy-actions'); actions.append(...row.actions); main.append(actions); }
+    const amount = node('div', undefined, 'data-policy-size'), meter = node('i', undefined, 'data-policy-bar'), fill = node('b');
+    fill.style.width = `${row.bytes && known ? Math.max(2, Math.round(row.bytes / known * 100)) : 0}%`; meter.append(fill);
+    amount.append(node('strong', row.bytes === undefined ? '—' : fileSize(row.bytes)), meter); item.append(main, amount); list.append(item);
+  }
+}
+let antivirusDismissed: boolean | undefined;
+/** Windows only. Open until acknowledged, then collapsed but still reachable. */
+function renderAntivirusTip(tip: UsageDashboardState['antivirusTip']) {
+  const element = el<HTMLDetailsElement>('antivirus-tip');
+  element.hidden = !tip;
+  if (!tip) return;
+  el('antivirus-tip-path').textContent = tip.path;
+  el<HTMLButtonElement>('antivirus-dismiss').hidden = tip.dismissed;
+  // Only a change of acknowledgement moves the section, so a manual toggle survives other updates.
+  if (antivirusDismissed !== tip.dismissed) { element.open = !tip.dismissed; antivirusDismissed = tip.dismissed; }
+}
 /** Headline totals shown on every Storage tab: what agent history occupies now and what cleanup has reclaimed. */
 function renderStorageOverview(value: UsageDashboardState) {
   const rows = value.conversationCleanup?.conversations, storage = value.storage?.total;
@@ -1694,13 +1772,14 @@ function renderStorageOverview(value: UsageDashboardState) {
     : 'Nothing cleaned up yet. Deleted conversations and restore history add to this total.';
   const last = el('storage-freed-last'); last.hidden = !freed?.lastAt;
   if (freed?.lastAt) last.textContent = `+${fileSize(freed.lastBytes ?? 0)} last cleanup · ${sinceLabel(freed.lastAt)}`;
+  renderAntivirusTip(value.antivirusTip);
   const health = el('extension-storage-health'), usage = value.extensionStorage;
   health.hidden = !usage;
   if (usage) {
     const level = storageUsageLevel(usage); health.dataset.level = level;
     const icon = node('span', undefined, `codicon codicon-${level === 'critical' ? 'error' : level === 'warning' ? 'warning' : 'database'}`); icon.setAttribute('aria-hidden', 'true');
     const text = node('div'); text.append(node('strong', usage.total === undefined ? 'Measuring extension data…' : `AgentTandem data · ${storageSize(usage.total)}`),
-      node('p', usage.error || (level === 'warning' || level === 'critical' ? `Above your ${storageSize(usage.warningBytes)} alert threshold. Review unused files and restore history to free space.` : 'Snapshots, restore history, attachments and usage data stored by this extension.')));
+      node('p', usage.error || (level === 'warning' || level === 'critical' ? `Above your ${storageSize(usage.warningBytes)} alert threshold. Open App data to see what uses the space and what is cleaned automatically.` : 'Snapshots, restore history, attachments and usage data stored by this extension.')));
     const manage = node('button', 'Manage extension data', 'quiet'); manage.onclick = () => { storagePage('unused'); send('storage'); };
     health.replaceChildren(icon, text, manage);
   }
@@ -1710,7 +1789,7 @@ function render(value: UsageDashboardState) {
   if (value.conversationCleanup?.status === 'cleaning' || value.conversationCleanup?.status === 'error') nativeDeletePending = false;
   renderNativeHistory(value.conversationCleanup);
   renderStorage(value.storage);
-  renderStorageOverview(value);
+  renderStorageOverview(value); renderDataPolicies(value);
   state = value;
   if (!initialized) { initialized = true; el<HTMLSelectElement>('filter-group').value = value.preferences.grouping; }
   el<HTMLInputElement>('show-status-quota').checked = value.preferences.showQuotaInStatusBar;

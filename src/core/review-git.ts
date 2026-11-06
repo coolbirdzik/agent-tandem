@@ -39,6 +39,23 @@ export async function reviewUncommittedPaths(project: string, head: string): Pro
   return new Set(stdout.split('\0').filter(Boolean));
 }
 
+/** Reviewable files (tracked or untracked, not ignored) at or below the given paths. Rejects outside a repository or on an old Git. */
+export async function reviewListedPaths(project: string, names: string[]): Promise<string[]> {
+  // `git ls-files` has no pathspec file option, so batches keep each command line well under the Windows limit.
+  const batches: string[][] = [[]];
+  let length = 0;
+  for (const name of names) {
+    if (length + name.length > 6000 && batches.at(-1)!.length) { batches.push([]); length = 0; }
+    batches.at(-1)!.push(`:(literal)${name}`); length += name.length + 12;
+  }
+  const listed = new Set<string>();
+  for (const batch of batches) {
+    const { stdout } = await execute('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', ...batch], { ...options(project), env: { ...process.env, LC_ALL: 'C' } });
+    for (const name of stdout.split('\0')) if (name) listed.add(name);
+  }
+  return [...listed];
+}
+
 /** Untracked paths Git now ignores. Outside a repository nothing is reported. */
 export function reviewIgnoredPaths(project: string, names: string[]): Promise<Set<string>> {
   if (!names.length) return Promise.resolve(new Set());

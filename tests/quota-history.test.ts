@@ -45,6 +45,38 @@ describe('Quota history and capacity trends', () => {
     expect(updated).toHaveLength(1); expect(updated[0]).toMatchObject({ observedTokens: 600000, usedPercent: 4 });
     expect(await reopened.record([], quotaMeters('Codex', apiStatus(time, 10200000, 18), time))).toEqual(updated);
   });
+  it('never starts an API baseline from a lifetime total of 0, which made one cycle claim all tokens ever used', () => {
+    expect(quotaMeters('Codex', apiStatus(now, 0, 9), now)).toEqual([]);
+    const real = quotaMeters('Codex', apiStatus(now + 60000, 18156037959, 11), now + 60000)[0]!;
+    // The glitch: a start of 0 followed by the real total produced 18.2 billion tokens for 2 points of quota.
+    expect(observeQuotaMeters([], [real]).observations).toEqual([]);
+  });
+  it('ignores cycles that claim far more tokens per 1% than other API cycles of the same account, without changing the history', () => {
+    const api = (cycle: number, tokens: number, used: number): QuotaObservation => ({ ...sample(cycle, tokens, used), source: 'API' });
+    const honest = [api(0, 8372837 * 12, 12), api(1, 5538195 * 15, 15), api(2, 3595419 * 10, 10), api(3, 448584, 1)];
+    const glitched = [api(4, 16636812889, 7), api(5, 17988247420, 48), api(6, 18156037959, 2)];
+    const history = [...honest, ...glitched];
+    expect(mergeQuotaObservations([], history)).toHaveLength(7);
+    const trend = quotaTrends('Codex', account, history).find(row => row.label === '5h')!;
+    expect(trend.observations).toEqual(honest);
+    expect(trend.tokensPerPercent).toBeLessThan(10_000_000);
+    // Local and Device history is never judged this way, and a short API history has nothing to be compared with.
+    const device = { ...sample(7, 18156037959, 2), source: 'Device' as const };
+    expect(quotaTrends('Codex', account, [device]).find(row => row.label === '5h')!.observations).toEqual([device]);
+    expect(quotaTrends('Codex', account, honest.slice(0, 2).concat(glitched.slice(0, 1))).find(row => row.label === '5h')!.observations).toHaveLength(3);
+  });
+  it('keeps every saved cycle on disk but drops a baseline that began at a lifetime total of 0', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'agenttandem-quota-heal-'));
+    const api = (cycle: number, tokens: number, used: number): QuotaObservation => ({ ...sample(cycle, tokens, used), source: 'API' });
+    const rows = [api(0, 1000000, 10), api(1, 1200000, 10), api(2, 900000, 10), api(3, 1100000, 10), api(4, 18156037959, 2)];
+    const meter = { provider: 'Codex' as const, accountId, plan: 'plus', label: 'Weekly' as const, from: now - 1000, to: now, resetsAt: now + 86400000, usedPercent: 9 };
+    await writeFile(path.join(directory, 'quota-history.json'), JSON.stringify({ version: 1, observations: rows,
+      baselines: [{ start: { ...meter, totalTokens: 0 }, latest: { ...meter, to: now + 1, totalTokens: 18156037959, usedPercent: 11 } }], cycleStarts: [] }));
+    const store = new QuotaHistoryStore(directory);
+    expect(await store.read()).toEqual(rows); expect(store.baselines).toEqual([]);
+    expect(await store.record()).toEqual(rows);
+    expect(quotaTrends('Codex', account, rows).find(row => row.label === '5h')!.observations).toEqual(rows.slice(0, 4));
+  });
   it('records zero-quota baselines, waits for both meters, and resets after a counter or quota correction', () => {
     const first = quotaMeters('Codex', apiStatus(now, 1000, 0), now)[0]!;
     const start = observeQuotaMeters([], [first]);

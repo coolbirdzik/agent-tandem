@@ -74,7 +74,9 @@ import { ConversationCleanup, type ConversationCleanupState, type DeletionProgre
 import { conversationCleanupPrompts } from './host/conversation-cleanup-prompts';
 import { deleteCodexThread } from './providers/codex-history-mutation';
 import { addFreed, storageFreed } from './core/storage-freed';
-import { shouldWarnStorage, storageSize, storageWarningBytes, type ExtensionStorageUsage } from './core/storage-usage';
+import { configureDiffWorker, disposeDiffWorker } from './core/diff-async';
+import { antivirusExclusionCommand, antivirusTip, antivirusTipActions, windowsSecurityUrl, type AntivirusTipAction } from './core/antivirus';
+import { shouldWarnStorage, storageLimitBytes, storageSize, storageWarningBytes, type ExtensionStorageUsage } from './core/storage-usage';
 
 export interface ExtensionAPI {
   changeNavigationState(): ChangeNavigationState | undefined;
@@ -96,6 +98,9 @@ let cancel: AbortController | undefined;
 export async function activate(context: vscode.ExtensionContext): Promise<ExtensionAPI> {
   const changeNavigation = await registerChangeNavigation(context);
   const output = vscode.window.createOutputChannel('AgentTandem');
+  // Review diffs run on a worker thread so a large comparison cannot freeze the editor; without the script they run inline.
+  configureDiffWorker(path.join(context.extensionPath, 'dist', 'diff-worker.js'));
+  context.subscriptions.push({ dispose: disposeDiffWorker });
   const history = new HistoryStore(context.globalStorageUri.fsPath);
   const attachments = new AttachmentStore(context.globalStorageUri.fsPath);
   const usageAccounts = new UsageAccountStore(path.join(context.globalStorageUri.fsPath, 'usage'));
@@ -141,6 +146,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let externalDirty = false;
   // Paths changed since the last capture; undefined requires a full capture.
   let externalPaths: Set<string> | undefined;
+  let lastFullExternalScan = 0;
+  const fullExternalScanMs = 5 * 60000;
   let externalJob: Promise<void> | undefined;
   let externalSwitching = false;
   const state: ViewState = { sessions: [], running: false, providers: [], screen: 'changes' };
@@ -287,12 +294,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }
   let attributionBusy = false, attributionError: string | undefined, attributionNotice: string | undefined;
   const freedKey = 'agentTandem.storageFreed';
+  const antivirusTipKey = 'agentTandem.antivirusTipDismissed';
+  // Declared before dashboardState can first run; see the automatic cleanup and token history commands below.
+  const autoCleanKey = 'agentTandem.autoCleaned', autoCleanNoticeKey = 'agentTandem.autoCleanNoticed';
+  let autoCleanRunning = false, autoCleanError: string | undefined, tokenHistory: NonNullable<UsageDashboardState['tokenHistory']> = {};
+  const autoCleanEnabled = () => vscode.workspace.getConfiguration('agentTandem').get<boolean>('autoCleanReviewData', true);
+  const limitKey = 'agentTandem.storageLimitFreed', limitNoticeKey = 'agentTandem.storageLimitNoticed', limitBlockedKey = 'agentTandem.storageLimitBlocked', limitBlockedNoticeKey = 'agentTandem.storageLimitBlockedNoticed';
+  let limitRunning = false, limitError: string | undefined, limitTimer: ReturnType<typeof setTimeout> | undefined;
+  const storageLimit = () => storageLimitBytes(vscode.workspace.getConfiguration('agentTandem').get('storageLimitGB', 5));
   // Totals only add what a run actually removed, so failed or partial runs never inflate them.
   const recordFreed = (run: Parameters<typeof addFreed>[1]) => context.globalState.update(freedKey, addFreed(context.globalState.get(freedKey), run)).then(undefined, report);
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, usageWindow, extensionStorage, storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaCycleStarts: quotaHistoryStore.cycleStarts, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, usageWindow, extensionStorage, autoClean: { enabled: autoCleanEnabled(), running: autoCleanRunning, total: storageFreed(context.globalState.get(autoCleanKey)), error: autoCleanError }, storageLimit: { bytes: storageLimit(), running: limitRunning, total: storageFreed(context.globalState.get(limitKey)), blocked: context.globalState.get<number>(limitBlockedKey) === storageLimit() || undefined, error: limitError }, tokenHistory, antivirusTip: antivirusTip(process.platform, context.globalStorageUri.fsPath, context.globalState.get(antivirusTipKey)), storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaCycleStarts: quotaHistoryStore.cycleStarts, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day', statusBar: readStatusBarPreferences(config) }, activeProvider: state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex' };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
@@ -608,18 +623,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   function scheduleExternalCapture() {
     clearTimeout(externalTimer);
     if (disposed || !externalProject || !externalDirty) return;
-    externalTimer = setTimeout(() => { void captureExternalReview().catch(report); }, 800);
+    externalTimer = setTimeout(() => { void captureExternalReview(false, true).catch(report); }, 800);
   }
   function configureExternalWatcher(project: string, enabled: boolean) {
     if (enabled && externalProject === project && externalWatcher) return;
     externalWatcher?.dispose(); externalWatcher = undefined; externalProject = undefined;
-    clearTimeout(externalTimer); externalDirty = false; externalPaths = undefined;
+    clearTimeout(externalTimer); externalDirty = false; externalPaths = undefined; lastFullExternalScan = 0;
     if (!enabled || !vscode.workspace.isTrusted || disposed) return;
     externalProject = project;
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(project, '**/*'));
     const changed = (uri: vscode.Uri) => {
       const name = path.relative(project, uri.fsPath).replace(/\\/g, '/');
-      if (name.startsWith('../') || name.split('/').some(part => ['.git', 'node_modules', '.test-runtime'].includes(part)) || /\.agent-tandem-revert$/.test(name)) return;
+      if (name.startsWith('../') || name.split('/').some(part => ['.git', 'node_modules', '.test-runtime'].includes(part)) || /\.agent-tandem-(revert|restore)$/.test(name)) return;
       externalPaths?.add(name); if (externalPaths && externalPaths.size > 2000) externalPaths = undefined;
       externalDirty = true; scheduleExternalCapture();
     };
@@ -630,7 +645,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     // Catch writes made while VS Code was closed or another root was selected.
     externalDirty = true; scheduleExternalCapture();
   }
-  async function captureExternalReview(manual = false) {
+  /** `background` is the watcher's debounced scan, the only one allowed to read just the reported paths. Every requested capture reads the whole workspace. */
+  async function captureExternalReview(manual = false, background = false) {
     const project = state.project, version = generation;
     if (!project || !state.review?.externalTracking || !vscode.workspace.isTrusted) return;
     if (externalJob) { await externalJob; if (externalDirty) scheduleExternalCapture(); return; }
@@ -648,7 +664,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (manual) { state.reviewBusy = true; update(); }
       let changed = false;
       try {
-        const captured = await reviews.scanExternal(project);
+        // Reading only the paths the watcher reported keeps a save cheap in a large workspace. A requested
+        // refresh, an overflowed event list or a stale full scan reads everything, which also heals missed events.
+        const incremental = background && !manual && !!paths?.length && Date.now() - lastFullExternalScan < fullExternalScanMs;
+        let captured;
+        try { captured = await reviews.scanExternal(project, incremental ? paths : undefined); }
+        catch (error) { externalPaths = undefined; lastFullExternalScan = 0; throw error; }
+        if (!incremental) lastFullExternalScan = Date.now();
         const result = await attributeExternalReview(project, captured);
         // A turn that started meanwhile publishes the newer review state itself.
         if (!disposed && generation === version && state.project === project && !chatAbort && !activeReviewProjects.has(project) && JSON.stringify(result) !== JSON.stringify(state.review)) {
@@ -830,6 +852,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       try {
         const usage = await storage.usage(); if (disposed) return;
         extensionStorage = { ...usage, status: 'ready', checkedAt: Date.now(), warningBytes: extensionStorage.warningBytes };
+        const limit = storageLimit();
+        // When only protected data is left above the limit, retry rarely instead of after every measurement.
+        if (limit && usage.total > limit && !limitRunning && !limitTimer) scheduleStorageLimit(context.globalState.get<number>(limitBlockedKey) === limit || limitError ? 30 * 60000 : 30000);
         const warningKey = 'agentTandem.storageWarningShown';
         if (shouldWarnStorage(extensionStorage, context.globalState.get(warningKey))) {
           await context.globalState.update(warningKey, { at: Date.now(), warningBytes: extensionStorage.warningBytes });
@@ -891,7 +916,127 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (progress.phase === 'removing' && progress.done && progress.done < progress.total && Date.now() - storageProgressAt < 200) return;
     storageProgressAt = Date.now(); settings.update();
   };
-  register('agentTandem.refreshStorage', () => storageAction(async () => { cleanupPlan = undefined; historyDeletionPlan = undefined; return storage.inspect(); }));
+  // Review data nothing refers to any more (for example after changes were accepted) is removed without asking.
+  // Token usage history, restore points, accounts and attachments are never part of it.
+  let autoCleanTimer: ReturnType<typeof setTimeout> | undefined;
+  const storageBusy = () => !!(chatAbort || reviewing || externalSwitching || state.running || externalJob || activeReviewProjects.size || storageJob || conversationCleanupJob);
+  function scheduleAutoClean(delay = 5 * 60000) {
+    if (disposed) return;
+    clearTimeout(autoCleanTimer); autoCleanTimer = setTimeout(() => { void runAutoClean(); }, delay);
+  }
+  async function runAutoClean(manual = false) {
+    if (disposed || autoCleanRunning || (!manual && !autoCleanEnabled())) return;
+    if (storageBusy()) { if (!manual) scheduleAutoClean(); else throw new Error('Wait for capture, review or storage management to finish.'); return; }
+    autoCleanRunning = true; settings.update();
+    let removed = 0, bytes = 0;
+    try {
+      // Each pass holds the storage lock briefly so captures in other windows are not starved.
+      for (let pass = 0; pass < 30 && !disposed; pass++) {
+        if (pass && storageBusy()) { scheduleAutoClean(); break; }
+        const result = await storage.autoCleanReview();
+        removed += result.removed; bytes += result.bytes; autoCleanError = result.failures[0];
+        for (const failure of result.failures.slice(0, 5)) output.appendLine(`Automatic review cleanup: ${failure}`);
+        if (!result.remaining || !result.removed) break;
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    } catch (error) { autoCleanError = error instanceof Error ? error.message : String(error); output.appendLine(`Automatic review cleanup skipped: ${autoCleanError}`); if (manual) throw error; }
+    finally { autoCleanRunning = false; }
+    if (removed || bytes) {
+      await recordFreed({ bytes, files: removed });
+      await context.globalState.update(autoCleanKey, addFreed(context.globalState.get(autoCleanKey), { bytes, files: removed }));
+      // Say so the first time, and after any unusually large pass; small routine runs stay quiet.
+      if (!manual && (!context.globalState.get(autoCleanNoticeKey) || bytes >= 500 * 1024 * 1024)) {
+        await context.globalState.update(autoCleanNoticeKey, true);
+        void vscode.window.showInformationMessage(`AgentTandem removed ${storageSize(bytes)} of saved review snapshots that nothing needed any more. Pending changes, restore points and token usage were not touched.`, 'Open Storage', 'Turn off auto-clean').then(async choice => {
+          if (choice === 'Open Storage') await vscode.commands.executeCommand('agentTandem.openExtensionStorage');
+          else if (choice === 'Turn off auto-clean') await vscode.workspace.getConfiguration('agentTandem').update('autoCleanReviewData', false, vscode.ConfigurationTarget.Global);
+        });
+      }
+    }
+    void refreshStorageUsage(true); settings.update(true);
+  }
+  register('agentTandem.autoCleanNow', () => runAutoClean(true));
+  register('agentTandem.setAutoCleanReview', async value => {
+    const enabled = (value as { enabled?: unknown } | undefined)?.enabled;
+    if (typeof enabled !== 'boolean') throw new Error('Choose on or off.');
+    await vscode.workspace.getConfiguration('agentTandem').update('autoCleanReviewData', enabled, vscode.ConfigurationTarget.Global);
+  });
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (!event.affectsConfiguration('agentTandem.autoCleanReviewData')) return;
+    settings.update(true); if (autoCleanEnabled()) scheduleAutoClean(5000);
+  }));
+  // Rolling size limit: above it, the oldest restore points go first. Pending changes, tracking baselines, the
+  // restore backup, token usage, accounts and attachments are never removed to meet it.
+  function scheduleStorageLimit(delay = 5 * 60000) {
+    if (disposed) return;
+    clearTimeout(limitTimer); limitTimer = setTimeout(() => { limitTimer = undefined; void runStorageLimit(); }, delay);
+  }
+  async function runStorageLimit() {
+    const limit = storageLimit();
+    if (disposed || limitRunning || !limit) return;
+    if (storageBusy() || autoCleanRunning) { scheduleStorageLimit(); return; }
+    limitRunning = true; limitError = undefined; settings.update(true);
+    let removed = 0, bytes = 0, points = 0, blocked = false, total = 0;
+    try {
+      for (let pass = 0; pass < 20 && !disposed; pass++) {
+        if (pass && storageBusy()) { scheduleStorageLimit(); break; }
+        const result = await storage.enforceLimit(limit);
+        if (!pass) total = result.total;
+        removed += result.removed; bytes += result.bytes; points += result.checkpointsRemoved;
+        if (result.failures.length) limitError = result.failures[0];
+        for (const failure of result.failures.slice(0, 5)) output.appendLine(`Storage limit cleanup: ${failure}`);
+        blocked = !result.limitReached;
+        if (!result.remaining) break;
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    } catch (error) { limitError = error instanceof Error ? error.message : String(error); output.appendLine(`Storage limit cleanup skipped: ${limitError}`); }
+    finally { limitRunning = false; }
+    await context.globalState.update(limitBlockedKey, blocked ? limit : undefined);
+    if (removed || bytes) {
+      await recordFreed({ bytes, files: removed });
+      await context.globalState.update(limitKey, addFreed(context.globalState.get(limitKey), { bytes, files: removed }));
+      if (points && !context.globalState.get(limitNoticeKey)) {
+        await context.globalState.update(limitNoticeKey, true);
+        void vscode.window.showInformationMessage(`AgentTandem data reached ${storageSize(total)}, above your ${storageSize(limit)} limit, so it removed the ${points} oldest restore points and freed ${storageSize(bytes)}. Older restore points keep being removed this way. Pending changes, Undo, token usage and attachments were not touched.`, 'Open Storage', 'Change limit').then(async choice => {
+          if (choice === 'Open Storage') await vscode.commands.executeCommand('agentTandem.openExtensionStorage');
+          else if (choice === 'Change limit') await vscode.commands.executeCommand('workbench.action.openSettings', 'agentTandem.storageLimitGB');
+        });
+      }
+    }
+    if (blocked && context.globalState.get<number>(limitBlockedNoticeKey) !== limit) {
+      await context.globalState.update(limitBlockedNoticeKey, limit);
+      void vscode.window.showWarningMessage(`AgentTandem data is still above your ${storageSize(limit)} limit, but what is left is kept on purpose: pending changes, tracking baselines, Undo, token usage, accounts or attachments. Open Storage to choose what to remove, or raise the limit.`, 'Open Storage', 'Change limit').then(async choice => {
+        if (choice === 'Open Storage') await vscode.commands.executeCommand('agentTandem.openExtensionStorage');
+        else if (choice === 'Change limit') await vscode.commands.executeCommand('workbench.action.openSettings', 'agentTandem.storageLimitGB');
+      });
+    }
+    void refreshStorageUsage(true); settings.update(true);
+  }
+  register('agentTandem.setStorageLimit', async value => {
+    const gigabytes = (value as { gigabytes?: unknown } | undefined)?.gigabytes;
+    if (typeof gigabytes !== 'number' || !Number.isFinite(gigabytes) || gigabytes < 0 || gigabytes > 1024) throw new Error('Enter a size limit between 0 and 1024 GB (0 turns it off).');
+    await vscode.workspace.getConfiguration('agentTandem').update('storageLimitGB', gigabytes, vscode.ConfigurationTarget.Global);
+  });
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (!event.affectsConfiguration('agentTandem.storageLimitGB')) return;
+    settings.update(true); if (storageLimit()) scheduleStorageLimit(5000); else clearTimeout(limitTimer);
+  }));
+  // Counts kept for the dashboard: only the user compresses or deletes them.
+  async function refreshTokenHistory() {
+    try { tokenHistory = { ...tokenHistory, stats: await usageHistory.cacheStats() }; } catch { /* Sizes are informational. */ }
+    if (!disposed) settings.update(true);
+  }
+  register('agentTandem.compressTokenHistory', async () => {
+    if (tokenHistory.busy) return;
+    tokenHistory = { ...tokenHistory, busy: true, error: undefined, last: undefined }; settings.update(true);
+    try {
+      const last = await usageHistory.compressCache();
+      tokenHistory = { ...tokenHistory, last };
+      void vscode.window.showInformationMessage(last.files ? `Compressed ${last.files} token history files and saved ${storageSize(last.saved)}. Your token counts are unchanged.` : 'Token history is already compressed.');
+    } catch (error) { tokenHistory = { ...tokenHistory, error: error instanceof Error ? error.message : String(error) }; throw error; }
+    finally { tokenHistory = { ...tokenHistory, busy: false }; await refreshTokenHistory(); void refreshStorageUsage(true); }
+  });
+  register('agentTandem.refreshStorage', () => { void refreshTokenHistory(); return storageAction(async () => { cleanupPlan = undefined; historyDeletionPlan = undefined; return storage.inspect(); }); });
   register('agentTandem.previewStorageCleanup', () => storageAction(async () => {
     historyDeletionPlan = undefined;
     const summary = await storage.inspect();
@@ -960,6 +1105,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     return { ...(await storage.inspect()), result };
   }));
   register('agentTandem.revealStorage', () => vscode.commands.executeCommand('revealFileInOS', context.globalStorageUri));
+  register('agentTandem.antivirusTip', async value => {
+    const action = (value as { action?: unknown } | undefined)?.action as AntivirusTipAction;
+    if (!antivirusTipActions.includes(action)) throw new Error('Unsupported antivirus tip action.');
+    const folder = context.globalStorageUri.fsPath;
+    if (action === 'copyPath' || action === 'copyCommand') {
+      await vscode.env.clipboard.writeText(action === 'copyPath' ? folder : antivirusExclusionCommand(folder));
+      void vscode.window.showInformationMessage(action === 'copyPath' ? 'Copied the AgentTandem data folder path.' : 'Copied the PowerShell command. Run it in an administrator PowerShell window.');
+    } else if (action === 'openSecurity') {
+      if (!await vscode.env.openExternal(vscode.Uri.parse(windowsSecurityUrl))) throw new Error('Could not open Windows Security. Open it from the Start menu: Virus & threat protection → Manage settings → Exclusions.');
+    } else { await context.globalState.update(antivirusTipKey, true); settings.update(true); }
+  });
   const onboardingMarker = vscode.Uri.joinPath(context.globalStorageUri, 'onboarding-v1.done');
   const showGettingStarted = async () => {
     await vscode.commands.executeCommand('workbench.action.openWalkthrough', `${context.extension.id}#gettingStarted`, false);
@@ -1029,7 +1185,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const answer = await vscode.window.showWarningMessage(`Permanently delete token history for ${retained.conversations} conversation${retained.conversations === 1 ? '' : 's'} whose transcripts are gone?`, { modal: true, detail: `${retained.tokens.toLocaleString()} tokens will leave the usage dashboard and cannot be recovered. Conversations still on disk are not affected.` }, 'Delete token history');
     if (answer !== 'Delete token history') return;
     await usageHistory.purgeRetained();
-    await refreshUsageDashboard();
+    await refreshUsageDashboard(); void refreshTokenHistory(); void refreshStorageUsage(true);
   });
   register('agentTandem.usageWindow', async value => {
     const request = value as { from?: unknown; to?: unknown } | null | undefined;
@@ -1508,6 +1664,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       const result = await (hunk !== undefined
         ? reviews.decideHunk({ ...request, file: request.file!, hunk }, revert)
         : revert ? reviews.revert(request) : reviews.accept(request));
+      scheduleAutoClean();
       if (disposed || state.project !== request.project) return;
       state.review = result; state.reviewPreview = undefined; state.revertPreview = undefined;
       const followsReview = comparison?.review?.project === request.project && comparison.review.revision === request.revision;
@@ -1669,6 +1826,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   const accountTimer = setInterval(() => { void refreshAccounts(); }, 60000);
   const storageUsageTimer = setInterval(() => { void refreshStorageUsage(); }, 5 * 60000);
   const storageUsageStartup = setTimeout(() => { void refreshStorageUsage(); }, 3000);
+  // A first pass shortly after start, then every few hours while the window stays open.
+  scheduleAutoClean(90000);
+  const autoCleanInterval = setInterval(() => { void runAutoClean(); }, 3 * 3600000);
   const followRoot = () => {
     if (!setCurrentRoot()) return;
     cliResolver.invalidate();
@@ -1680,7 +1840,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     const previous = syncJob;
     void (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() => syncConversations()).catch(report);
   };
-  context.subscriptions.push({ dispose: () => { disposed = true; externalWatcher?.dispose(); clearTimeout(externalTimer); chatAbort?.abort(); usageAbort?.abort(); for (const job of modelJobs.values()) job.abort.abort(); for (const job of accountJobs.values()) job.abort.abort(); generation++; selectionGeneration++; clearInterval(timer); clearInterval(accountTimer); clearInterval(storageUsageTimer); clearTimeout(storageUsageStartup); } },
+  context.subscriptions.push({ dispose: () => { disposed = true; externalWatcher?.dispose(); clearTimeout(externalTimer); chatAbort?.abort(); usageAbort?.abort(); for (const job of modelJobs.values()) job.abort.abort(); for (const job of accountJobs.values()) job.abort.abort(); generation++; selectionGeneration++; clearInterval(timer); clearInterval(accountTimer); clearInterval(storageUsageTimer); clearTimeout(storageUsageStartup); clearTimeout(autoCleanTimer); clearInterval(autoCleanInterval); clearTimeout(limitTimer); } },
     vscode.extensions.onDidChange(() => {
       const claudeRevision = claudeExtensionIdentity();
       if (claudeRevision !== claudeExtensionRevision) {

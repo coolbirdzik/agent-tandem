@@ -36,8 +36,10 @@ export function sameQuotaCycle(a: QuotaMeter | QuotaObservation, b: QuotaMeter |
 export function quotaMeters(provider: ConversationProvider, account: ProviderAccountStatus | undefined, now = Date.now(), cycleStarts?: QuotaCycleStart[]): QuotaMeter[] {
   const identity = usageAccount(provider, account?.account), usage = account?.usage;
   const totalTokens = usage?.summary?.lifetimeTokens;
+  // The server sometimes reports a lifetime total of 0. Used as a starting point it makes the next real reading
+  // look like one cycle that consumed every token the account ever used, so 0 is "not reported", not a counter value.
   if (!identity || account?.status !== 'ready' || account.quotaCached || account.quota?.status !== 'available' || usage?.status !== 'available' || usage.accountId !== identity.id ||
-    !Number.isSafeInteger(totalTokens) || totalTokens! < 0 || !usage.updatedAt || !account.updatedAt || account.updatedAt > now || usage.updatedAt > now ||
+    !Number.isSafeInteger(totalTokens) || totalTokens! <= 0 || !usage.updatedAt || !account.updatedAt || account.updatedAt > now || usage.updatedAt > now ||
     now - account.updatedAt > 5 * 60000 || Math.abs(account.updatedAt - usage.updatedAt) > 2 * 60000) return [];
   const to = Math.min(account.updatedAt, usage.updatedAt);
   return ([['5h', 5 * 3600000], ['Weekly', 7 * 86400000]] as const).flatMap(([label, duration]) => {
@@ -92,6 +94,25 @@ export function mergeQuotaObservations(previous: QuotaObservation[], incoming: Q
   }
   return [...groups.values()].flat().sort((a, b) => a.to - b.to);
 }
+/** An API cycle that claims this many times the account's typical tokens per 1% is a counter glitch, not usage. */
+const glitchFactor = 25;
+/**
+ * Earlier versions could start an API baseline from a lifetime total of 0, which recorded one cycle as using the
+ * account's entire history (hundreds of times the real rate). Such cycles are ignored when figures are computed;
+ * the saved history itself is never changed, because usage records are only removed when the user chooses.
+ * A judgement needs enough API cycles for the same window to compare with, so short histories are used as they are.
+ */
+export function withoutCounterGlitches(rows: QuotaObservation[]): QuotaObservation[] {
+  const rates = new Map<string, number[]>();
+  for (const row of rows) if (row.source === 'API') { const key = quotaScopeKey(row), list = rates.get(key) ?? []; list.push(row.observedTokens / row.usedPercent); rates.set(key, list); }
+  const limits = new Map<string, number>();
+  for (const [key, list] of rates) {
+    if (list.length < 4) continue;
+    const sorted = list.slice().sort((a, b) => a - b), middle = sorted.length >> 1;
+    limits.set(key, (sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2) * glitchFactor);
+  }
+  return limits.size ? rows.filter(row => row.source !== 'API' || !(row.observedTokens / row.usedPercent > (limits.get(quotaScopeKey(row)) ?? Infinity))) : rows;
+}
 export function quotaObservations(provider: ConversationProvider, account: ProviderAccountStatus | undefined, data: UsageHistoryData | undefined, now = Date.now(), cycleStarts?: QuotaCycleStart[]): QuotaObservation[] {
   const identity = usageAccount(provider, account?.account);
   if (!identity) return [];
@@ -116,7 +137,7 @@ export interface QuotaTrend {
 export function quotaTrends(provider: ConversationProvider, account: ProviderAccountStatus | undefined, history: QuotaObservation[]): QuotaTrend[] {
   const identity = usageAccount(provider, account?.account);
   return (['5h', 'Weekly'] as const).map(label => {
-    const matched = mergeQuotaObservations([], history).filter(row => row.provider === provider && row.accountId === identity?.id && row.plan === (account?.account?.plan ?? '') && row.label === label);
+    const matched = withoutCounterGlitches(mergeQuotaObservations([], history)).filter(row => row.provider === provider && row.accountId === identity?.id && row.plan === (account?.account?.plan ?? '') && row.label === label);
     const latestObservation = matched.at(-1);
     const current = matched.filter(row => latestObservation && sameQuotaCycle(row, latestObservation));
     const source = current.some(row => row.source === 'API') ? 'API' : current.some(row => (row.source ?? 'Local') === 'Local') ? 'Local' : 'Device';

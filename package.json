@@ -773,6 +773,18 @@
           "minimum": 0,
           "description": "Warn when AgentTandem extension data reaches this size in MB. Shown in the quota hover; a notification appears at most once per day. Set 0 to disable size warnings. Cleanup always requires selecting and previewing data."
         },
+        "agentTandem.autoCleanReviewData": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically remove saved review snapshots that nothing needs any more, for example after you accept changes. Pending changes, tracking baselines, restore points, Undo, token usage history, accounts and attachments are never removed by this cleanup (restore points follow `#agentTandem.storageLimitGB#`)."
+        },
+        "agentTandem.storageLimitGB": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 1024,
+          "markdownDescription": "Size limit in GB for AgentTandem's own data folder (not Codex or Claude Code chats). Above it, unused review snapshots and then the oldest message restore points are removed automatically, oldest first, until the data is back to about 90% of the limit. Pending changes, tracking baselines, the last restore backup (Undo), token usage history, accounts and chat attachments are never removed to meet it. Set `0` to turn the limit off."
+        },
         "agentTandem.reviewEditor": {
           "type": "string",
           "enum": [
