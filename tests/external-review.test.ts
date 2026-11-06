@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, unlink, rm, symlink, readdir, stat, utimes } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, unlink, rm, symlink, readdir, stat, utimes, realpath } from 'node:fs/promises';
 import * as fs from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -251,7 +251,9 @@ describe('External change tracking', () => {
     await f.store.setExternalTracking(f.project, true);
     vi.mocked(fs.readFile).mockClear();
     await f.store.scanExternal(f.project);
-    const reads = () => vi.mocked(fs.readFile).mock.calls.map(call => String(call[0])).filter(file => file.startsWith(f.project) && path.basename(file) !== '.gitignore');
+    // The store reads through realpath(project); os.tmpdir() may be an 8.3 short path (RUNNER~1) on Windows CI.
+    const root = await realpath(f.project);
+    const reads = () => vi.mocked(fs.readFile).mock.calls.map(call => String(call[0])).filter(file => file.startsWith(root) && path.basename(file) !== '.gitignore');
     expect(reads()).toEqual([]);
     await f.set('other.ts', 'changed\n');
     expect((await f.store.scanExternal(f.project)).files.map(file => file.path)).toEqual(['other.ts']);
