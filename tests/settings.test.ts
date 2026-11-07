@@ -698,7 +698,7 @@ describe('Settings usage dashboard', () => {
     const account = { status: 'ready' as const, account: identity, updatedAt: now,
       quota: { status: 'available' as const, windows: [{ id: 'weekly', label: '7d', usedPercent: 20, resetsAt: now + 86400000 }] } };
     const recent = [{ provider: 'Codex' as const, timestamp: now - 60000, total: 1000000 }];
-    const sample: QuotaObservation = { provider: 'Codex', accountId, plan: 'plus', label: 'Weekly', source: 'Device',
+    const sample: QuotaObservation = { provider: 'Codex', accountId, plan: 'plus', label: 'Weekly', source: 'Device', deviceVersion: 2,
       from: now - 13 * 86400000, resetsAt: now - 6 * 86400000, to: now - 7 * 86400000, observedTokens: 500000, usedPercent: 20 };
     render({ ...value, data: { ...value.data!, updatedAt: now, recent }, accounts: { Codex: account }, quotaHistory: [sample] });
     const root = document.getElementById('quota-estimates')!;

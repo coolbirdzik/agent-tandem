@@ -298,16 +298,21 @@ describe('Restoring historical account attribution', () => {
     expect(JSON.stringify(known)).not.toContain('PRIVATE-SECRET'); expect(JSON.stringify(known)).not.toContain('id_token');
     await writeFile(authFile, auth(two.email)); expect((await knownUsageAccounts(profiles))[0]?.nativeAccountIds).toEqual(['workspace-one']);
   });
-  it('keeps restored history out of native-only Local quota estimates while retaining Device coverage', () => {
+  it('keeps restored history out of native-only Local quota estimates and other accounts out of Device coverage', () => {
     const now = Date.parse(stamp), from = now - 3600000;
     const data = { days: [], updatedAt: now, files: 1, unreadableFiles: 0, malformedLines: 0, oversizedLines: 0, undatedRecords: 0, duplicates: 0, timezone: 'UTC', recent: [
       { provider: 'Codex' as const, timestamp: from, total: 100, accountId: one.id },
       { provider: 'Codex' as const, timestamp: from, total: 200, accountId: two.id, accountSource: 'inferred' as const },
       { provider: 'Codex' as const, timestamp: from, total: 300, accountId: one.id, accountSource: 'manual' as const },
+      { provider: 'Codex' as const, timestamp: from, total: 4000, accountId: two.id, accountSource: 'active' as const },
+      { provider: 'Codex' as const, timestamp: from, total: 50000, accountId: two.id, accountSource: 'matched' as const },
+      { provider: 'Codex' as const, timestamp: from, total: 600000, accountId: two.id, accountSource: 'manual' as const },
+      { provider: 'Codex' as const, timestamp: from, total: 7, accountSource: 'manual' as const },
     ] };
     const account = { status: 'ready' as const, updatedAt: now, account: { signedIn: true, email: one.email, id: one.nativeAccountId, method: one.method }, quota: { status: 'available' as const, windows: [{ id: '5h', label: '5h', usedPercent: 25, resetsAt: now + 3600000 }] } };
     expect(quotaEstimates('Codex', account, data, now)[0]?.observedTokens).toBe(100);
-    expect(quotaEstimates('Codex', account, data, now, 'Device')[0]?.observedTokens).toBe(600);
+    // Usage guessed for another account (inferred, active sign-in, quota match or assigned) is never this account's.
+    expect(quotaEstimates('Codex', account, data, now, 'Device')[0]?.observedTokens).toBe(407);
   });
   describe('matching responses to quota rises', () => {
     const at = Date.parse(stamp), minute = 60000;

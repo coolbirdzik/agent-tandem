@@ -11,7 +11,7 @@ const validCycleFields = (row: QuotaObservation | QuotaMeter) => row.cycleStarte
 const cycleFields = (row: QuotaObservation | QuotaMeter) => row.cycleStartedAt === undefined ? {} : { cycleStartedAt: row.cycleStartedAt, cycleStartKnown: row.cycleStartKnown };
 const validCycleStart = (row: QuotaCycleStart) => row && ['Codex', 'Claude'].includes(row.provider) && typeof row.accountId === 'string' && !!row.accountId && typeof row.plan === 'string' &&
   ['5h', 'Weekly'].includes(row.label) && [row.from, row.to, row.startUsedPercent, row.usedPercent].every(Number.isFinite) && row.from > 0 && row.from <= row.to &&
-  row.startUsedPercent >= 0 && row.startUsedPercent <= 100 && row.usedPercent >= 0 && row.usedPercent <= 100;
+  row.startUsedPercent >= 0 && row.startUsedPercent <= 100 && row.usedPercent >= 0 && row.usedPercent <= 100 && (row.resetsAt === undefined || Number.isFinite(row.resetsAt));
 
 function observation(value: unknown): value is QuotaObservation {
   if (!value || typeof value !== 'object') return false;
@@ -19,7 +19,7 @@ function observation(value: unknown): value is QuotaObservation {
   return ['Codex', 'Claude'].includes(row.provider) && typeof row.accountId === 'string' && !!row.accountId && typeof row.plan === 'string' &&
     ['5h', 'Weekly'].includes(row.label) && (row.source === undefined || ['API', 'Local', 'Device'].includes(row.source)) && [row.from, row.resetsAt, row.to, row.observedTokens, row.usedPercent].every(Number.isFinite) &&
     row.from > 0 && row.from < row.to && row.to < row.resetsAt && Number.isSafeInteger(row.observedTokens) && row.observedTokens > 0 && row.usedPercent > 0 && row.usedPercent <= 100 &&
-    validCycleFields(row) && (row.startUsedPercent === undefined || (Number.isFinite(row.startUsedPercent) && row.startUsedPercent >= 0 && row.startUsedPercent + row.usedPercent <= 100));
+    validCycleFields(row) && (row.deviceVersion === undefined || (row.source === 'Device' && Number.isSafeInteger(row.deviceVersion) && row.deviceVersion > 0)) && (row.startUsedPercent === undefined || (Number.isFinite(row.startUsedPercent) && row.startUsedPercent >= 0 && row.startUsedPercent + row.usedPercent <= 100));
 }
 const clean = (row: QuotaObservation): QuotaObservation => ({
   provider: row.provider, accountId: row.accountId, plan: row.plan, label: row.label,
@@ -27,6 +27,7 @@ const clean = (row: QuotaObservation): QuotaObservation => ({
   ...(row.source ? { source: row.source } : {}),
   ...(row.startUsedPercent === undefined ? {} : { startUsedPercent: row.startUsedPercent }),
   ...cycleFields(row),
+  ...(row.deviceVersion === undefined ? {} : { deviceVersion: row.deviceVersion }),
 });
 function meter(value: unknown): value is QuotaMeter {
   if (!value || typeof value !== 'object') return false;
@@ -50,6 +51,7 @@ export class QuotaHistoryStore {
       if (data.version !== 1 || !Array.isArray(data.observations)) throw new Error('Invalid quota history.');
       this.cycleStarts = (Array.isArray(data.cycleStarts) ? data.cycleStarts : []).filter(validCycleStart).map((row: QuotaCycleStart) => ({
         provider: row.provider, accountId: row.accountId, plan: row.plan, label: row.label, from: row.from, to: row.to, startUsedPercent: row.startUsedPercent, usedPercent: row.usedPercent,
+        ...(row.resetsAt === undefined ? {} : { resetsAt: row.resetsAt }),
       }));
       this.baselines = (Array.isArray(data.baselines) ? data.baselines : []).filter((row: QuotaBaseline) => row && meter(row.start) && meter(row.latest) && sameQuotaCycle(row.start, row.latest) && row.latest.to >= row.start.to && row.latest.totalTokens >= row.start.totalTokens && row.latest.usedPercent >= row.start.usedPercent)
         .map((row: QuotaBaseline) => ({ start: cleanMeter(row.start), latest: cleanMeter(row.latest) }));

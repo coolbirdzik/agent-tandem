@@ -18,7 +18,14 @@ export interface QuotaObservation {
   /** Quota already used when recording began. Missing on older API observations. */
   startUsedPercent?: number;
   cycleStartedAt?: number; cycleStartKnown?: boolean;
+  /** Device rows only: set once usage guessed for another account (active sign-in, quota match) was excluded. */
+  deviceVersion?: number;
 }
+/** Older Device rows counted other accounts' usage on this device, so figures ignore them. */
+export const deviceObservationVersion = 2;
+const currentDeviceRow = (row: QuotaObservation) => row.source !== 'Device' || (row.deviceVersion ?? 0) >= deviceObservationVersion;
+/** Rows saved before unseen resets were detected can span several windows, so their tokens belong to more quota than they show. */
+const withinOneWindow = (row: QuotaObservation) => row.to - row.from <= (row.label === '5h' ? 5 * 3600000 : 7 * 86400000) + 120000;
 export interface QuotaMeter {
   provider: ConversationProvider; accountId: string; plan: string; label: QuotaEstimate['label'];
   from: number; resetsAt: number; to: number; totalTokens: number; usedPercent: number;
@@ -117,15 +124,16 @@ export function quotaObservations(provider: ConversationProvider, account: Provi
   const identity = usageAccount(provider, account?.account);
   if (!identity) return [];
   const local = quotaEstimates(provider, account, data, now, 'Account', cycleStarts), device = quotaEstimates(provider, account, data, now, 'Device', cycleStarts);
-  const estimates: Array<QuotaEstimate & { source?: QuotaSource }> = [...local,
+  const estimates: Array<QuotaEstimate & { source?: QuotaSource; deviceVersion?: number }> = [...local,
     ...device.filter(estimate => estimate.observedTokens !== local.find(row => row.label === estimate.label)?.observedTokens)
-      .map(estimate => ({ ...estimate, source: 'Device' as const }))];
+      .map(estimate => ({ ...estimate, source: 'Device' as const, deviceVersion: deviceObservationVersion }))];
   return estimates.flatMap(estimate => estimate.tokensPerPercent === undefined ? [] : [{
     provider, accountId: identity.id, plan: account?.account?.plan ?? '', label: estimate.label,
     from: estimate.from!, resetsAt: account!.quota!.windows.find(row => row.label === (estimate.label === '5h' ? '5h' : '7d'))!.resetsAt!,
     to: estimate.to!, observedTokens: estimate.observedTokens!, usedPercent: estimate.usedPercent! - (estimate.startUsedPercent ?? 0),
     ...(estimate.cycleStartedAt === undefined ? {} : { cycleStartedAt: estimate.cycleStartedAt, cycleStartKnown: estimate.cycleStartKnown, startUsedPercent: estimate.startUsedPercent }),
     ...(estimate.source ? { source: estimate.source } : {}),
+    ...(estimate.deviceVersion ? { deviceVersion: estimate.deviceVersion } : {}),
   }]);
 }
 export interface QuotaTrend {
@@ -137,7 +145,7 @@ export interface QuotaTrend {
 export function quotaTrends(provider: ConversationProvider, account: ProviderAccountStatus | undefined, history: QuotaObservation[]): QuotaTrend[] {
   const identity = usageAccount(provider, account?.account);
   return (['5h', 'Weekly'] as const).map(label => {
-    const matched = withoutCounterGlitches(mergeQuotaObservations([], history)).filter(row => row.provider === provider && row.accountId === identity?.id && row.plan === (account?.account?.plan ?? '') && row.label === label);
+    const matched = withoutCounterGlitches(mergeQuotaObservations([], history).filter(row => currentDeviceRow(row) && withinOneWindow(row))).filter(row => row.provider === provider && row.accountId === identity?.id && row.plan === (account?.account?.plan ?? '') && row.label === label);
     const latestObservation = matched.at(-1);
     const current = matched.filter(row => latestObservation && sameQuotaCycle(row, latestObservation));
     const source = current.some(row => row.source === 'API') ? 'API' : current.some(row => (row.source ?? 'Local') === 'Local') ? 'Local' : 'Device';
@@ -196,9 +204,9 @@ export function quotaEstimates(provider: ConversationProvider, account: Provider
     if (cycle) Object.assign(result, { cycleStartedAt: cycle.from, cycleStartKnown: cycle.startUsedPercent === 0, startUsedPercent: cycle.startUsedPercent });
     if (usedPercent <= 0) return { ...result, reason: cycle?.startUsedPercent ? 'Cycle start not observed · collecting new usage' : 'Not enough quota usage yet' };
     if (from >= to) return { ...result, reason: 'Quota window has not started' };
-    // Device estimates include unknown native sessions without assigning them an account.
-    // Records explicitly attributed to a different account are always excluded.
-    const observedTokens = data.recent.filter(row => row.provider === provider && ((!row.accountSource && row.accountId === identity.id) || (scope === 'Device' && (!row.accountId || !!row.accountSource))) && (cycle ? row.timestamp > from : row.timestamp >= from) && row.timestamp <= to).reduce((sum, row) => sum + row.total, 0);
+    // Device estimates add unknown sessions and usage guessed for this account, without assigning them an account.
+    // Usage attributed to a different account, natively or by a guess such as the active sign-in, is always excluded.
+    const observedTokens = data.recent.filter(row => row.provider === provider && ((!row.accountSource && row.accountId === identity.id) || (scope === 'Device' && (!row.accountId || row.accountId === identity.id))) && (cycle ? row.timestamp > from : row.timestamp >= from) && row.timestamp <= to).reduce((sum, row) => sum + row.total, 0);
     if (!observedTokens) return { ...result, reason: 'No tokens attributed to this account in this window' };
     const tokensPerPercent = observedTokens / usedPercent;
     return { ...result, observedTokens, from, to, tokensPerPercent, capacityTokens: tokensPerPercent * 100, remainingTokens: tokensPerPercent * Math.max(0, 100 - window.usedPercent) };

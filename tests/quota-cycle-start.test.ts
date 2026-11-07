@@ -28,6 +28,24 @@ describe('Cycles from the last observed 100% quota', () => {
     expect(observeQuotaCycleStarts(partial, [tick(2, 10)])[0]).toMatchObject({ from: now + 120000, startUsedPercent: 10 });
     expect(observeQuotaCycleStarts(partial, [tick(3, 0)])[0]).toMatchObject({ from: now + 180000, startUsedPercent: 0 });
   });
+  it('starts a partial cycle after a reset that happened while the account was not read', () => {
+    const hour = 3600000, five = (minute: number, usedPercent: number, resetsAt: number) => tick(minute, usedPercent, { label: '5h', windowId: 'primary', resetsAt });
+    const first = observeQuotaCycleStarts([], [five(0, 0, now + 5 * hour), five(30, 40, now + 5 * hour)]);
+    // Ten hours later the window resets at a later time and already shows 2% used.
+    const later = observeQuotaCycleStarts(first, [five(600, 2, now + 14 * hour)]);
+    expect(later[0]).toMatchObject({ from: now + 600 * 60000, startUsedPercent: 2, usedPercent: 2 });
+    // Reset times that jitter within the same window keep the cycle.
+    expect(observeQuotaCycleStarts(first, [five(60, 45, now + 5 * hour + 90000)])[0]).toMatchObject({ from: now, startUsedPercent: 0, usedPercent: 45 });
+    // A reset a minute after the last reading, with the next request before the next reading, is not missed either.
+    const ending = observeQuotaCycleStarts([], [five(0, 0, now + 5 * hour), five(299, 4, now + 5 * hour)]);
+    expect(observeQuotaCycleStarts(ending, [five(306, 3, now + 10 * hour)])[0]).toMatchObject({ from: now + 306 * 60000, startUsedPercent: 3 });
+    // A late reading from before a reset cannot move the known reset back and split the cycle.
+    const reset = observeQuotaCycleStarts(ending, [five(306, 0, now + 10 * hour + 5 * 60000), five(310, 5, now + 10 * hour)]);
+    expect(observeQuotaCycleStarts(reset, [five(311, 4, now + 5 * hour), five(320, 6, now + 10 * hour)])[0]).toMatchObject({ from: now + 306 * 60000, startUsedPercent: 0, usedPercent: 6 });
+    // After a 0% reading, the window that starts with the next request is the same cycle, even with sparse readings.
+    const idle = observeQuotaCycleStarts([], [five(0, 0, now + 5 * hour)]);
+    expect(observeQuotaCycleStarts(idle, [five(20, 3, now + 10 * 60000 + 5 * hour)])[0]).toMatchObject({ from: now, startUsedPercent: 0, usedPercent: 3 });
+  });
   it('isolates accounts, providers, plans and windows, excluding model-specific limits', () => {
     const starts = observeQuotaCycleStarts([], [tick(0, 0), tick(1, 0, { accountId: 'two' }), tick(2, 0, { provider: 'Claude' }),
       tick(3, 0, { plan: 'pro' }), tick(4, 0, { label: '5h', windowId: 'primary' }), tick(5, 0, { label: 'Opus · 7d', windowId: 'opus' })]);
