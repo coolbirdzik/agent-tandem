@@ -52,6 +52,7 @@ import { SettingsView } from './host/settings-view';
 import { AttachmentStore } from './core/attachment-store';
 import { UsageAccountStore } from './core/usage-account-store';
 import { ActiveSignInStore } from './core/active-sign-ins';
+import { quotaResets } from './core/quota-reset-attribution';
 import { SharedAccountReads, type SharedReadMode } from './core/shared-account-reads';
 import { usageAccount } from './core/usage-account';
 import { UsageAttributionStore, validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution-store';
@@ -240,7 +241,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     await activeSignIns.observe(provider, unsettledSignIns.has(provider) ? null : account).catch(() => undefined);
   };
   const quotaBar = new QuotaStatusBar(async () => { await accountManager.refresh(undefined, true); }), trackingBar = new TrackingStatusBar(), usageHistory = new UsageHistory(undefined, usageAccounts, path.join(context.globalStorageUri.fsPath, 'usage', 'history-cache'),
-    { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts), quotaSamples: () => savedQuotaTicks, quotaMatches: new UsageAccountStore(attributionStore.directory, 'quota-matches.jsonl'), activeSignIns });
+    { store: attributionStore, knownAccounts: () => knownUsageAccounts(accountProfiles, state.accounts), quotaSamples: () => savedQuotaTicks, quotaResets: () => quotaResets(savedQuotaTicks, quotaHistory), quotaMatches: new UsageAccountStore(attributionStore.directory, 'quota-matches.jsonl'), activeSignIns });
   const storage = new StorageManager(context.globalStorageUri.fsPath);
   let storageState: StorageState = { status: 'idle', root: storage.root }, cleanupPlan: CleanupPlan | undefined;
   let extensionStorage: ExtensionStorageUsage = { status: 'idle', warningBytes: storageWarningBytes(vscode.workspace.getConfiguration('agentTandem').get('storageWarningMB', 1024)) };

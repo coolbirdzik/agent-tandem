@@ -19,11 +19,12 @@ import type { UsageAccountSource } from '../core/usage-dashboard';
 import { quotaRiseAccount, quotaRises } from '../core/quota-attribution';
 import type { QuotaTick } from '../core/quota-pace';
 import { activeSignInResolver, type ActiveSignInStore } from '../core/active-sign-ins';
+import { quotaResetResolver, transcriptResets, type QuotaReset } from '../core/quota-reset-attribution';
 
 const obj = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const count = (value: unknown): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const text = (value: unknown): string | undefined => typeof value === 'string' && value ? value : undefined;
-interface UsageRecord extends TokenTotals { id: string; provider: ConversationProvider; model: string; timestamp: number; conversationId?: string; project?: string; accountKey?: string; cacheWrite1h?: number; kind?: 'modern' | 'legacy'; equivalent?: string; account?: UsageAccount; accountConflict?: boolean; creatorAccountId?: string; creatorConflict?: boolean; accountSource?: UsageAccountSource; retained?: boolean }
+interface UsageRecord extends TokenTotals { id: string; provider: ConversationProvider; model: string; timestamp: number; conversationId?: string; project?: string; accountKey?: string; cacheWrite1h?: number; kind?: 'modern' | 'legacy'; equivalent?: string; account?: UsageAccount; accountConflict?: boolean; creatorAccountId?: string; creatorConflict?: boolean; accountSource?: UsageAccountSource; retained?: boolean; quotaResets?: string }
 function totals(value: unknown, provider: ConversationProvider): TokenTotals & { cacheWrite1h?: number } {
   const u = obj(value), cacheRead = count(u.cache_read_input_tokens ?? u.cached_input_tokens ?? u.cachedInputTokens);
   const cacheWrite = count(u.cache_creation_input_tokens ?? u.cache_write_input_tokens ?? u.cacheWriteInputTokens);
@@ -44,14 +45,18 @@ export class UsageParser {
   private modern: UsageRecord[] = [];
   private legacy: Array<{ record: UsageRecord; cumulative?: string }> = [];
   private modernTotals = new Set<string>();
+  /** Responses whose rate limits arrive on the next token_count. */
+  private awaitingLimits: UsageRecord[] = [];
   undated = 0;
   constructor(private provider: ConversationProvider) {}
   consume(value: unknown) {
     const r = obj(value), p = obj(r.payload), m = obj(r.message);
     if (this.provider === 'Claude') {
       this.session = text(r.sessionId) ?? this.session; this.project = text(r.cwd) ?? this.project;
-      if (r.type === 'bridge-session' && text(r.sessionId)) {
-        const owner = claudeHistoryOwner(r.ownerAccountUuid, r.ownerOrganizationUuid);
+      // Claude Code writes the signed-in account that owns the session (`session-owner`, in recent versions such as 2.1.319); a later
+      // sign-in continuing the session is offered a copy instead. Remote sessions record their owner as `bridge-session`.
+      if ((r.type === 'bridge-session' || r.type === 'session-owner') && text(r.sessionId)) {
+        const owner = r.type === 'bridge-session' ? claudeHistoryOwner(r.ownerAccountUuid, r.ownerOrganizationUuid) : claudeHistoryOwner(r.accountUuid, r.organizationUuid);
         if (owner) {
           const owners = this.claudeOwners.get(r.sessionId) ?? new Set<string>();
           owners.add(owner); this.claudeOwners.set(r.sessionId, owners);
@@ -80,10 +85,13 @@ export class UsageParser {
         if (turn) this.modern[index]!.accountKey = `Codex:turn:${turn}`;
         const context = text(p.turn_id) || this.turn || this.session;
         if (context && Object.keys(obj(p.thread_token_usage)).length) this.modern[index]!.equivalent = `${context}:${fingerprint(cumulative)}`;
+        this.awaitingLimits.push(this.modern[index]!);
       }
     }
     if (r.type === 'event_msg' && p.type === 'token_count') {
-      const info = obj(p.info);
+      const info = obj(p.info), resets = transcriptResets(p.rate_limits), served = this.awaitingLimits;
+      this.awaitingLimits = [];
+      if (resets) for (const row of served) row.quotaResets = resets;
       if (!Object.keys(info).length) return;
       const totalValue = info.total_token_usage ?? info.totalTokenUsage;
       const lastValue = info.last_token_usage ?? info.lastTokenUsage;
@@ -103,6 +111,7 @@ export class UsageParser {
       this.record(rows, `Codex:legacy:${r.timestamp}:${this.turn}:${fingerprint(cumulative ?? usage)}`, usage, r.timestamp, this.model);
       if (rows[0]) {
         rows[0].kind = 'legacy';
+        if (resets) rows[0].quotaResets = resets;
         const context = this.turn || this.session;
         if (context && cumulative) rows[0].equivalent = `${context}:${fingerprint(cumulative)}`;
         this.legacy.push({ record: rows[0], cumulative: cumulative ? fingerprint(cumulative) : undefined });
@@ -127,18 +136,19 @@ export class UsageParser {
 }
 interface ParsedFile { signature: string; records: UsageRecord[]; malformed: number; oversized: number; undated: number }
 export interface UsageReadStats { discoveryMs: number; parseMs: number; aggregateMs: number; parsedFiles: number; memoryHits: number; diskHits: number }
-const cacheVersion = 4;
+const cacheVersion = 6;
 /** Compact allowlist: cache contains usage counters and native IDs, never message text or account credentials. */
 function cachedRecords(value: unknown, provider: ConversationProvider): UsageRecord[] | undefined {
   if (!Array.isArray(value)) return;
   const records: UsageRecord[] = [];
   for (const row of value) {
-    if (!Array.isArray(row) || row.length !== 15 || typeof row[0] !== 'string' || !row[0].startsWith(`${provider}:`) || row[0].length > 2048 || typeof row[1] !== 'string' || row[1].length > 512 || !Number.isFinite(row[2]) || row.slice(3, 8).some(n => !Number.isSafeInteger(n) || n < 0) || (row[8] !== null && (!Number.isSafeInteger(row[8]) || row[8] < 0)) || [row[9], row[11], row[12], row[13], row[14]].some(s => s !== null && (typeof s !== 'string' || s.length > 2048)) || ![null, 'modern', 'legacy'].includes(row[10])) return;
-    const [id, model, timestamp, input, output, cacheRead, cacheWrite, reasoning, cacheWrite1h, accountKey, kind, equivalent, conversationId, project, creatorAccountId] = row;
+    // Rows saved before quota reset times were read have 15 columns. Retained ones have no transcript to reparse.
+    if (!Array.isArray(row) || (row.length !== 15 && row.length !== 16) || typeof row[0] !== 'string' || !row[0].startsWith(`${provider}:`) || row[0].length > 2048 || typeof row[1] !== 'string' || row[1].length > 512 || !Number.isFinite(row[2]) || row.slice(3, 8).some(n => !Number.isSafeInteger(n) || n < 0) || (row[8] !== null && (!Number.isSafeInteger(row[8]) || row[8] < 0)) || [row[9], row[11], row[12], row[13], row[14], row[15] ?? null].some(s => s !== null && (typeof s !== 'string' || s.length > 2048)) || ![null, 'modern', 'legacy'].includes(row[10])) return;
+    const [id, model, timestamp, input, output, cacheRead, cacheWrite, reasoning, cacheWrite1h, accountKey, kind, equivalent, conversationId, project, creatorAccountId, quotaResets = null] = row;
     if (!Number.isSafeInteger(input + output)) return;
     records.push({ id, model, timestamp, input, output, cacheRead, cacheWrite, reasoning, total: input + output, requests: 1, provider,
       ...(cacheWrite1h !== null ? { cacheWrite1h } : {}), ...(accountKey !== null ? { accountKey } : {}), ...(kind !== null ? { kind } : {}), ...(equivalent !== null ? { equivalent } : {}),
-      ...(conversationId !== null ? { conversationId } : {}), ...(project !== null ? { project } : {}), ...(creatorAccountId !== null ? { creatorAccountId } : {}) });
+      ...(conversationId !== null ? { conversationId } : {}), ...(project !== null ? { project } : {}), ...(creatorAccountId !== null ? { creatorAccountId } : {}), ...(quotaResets !== null ? { quotaResets } : {}) });
   }
   return records;
 }
@@ -157,7 +167,7 @@ function mayContainUsage(prefix: string, provider: ConversationProvider): boolea
     } });
   } catch (error) { if (error !== done) throw error; }
   if (!type) return true;
-  if (provider === 'Claude') return type === 'assistant' || type === 'bridge-session';
+  if (provider === 'Claude') return type === 'assistant' || type === 'bridge-session' || type === 'session-owner';
   if (type === 'event_msg') return !eventType || eventType === 'token_count' || eventType === 'model_rerouted';
   return ['session_meta', 'turn_context', 'token_usage_record'].includes(type);
 }
@@ -256,7 +266,7 @@ export class UsageHistory {
   private counted: UsageRecord[] = [];
   readStats?: UsageReadStats;
   constructor(private homes = { codex: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), claude: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude') }, private accounts?: Pick<UsageAccountStore, 'read'>, private cacheDirectory?: string,
-    private attribution?: { store: Pick<UsageAttributionStore, 'read'>; knownAccounts: () => Promise<KnownUsageAccount[]>; quotaSamples?: () => QuotaTick[]; quotaMatches?: Pick<UsageAccountStore, 'read' | 'recordMany'>; activeSignIns?: Pick<ActiveSignInStore, 'read'> }) {}
+    private attribution?: { store: Pick<UsageAttributionStore, 'read'>; knownAccounts: () => Promise<KnownUsageAccount[]>; quotaSamples?: () => QuotaTick[]; quotaResets?: () => QuotaReset[]; quotaMatches?: Pick<UsageAccountStore, 'read' | 'recordMany'>; activeSignIns?: Pick<ActiveSignInStore, 'read'> }) {}
   private cacheFile(file: string, provider: ConversationProvider) {
     const source = process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
     return path.join(this.cacheDirectory!, `${createHash('sha256').update(`${provider}:${source}`).digest('hex')}.json`);
@@ -276,7 +286,7 @@ export class UsageHistory {
     const filename = this.cacheFile(file, provider), temporary = `${filename}.${randomUUID()}.tmp`;
     try {
       await mkdir(this.cacheDirectory, { recursive: true });
-      const records = data.records.map(row => [row.id, row.model, row.timestamp, row.input, row.output, row.cacheRead, row.cacheWrite, row.reasoning, row.cacheWrite1h ?? null, row.accountKey ?? null, row.kind ?? null, row.equivalent ?? null, row.conversationId ?? null, row.project ?? null, row.creatorAccountId ?? null]);
+      const records = data.records.map(row => [row.id, row.model, row.timestamp, row.input, row.output, row.cacheRead, row.cacheWrite, row.reasoning, row.cacheWrite1h ?? null, row.accountKey ?? null, row.kind ?? null, row.equivalent ?? null, row.conversationId ?? null, row.project ?? null, row.creatorAccountId ?? null, row.quotaResets ?? null]);
       await writeFile(temporary, JSON.stringify({ version: cacheVersion, provider, signature: data.signature, malformed: data.malformed, oversized: data.oversized, undated: data.undated, records }), { flag: 'wx' });
       await rename(temporary, filename);
       // The fresh counts supersede a compressed copy of older ones.
@@ -408,6 +418,7 @@ export class UsageHistory {
           if (!existing) { records.set(row.id, { ...row, account, accountConflict: conflict }); continue; }
           if (row.creatorAccountId && existing.creatorAccountId && row.creatorAccountId !== existing.creatorAccountId) existing.creatorConflict = true;
           else existing.creatorAccountId ??= row.creatorAccountId;
+          existing.quotaResets ??= row.quotaResets;
           if (conflict || (existing.account && account && existing.account.id !== account.id)) { existing.account = undefined; existing.accountConflict = true; }
           else if (!existing.accountConflict && account) existing.account = account;
           duplicates++;
@@ -429,8 +440,8 @@ export class UsageHistory {
     }
     stats.parseMs = performance.now() - parseStart;
     // Claude sessions outside the extension can use consistent owner/sole-account evidence.
-    // Codex must use response/turn evidence: creator_account_id identifies the thread's
-    // creator, not the account billed for later turns after a resume or account switch.
+    // Codex's creator_account_id identifies the thread's creator, not the account billed for
+    // later turns after a resume or account switch; it only labels quota windows (below).
     const soleAccounts = new Map<ConversationProvider, UsageAccount | null>();
     for (const { account } of known ?? []) {
       const previous = soleAccounts.get(account.provider);
@@ -449,6 +460,23 @@ export class UsageHistory {
         (row.account && owner && row.account.id !== owner.id) || (previous && evidence && previous.id !== evidence.id)) claudeSessions.set(row.conversationId, null);
       else if (previous !== null && evidence) claudeSessions.set(row.conversationId, evidence);
     }
+    // A Codex thread's first response is billed to the account that created it. Later turns can follow an account
+    // switch, so a creator labels no response by itself; threads started in the same quota window label that window
+    // when their creators agree, and every response served in it (its reset time is fixed per account and cycle).
+    const weeklyReset = (row: UsageRecord) => row.quotaResets?.split(',').find(pair => pair.startsWith('10080:'));
+    const threadStarts = new Map<string, UsageRecord>(), windowCreators = new Map<string, UsageAccount | null>();
+    for (const row of records.values()) {
+      if (row.provider !== 'Codex' || !row.conversationId) continue;
+      const first = threadStarts.get(row.conversationId);
+      if (!first || row.timestamp < first.timestamp) threadStarts.set(row.conversationId, row);
+    }
+    for (const row of threadStarts.values()) {
+      const window = weeklyReset(row);
+      if (!window || !row.creatorAccountId) continue;
+      // A creator that is not a known account, or two creators, leave the window unknown.
+      const account = row.creatorConflict ? null : creators.get(`Codex:${row.creatorAccountId}`) ?? null, previous = windowCreators.get(window);
+      windowCreators.set(window, previous === undefined ? account : previous && account && previous.id === account.id ? previous : null);
+    }
     // Quota samples expire, so a match is saved when found. It never outranks native evidence or a user's choice.
     const quotaMatches = await this.attribution?.quotaMatches?.read(), rises = quotaRises(this.attribution?.quotaSamples?.() ?? []);
     const knownById = new Map((known ?? []).map(entry => [entry.account.id, entry.account])), newMatches: Array<{ key: string; account: UsageAccount }> = [];
@@ -459,6 +487,7 @@ export class UsageHistory {
       if (account && this.attribution?.quotaMatches) newMatches.push({ key: row.id, account });
       return account;
     };
+    const resetAccount = quotaResetResolver(this.attribution?.quotaResets?.() ?? []);
     const activeSignIn = activeSignInResolver(await this.attribution?.activeSignIns?.read().catch(() => undefined) ?? []);
     const aggregateStart = performance.now(), recent: RecentUsage[] = [], counted: UsageRecord[] = [], now = Date.now();
     let attributed = 0;
@@ -468,12 +497,23 @@ export class UsageHistory {
       const day = localDay(row.timestamp);
       if (!row.account) {
         const assignment = matchingAssignment(assignments ?? [], row.provider, row.conversationId, day, row.id);
-        const matched = assignment || row.accountConflict ? undefined : quotaMatch(row);
+        // Reset times are the server's own record of the serving account, so they outrank the quota-rise guess.
+        const reset = assignment || row.accountConflict ? undefined : knownById.get(resetAccount(row.provider, row.quotaResets) ?? '');
+        // A Claude session's recorded owner names its account, so it also outranks the quota-rise guess.
+        const session = row.provider === 'Claude' && row.conversationId ? claudeSessions.get(row.conversationId) : undefined;
+        const ownerUsable = row.provider === 'Claude' && !row.accountConflict && !row.creatorConflict && session !== null;
+        const owner = assignment || !ownerUsable ? undefined : (row.creatorAccountId ? creators.get(`${row.provider}:${row.creatorAccountId}`) : session) ?? undefined;
+        const matched = assignment || owner || row.accountConflict ? undefined : reset ?? quotaMatch(row);
         if (assignment) { row.account = assignment.account ?? undefined; row.accountSource = 'manual'; }
+        else if (owner) { row.account = owner; row.accountSource = 'inferred'; }
         else if (matched) { row.account = matched; row.accountSource = 'matched'; }
-        else if (row.provider === 'Claude' && !row.accountConflict && !row.creatorConflict) {
-          const session = row.provider === 'Claude' && row.conversationId ? claudeSessions.get(row.conversationId) : undefined;
-          if (session !== null) row.account = (row.creatorAccountId ? creators.get(`${row.provider}:${row.creatorAccountId}`) : session ?? soleAccounts.get(row.provider)) ?? undefined;
+        else if (row.provider === 'Codex' && !row.accountConflict) {
+          const window = weeklyReset(row);
+          row.account = (window ? windowCreators.get(window) : undefined) ?? undefined;
+          if (row.account) row.accountSource = 'inferred';
+        }
+        else if (ownerUsable && !row.creatorAccountId) {
+          row.account = soleAccounts.get(row.provider) ?? undefined;
           if (row.account) row.accountSource = 'inferred';
         }
         // Last resort, never saved: a later quota match or the user's choice replaces it on the next read.

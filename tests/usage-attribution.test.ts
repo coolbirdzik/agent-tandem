@@ -9,7 +9,8 @@ import { UsageHistory } from '../src/providers/usage-history';
 import { usageBreakdown } from '../src/core/usage-dashboard';
 import { knownUsageAccounts } from '../src/providers/usage-account-identities';
 import { AccountProfiles } from '../src/core/account-profiles';
-import { quotaEstimates } from '../src/core/quota-estimate';
+import { quotaEstimates, type QuotaObservation } from '../src/core/quota-estimate';
+import { quotaResets, type QuotaReset } from '../src/core/quota-reset-attribution';
 import { quotaRiseAccount, quotaRises } from '../src/core/quota-attribution';
 import type { QuotaTick } from '../src/core/quota-pace';
 import { ACTIVE_SIGN_IN_GAP, ActiveSignInStore, activeSignInAt } from '../src/core/active-sign-ins';
@@ -63,6 +64,28 @@ describe('Restoring historical account attribution', () => {
     const assignment = await f.store.assign({ provider: 'Claude', conversationId: 'bridge' }, claudeTwo);
     expect((await reload.read()).days.find(row => row.account)?.account).toEqual(claudeTwo);
     await f.store.remove(assignment.id); expect((await reload.read()).days).toEqual(first.days);
+  });
+  it('reads the session owner Claude Code records, over a quota-rise match but never over native evidence or a user choice', async () => {
+    const f = await fixture(), sessionOwner = (sessionId: string, id = 'owner-one', organization = 'org-one') => ({ type: 'session-owner', accountUuid: id, organizationUuid: organization, sessionId });
+    await claudeFile(f, 'owned', [sessionOwner('owned'), message('owned', 'owned')]);
+    await claudeFile(f, 'guessed', [sessionOwner('guessed'), message('guessed', 'guessed')]);
+    await claudeFile(f, 'native', [sessionOwner('native'), message('native', 'native')]);
+    await claudeFile(f, 'kept', [sessionOwner('kept'), message('kept', 'kept')]);
+    await claudeFile(f, 'stranger', [sessionOwner('stranger', 'owner-unknown', 'org-unknown'), message('stranger', 'stranger')]);
+    // A later sign-in continuing the session gets a copy; the copied response keeps no single owner.
+    await claudeFile(f, 'original', [sessionOwner('original'), message('copied', 'original')]);
+    await claudeFile(f, 'copy', [sessionOwner('copy', 'owner-two', 'org-two'), message('copied', 'copy')]);
+    const quotaMatches = new UsageAccountStore(f.store.directory, 'quota-matches.jsonl'); await quotaMatches.record('Claude:guessed', claudeTwo);
+    await f.ledger.record('Claude:native', claudeTwo); await f.store.assign({ provider: 'Claude', conversationId: 'kept' }, null);
+    const data = await new UsageHistory(f.homes, f.ledger, f.cache, { ...claudeOptions(f), quotaMatches }).read();
+    const source = (id: string) => data.conversations!.find(row => row.id === id)!.days[0]!;
+    expect(source('owned')).toMatchObject({ account: claudeOne, accountSource: 'inferred' });
+    expect(source('guessed')).toMatchObject({ account: claudeOne, accountSource: 'inferred' });
+    expect(source('native')).toMatchObject({ account: claudeTwo }); expect(source('native').accountSource).toBeUndefined();
+    expect(source('kept').account).toBeUndefined(); expect(source('kept').accountSource).toBe('manual');
+    expect(source('stranger').account).toBeUndefined();
+    // Deduplicated into whichever file is read first; neither owner claims it.
+    expect(data.conversations!.filter(row => row.id === 'original' || row.id === 'copy').flatMap(row => row.days).map(row => row.account)).toEqual([undefined]);
   });
   it('never extends a Claude response account to unrecorded responses and keeps mismatched owners and conflicts unknown', async () => {
     const f = await fixture(), options = claudeOptions(f);
@@ -447,6 +470,98 @@ describe('Falling back to the active CLI sign-in', () => {
     expect(source('matched')).toMatchObject({ account: one, accountSource: 'matched' });
     // Active sign-ins are never saved as evidence.
     expect((await f.ledger.read()).has('Codex:plain')).toBe(false); expect((await quotaMatches.read()).has('Codex:plain')).toBe(false);
+  });
+});
+describe('Identifying Codex accounts from quota reset times', () => {
+  const week = 1793382797, fiveHours = 1792847570;
+  const limits = (weekly: number, short?: number, used = 5, limit_id = 'codex') => ({ limit_id,
+    primary: short ? { used_percent: used, window_minutes: 300, resets_at: short } : null, secondary: { used_percent: used, window_minutes: 10080, resets_at: weekly } });
+  const tick = (account: typeof one, resetsAt: number, label = '7d', usedPercent = 5): QuotaTick => ({ provider: 'Codex', accountId: account.id, plan: 'plus', windowId: label === '5h' ? 'codex:primary' : 'codex:secondary', label, resetsAt: resetsAt * 1000, at: Date.parse(stamp), usedPercent });
+  const observation = (account: typeof one, resetsAt: number): QuotaObservation => ({ provider: 'Codex', accountId: account.id, plan: 'plus', label: 'Weekly', from: 0, resetsAt: resetsAt * 1000, to: 1, observedTokens: 1, usedPercent: 5 });
+  async function rollout(f: Awaited<ReturnType<typeof fixture>>, name: string, creator: string, responses: Array<{ id: string; limits?: unknown; date?: string }>) {
+    const file = path.join(f.homes.codex, 'sessions', `${name}.jsonl`); await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, [{ type: 'session_meta', payload: { id: name, creator_account_id: creator } }, { type: 'turn_context', payload: { turn_id: `turn-${name}`, model: 'model' } },
+      ...responses.flatMap(({ id, limits, date = stamp }) => [
+        { timestamp: date, type: 'token_usage_record', payload: { response_id: id, usage: { input_tokens: 100, output_tokens: 10 } } },
+        { timestamp: date, type: 'event_msg', payload: { type: 'token_count', info: null, rate_limits: limits ?? null } }]),
+    ].map(row => JSON.stringify(row)).join('\n'));
+    return file;
+  }
+  const history = (f: Awaited<ReturnType<typeof fixture>>, resets: QuotaReset[], extra: Partial<ConstructorParameters<typeof UsageHistory>[3]> = {}) =>
+    new UsageHistory(f.homes, f.ledger, f.cache, { ...f.options, quotaResets: () => resets, ...extra });
+  const byResponse = async (h: UsageHistory) => {
+    const data = await h.read();
+    return (id: string) => data.conversations!.flatMap(row => row.days).find(row => row.model === 'model' && data.conversations!.find(c => c.days.includes(row))!.id === id);
+  };
+  it('names the account whose started window resets at the same time, over a quota-rise guess and from saved history alone', async () => {
+    const f = await fixture(); await rollout(f, 'thread', 'creator-two', [{ id: 'r1', limits: limits(week) }]);
+    // One account's readings jitter by a second; another account resets ten seconds later.
+    const resets = quotaResets([tick(one, week + 1), tick(two, week + 10)], []);
+    expect((await history(f, resets).read()).days[0]).toMatchObject({ total: 110, account: one, accountSource: 'matched' });
+    const quotaMatches = new UsageAccountStore(f.store.directory, 'quota-matches.jsonl'); await quotaMatches.record('Codex:r1', two);
+    expect((await history(f, resets, { quotaMatches }).read()).days[0]).toMatchObject({ account: one, accountSource: 'matched' });
+    // Quota samples expire; saved quota history keeps each cycle's reset time.
+    expect((await history(f, quotaResets([], [observation(one, week)])).read()).days[0]).toMatchObject({ account: one, accountSource: 'matched' });
+    expect((await f.ledger.read()).size).toBe(0);
+  });
+  it('leaves responses unknown when accounts reset together, windows disagree, a window is unused or another limit is shown', async () => {
+    const f = await fixture();
+    await rollout(f, 'together', 'missing', [{ id: 'together', limits: limits(week) }]);
+    await rollout(f, 'split', 'missing', [{ id: 'split', limits: limits(week, fiveHours) }]);
+    await rollout(f, 'disagree', 'missing', [{ id: 'disagree', limits: limits(week + 100, fiveHours + 100) }]);
+    await rollout(f, 'unused', 'missing', [{ id: 'unused', limits: limits(week + 200, undefined, 0) }]);
+    await rollout(f, 'other', 'missing', [{ id: 'other', limits: limits(week + 300, undefined, 5, 'premium') }]);
+    const resets = quotaResets([tick(one, week), tick(two, week + 2), tick(one, fiveHours, '5h'), tick(two, fiveHours + 5000, '5h'),
+      tick(one, week + 100), tick(two, fiveHours + 100, '5h'), tick(one, week + 200), tick(one, week + 300), tick(two, week + 400, '7d', 0)], []);
+    const source = await byResponse(history(f, resets));
+    expect(source('together')?.account).toBeUndefined();
+    // The short window tells apart accounts whose weekly windows reset together.
+    expect(source('split')).toMatchObject({ account: one, accountSource: 'matched' });
+    expect(source('disagree')?.account).toBeUndefined();
+    expect(source('unused')?.account).toBeUndefined();
+    expect(source('other')?.account).toBeUndefined();
+    // A reading of an unused window says nothing about the account.
+    expect(quotaResets([tick(two, week + 400, '7d', 0)], [])).toEqual([]);
+  });
+  it('never replaces native evidence or a user choice', async () => {
+    const f = await fixture();
+    await rollout(f, 'native', 'missing', [{ id: 'native', limits: limits(week) }]);
+    await rollout(f, 'kept', 'missing', [{ id: 'kept', limits: limits(week) }]);
+    await f.ledger.record('Codex:native', two); await f.store.assign({ provider: 'Codex', conversationId: 'kept' }, null);
+    const source = await byResponse(history(f, quotaResets([tick(one, week)], [])));
+    expect(source('native')).toMatchObject({ account: two }); expect(source('native')?.accountSource).toBeUndefined();
+    expect(source('kept')?.account).toBeUndefined(); expect(source('kept')?.accountSource).toBe('manual');
+  });
+  it('labels a quota window by the agreeing creators of threads started in it, never by a resumed thread\'s creator', async () => {
+    const f = await fixture(), later = '2026-10-15T08:00:00Z', other = week + 604800;
+    await rollout(f, 'started', 'creator-one', [{ id: 'a1', limits: limits(week) }, { id: 'a2', limits: limits(week) }]);
+    // Resumed from an earlier window: its creator only labels the window its first response was served in.
+    await rollout(f, 'resumed', 'creator-two', [{ id: 'b1', limits: limits(other) }, { id: 'b2', limits: limits(week), date: later }]);
+    let source = await byResponse(history(f, []));
+    expect(source('started')).toMatchObject({ total: 220, account: one, accountSource: 'inferred' });
+    const resumed = (await history(f, []).read()).conversations!.find(row => row.id === 'resumed')!.days;
+    expect(resumed.find(row => row.day === '2026-10-14')).toMatchObject({ account: two, accountSource: 'inferred' });
+    expect(resumed.find(row => row.day === '2026-10-15')).toMatchObject({ account: one, accountSource: 'inferred' });
+    // A second creator in the window, or one that is not a known account, leaves it unknown.
+    await rollout(f, 'rival', 'creator-two', [{ id: 'c1', limits: limits(week) }]);
+    source = await byResponse(history(f, []));
+    expect(source('started')?.account).toBeUndefined(); expect(source('rival')?.account).toBeUndefined();
+    await rm(path.join(f.homes.codex, 'sessions', 'rival.jsonl')); await rollout(f, 'stranger', 'creator-unknown', [{ id: 'd1', limits: limits(week) }]);
+    source = await byResponse(history(f, []));
+    expect(source('started')?.account).toBeUndefined();
+  });
+  it('reads reset times on older token counts and keeps them in caches, including counts saved before they were read', async () => {
+    const f = await fixture(), file = path.join(f.homes.codex, 'sessions', 'legacy.jsonl'); await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, [{ type: 'session_meta', payload: { id: 'legacy' } }, { type: 'turn_context', payload: { turn_id: 'turn', model: 'model' } },
+      { timestamp: stamp, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, output_tokens: 10 } }, rate_limits: limits(week) } }].map(row => JSON.stringify(row)).join('\n'));
+    const resets = quotaResets([tick(one, week)], []);
+    expect((await history(f, resets).read()).days[0]).toMatchObject({ total: 110, account: one, accountSource: 'matched' });
+    const reload = history(f, resets);
+    expect((await reload.read()).days[0]).toMatchObject({ account: one }); expect(reload.readStats?.diskHits).toBe(1);
+    // A count kept from a deleted transcript in the previous 15-column format still counts.
+    await writeFile(path.join(f.cache, 'old.json'), JSON.stringify({ version: 4, provider: 'Codex', signature: 'gone', malformed: 0, oversized: 0, undated: 0,
+      records: [['Codex:old', 'model', Date.parse(stamp), 7, 3, 0, 0, 0, null, null, 'modern', null, 'old', null, null]] }));
+    expect(usageBreakdown((await history(f, resets).read()).days, { grouping: 'day' }).totals.total).toBe(120);
   });
 });
 describe('Saving usage account evidence in batches', () => {
