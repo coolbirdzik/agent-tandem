@@ -14,7 +14,8 @@ import { withStorageLock } from './storage-lock';
 import { captureConversations, editOverlapsCapture, type ReviewCapture, type ReviewConversation, type ConversationEdit } from './review-conversations';
 import { reviewGroup } from './review-groups';
 import { imageSnapshots, type ImageComparison } from './media-preview';
-import { reviewGitHead, reviewCommittedPaths, reviewCommittedFile, reviewUncommittedPaths, reviewGitEquivalentFiles, reviewIgnoredPaths, reviewListedPaths } from './review-git';
+import { reviewGitHead, reviewCommittedPaths, reviewCommittedFile, reviewUncommittedPaths, reviewGitEquivalentFiles, reviewIgnoredPaths, reviewListedPaths, reviewIndexEntries } from './review-git';
+import { gitRefOf, gitRefOfFile } from './git-refs';
 
 const execute = promisify(execFile);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -27,6 +28,7 @@ const sameManifest =(left: Manifest, right: Manifest) => {
   const names = Object.keys(left);
   return names.length === Object.keys(right).length && names.every(name => left[name] === right[name]);
 };
+const lostNotice = (paths: string[]) => paths.length ? `${paths.length} changed ${paths.length === 1 ? 'file is' : 'files are'} not shown for review because Git no longer has ${paths.length === 1 ? 'its' : 'their'} earlier content (${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ', …' : ''}). Their current content is the new starting point.` : undefined;
 class ReviewTargetError extends Error {
   constructor(message: string, readonly nonFile = false) { super(message); }
 }
@@ -56,7 +58,15 @@ export class ReviewStore {
   private statCache = new Map<string, Map<string, StatEntry>>();
   /** A background scan that found nothing is not written to disk; its start time is kept here for the next capture interval. */
   private idleScans = new Map<string, { external: string; at: number }>();
-  constructor(readonly directory: string, private canReadGit = () => true) {
+  /** Projects whose baseline was already checked this session for copies Git can rebuild. */
+  private gitBacked = new Set<string>();
+  /** The tracking state last reported to `onTrackingState`, per project. */
+  private reportedStates = new Map<string, string | undefined>();
+  /**
+   * `onTrackingState` hears each new workspace state tracking saves (the baseline after a capture, accept or revert),
+   * and `undefined` when tracking stops. The change tracking timeline uses it for per-message restore.
+   */
+  constructor(readonly directory: string, private canReadGit = () => true, private onTrackingState?: (project: string, snapshot: string | undefined) => Promise<void>) {
     this.history = new HistoryStore(path.join(directory, 'history'), undefined, path.dirname(directory));
   }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
@@ -115,6 +125,11 @@ export class ReviewStore {
     const temporary = `${this.filename(value.project)}.${randomUUID()}.tmp`;
     try { await writeFile(temporary, JSON.stringify(value), { flag: 'wx' }); await rename(temporary, this.filename(value.project)); }
     finally { await unlink(temporary).catch(() => undefined); }
+    const key = this.filename(value.project), reported = this.reportedStates.get(key);
+    if (!this.onTrackingState || value.active || (this.reportedStates.has(key) && reported === value.external) || (!value.external && !reported)) return;
+    this.reportedStates.set(key, value.external);
+    // The timeline is a convenience on top of review; failing to extend it must not fail the review itself.
+    await this.onTrackingState(value.project, value.external).catch(() => this.reportedStates.delete(key));
   }
   private view(value: PendingReview): ReviewState { return { revision: value.revision, files: value.files, busy: !!value.active, notice: value.notice, ...(value.external ? { externalTracking: true } : {}), ...(value.revertUndo ? { undo: { id: value.revertUndo.id, createdAt: value.revertUndo.createdAt, files: value.revertUndo.files.map(entry => entry.original.path) } } : {}) }; }
   read(project: string) { return this.serial(async () => this.view(await this.load(project, true))); }
@@ -226,7 +241,7 @@ export class ReviewStore {
    * a non-repository, an old Git or a changed ignore rule, falls back to the full capture.
    * An unchanged result reuses `previous` instead of writing another identical manifest.
    */
-  private async capture(project: string, known: string[] = [], previous?: Pick<Snapshot, 'files'> & Partial<Pick<Snapshot, 'id'>>, signal?: AbortSignal, tolerateFileErrors = false, dropIgnored = false, dirty?: string[]): Promise<Snapshot & { notice?: string; ignored: string[] }> {
+  private async capture(project: string, known: string[] = [], previous?: Pick<Snapshot, 'files'> & Partial<Snapshot>, signal?: AbortSignal, tolerateFileErrors = false, dropIgnored = false, dirty?: string[]): Promise<Snapshot & { notice?: string; ignored: string[] }> {
     signal?.throwIfAborted();
     const root = await realpath(project);
     const skipped = new Map<string, string>();
@@ -247,7 +262,9 @@ export class ReviewStore {
     };
     const skip = (name: string, error: unknown) => skipped.set(name, error instanceof Error ? error.message : String(error));
     const caseKey = (name: string) => process.platform === 'win32' ? name.toLowerCase() : name;
-    let names: string[] = [], ignored: string[] = [], incremental = false, seeds = known;
+    let names: string[] = [], ignored: string[] = [], incremental = false, seeds = known, repository = true;
+    /** Index blob IDs from the full listing, so finding Git-backed content needs no second Git run. */
+    let listedIndex: Map<string, string> | undefined;
     const touched = new Set<string>();
     // Beyond a couple of hundred paths, several Git runs cost more than one full listing.
     if (dirty?.length && dirty.length <= 200 && previous?.id) {
@@ -277,8 +294,15 @@ export class ReviewStore {
     }
     if (!incremental) try {
       // Untranslated messages keep the "not a git repository" check working under a localized Git.
-      const { stdout } = await execute('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: project, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } });
-      names = stdout.split('\0').filter(Boolean);
+      const { stdout } = await execute('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--stage', '-z'], { cwd: project, windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } });
+      // Index entries carry "<mode> <object> <stage>\t"; untracked paths are listed bare.
+      names = []; listedIndex = new Map();
+      for (const entry of stdout.split('\0')) {
+        if (!entry) continue;
+        const match = /^(\d{6}) ([a-f0-9]{40}|[a-f0-9]{64}) (\d)\t(.+)$/s.exec(entry);
+        names.push(match ? match[4]! : entry);
+        if (match?.[3] === '0' && /^100(?:644|755)$/.test(match[1]!)) listedIndex.set(match[4]!, match[2]!);
+      }
       if (dropIgnored) {
         // Known paths that a new .gitignore rule now covers (for example build
         // output captured before the rule existed) are no longer review sources.
@@ -288,7 +312,7 @@ export class ReviewStore {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error as { stderr?: string }).stderr?.includes('not a git repository')) throw error;
-      names = [];
+      names = []; repository = false;
       const scan = async (folder: string, prefix: string, rules: ReturnType<typeof ignore>) => {
         const local = ignore().add(rules);
         try { local.add((await readFile(path.join(folder, '.gitignore'), 'utf8')).split(/\r?\n/).map(line => {
@@ -323,6 +347,11 @@ export class ReviewStore {
     // Workspace size is not a chat limit. Reuse immutable blobs for unchanged
     // files and identical contents; avoid publishing thousands of duplicate blobs.
     const blobs = new Map<string, Promise<string>>();
+    // Content identical to the Git index entry is rebuilt from the repository instead of copied. Only a full listing
+    // carries index entries; a save's incremental scan copies its few changed files rather than list the whole index.
+    const found: Record<string, string> = Object.create(null);
+    let index: Promise<Map<string, string> | undefined> | undefined;
+    const indexed = async (name: string) => (await (index ??= Promise.resolve(repository && this.canReadGit() ? listedIndex : undefined)))?.get(name);
     let next = 0;
     let failed = false;
     const workers = await Promise.allSettled(Array.from({ length: Math.min(8, names.length) }, async () => {
@@ -346,6 +375,11 @@ export class ReviewStore {
               const current = await streamFile(full, { signal });
               if (current.hash === previous.files[name]) { remember(current.hash); continue; }
             }
+            const oid = await indexed(name);
+            if (oid) {
+              const checked = await gitRefOfFile(full, oid, signal);
+              if (checked.ref) { found[checked.hash] = checked.ref; remember(checked.hash); continue; }
+            }
             remember(await this.history.putFileBlob(full, signal));
             continue;
           }
@@ -354,6 +388,8 @@ export class ReviewStore {
           const id = hash(content);
           if (previous?.files[name] === id) remember(id);
           else {
+            const oid = await indexed(name), ref = oid ? gitRefOf(content, oid) : undefined;
+            if (ref) { found[id] = ref; remember(id); continue; }
             let blob = blobs.get(id);
             if (!blob) { blob = this.history.putBlob(content); blobs.set(id, blob); }
             remember(await blob);
@@ -374,13 +410,10 @@ export class ReviewStore {
     signal?.throwIfAborted();
     for (const name of touched) if (!Object.hasOwn(files, name)) cache.delete(name);
     this.statCache.set(root, cache);
-    const snapshot: Snapshot = { id: randomUUID(), files };
     // Nothing changed: the stored manifest already describes these bytes, so write nothing.
-    if (previous?.id && sameManifest(previous.files, files)) snapshot.id = previous.id;
-    else {
-      const directory = path.join(this.history.directory, 'snapshots'); await mkdir(directory, { recursive: true });
-      await writeFile(path.join(directory, `${snapshot.id}.json`), JSON.stringify(snapshot), { flag: 'wx' });
-    }
+    const repo = index && await index ? root : undefined;
+    const snapshot: Snapshot = previous?.id && sameManifest(previous.files, files) ? { ...previous, id: previous.id, files: previous.files }
+      : await this.history.saveSnapshot(files, previous, found, repo ?? previous?.repo);
     const issues = [...skipped].sort(([a], [b]) => a.localeCompare(b));
     const notice = issues.length ? `Skipped ${issues.length} review ${issues.length === 1 ? 'path' : 'paths'}: ${issues.slice(0, 5).map(([name, reason]) => `${name} (${reason})`).join('; ')}${issues.length > 5 ? '; …' : ''}. Other files are still captured; skipped paths are checked again on the next capture.` : undefined;
     return { ...snapshot, notice, ignored };
@@ -418,17 +451,22 @@ export class ReviewStore {
     const saved = await this.history.snapshot(value.active.before), started = Date.now();
     const after = await this.capture(project, [...Object.keys(saved.files), ...value.files.map(file => file.path)], saved, undefined, !!value.external, true);
     const to = Date.now(), [before, ignored] = this.dropIgnored(value, saved, after.ignored);
-    await this.mergeChanges(value, before, after, { from: value.active.from ?? to, to, conversations: value.active.conversation ? [value.active.conversation] : undefined });
+    const lost: string[] = [];
+    await this.mergeChanges(value, before, after, { from: value.active.from ?? to, to, conversations: value.active.conversation ? [value.active.conversation] : undefined }, lost);
     // Writes after this capture read a file belong to the next capture interval.
     if (value.external) { value.external = after.id; value.externalCapturedAt = started; }
     value.files.sort((a, b) => a.path.localeCompare(b.path)); value.active = undefined; value.revision = randomUUID();
-    value.notice = [recovered ? 'Recovered changes from an interrupted agent turn.' : undefined, ignored, after.notice].filter(Boolean).join(' ') || undefined;
+    value.notice = [recovered ? 'Recovered changes from an interrupted agent turn.' : undefined, ignored, after.notice, lostNotice(lost)].filter(Boolean).join(' ') || undefined;
     await this.acceptCommitted(value);
     await this.save(value); return this.view(value);
   }
-  private async mergeChanges(value: PendingReview, before: Snapshot, after: Snapshot, capture?: Omit<ReviewCapture, 'before' | 'after'>) {
+  /** `lost` collects paths left out because Git no longer has the content they would be compared with. */
+  private async mergeChanges(value: PendingReview, before: Snapshot, after: Snapshot, capture?: Omit<ReviewCapture, 'before' | 'after'>, lost: string[] = []) {
     let changed = false;
     const names = new Set([...Object.keys(before.files), ...Object.keys(after.files)]);
+    // Pending review must not depend on Git keeping the content it was compared with. One Git read covers every path.
+    const changedNames = [...names].filter(name => before.files[name] !== after.files[name]);
+    const gone = await this.history.materialize(changedNames.flatMap(name => [before.files[name], after.files[name], value.files.find(file => file.path === name)?.before]));
     for (const name of names) {
       const prior = before.files[name], next = after.files[name];
       if (prior === next) continue;
@@ -439,6 +477,8 @@ export class ReviewStore {
       const original = old ? old.before : change.before;
       value.files = value.files.filter(file => file.path !== change.path);
       if (original === change.after) continue;
+      // The caller moves the baseline to the current bytes, so this edit is simply not offered for review.
+      if ([original, prior, next].some(id => id && gone.has(id))) { lost.push(name); continue; }
       const file: ReviewFile = { ...change, before: original, kind: !original ? 'added' : !change.after ? 'deleted' : 'modified' };
       const decidedAt = value.externalDecidedAt && Object.hasOwn(value.externalDecidedAt, name) ? value.externalDecidedAt[name]! : 0;
       const from = capture && !capture.conversations?.length ? Math.min(capture.to, Math.max(capture.from, decidedAt)) : capture?.from;
@@ -463,13 +503,12 @@ export class ReviewStore {
   private async saveExternalBaseline(value: PendingReview, changes: Record<string, string | undefined>) {
     if (!value.external) return;
     const saved = await this.history.snapshot(value.external);
-    const snapshot: Snapshot = { id: randomUUID(), files: { ...saved.files } };
+    const files: Manifest = { ...saved.files };
     for (const [name, id] of Object.entries(changes)) {
-      if (id) snapshot.files[name] = id; else delete snapshot.files[name];
+      if (id) files[name] = id; else delete files[name];
       value.externalDecidedAt ??= Object.create(null); value.externalDecidedAt![name] = Date.now();
     }
-    await writeFile(path.join(this.history.directory, 'snapshots', `${snapshot.id}.json`), JSON.stringify(snapshot), { flag: 'wx' });
-    value.external = snapshot.id;
+    value.external = (await this.history.saveSnapshot(files, saved)).id;
   }
   initializeExternalTracking(project: string, enabledByDefault = true) { return this.serial(async () => {
     const value = await this.load(project, true);
@@ -507,22 +546,50 @@ export class ReviewStore {
   }); }
   /** Returns true when the scan found nothing new: no review, snapshot or notice changed, so there is nothing to write. */
   private async scanExternalValue(value: PendingReview, dirty?: string[]): Promise<boolean> {
+    const migrated = await this.gitBackBaseline(value);
     const saved = await this.history.snapshot(value.external!), started = Date.now();
     const after = await this.capture(value.project, [...Object.keys(saved.files), ...value.files.map(file => file.path)], saved, undefined, true, true, dirty);
     const to = Date.now(), [before, ignored] = this.dropIgnored(value, saved, after.ignored);
     if (after.id === saved.id && !ignored && !after.notice && (value.notice === undefined || value.notice === externalNotice)) {
       this.idleScans.set(this.filename(value.project), { external: saved.id, at: Math.max(started, value.externalCapturedAt ?? 0) });
-      return true;
+      return !migrated;
     }
-    if (await this.mergeChanges(value, before, after, { from: value.externalCapturedAt ?? to, to })) value.revision = randomUUID();
+    const lost: string[] = [];
+    if (await this.mergeChanges(value, before, after, { from: value.externalCapturedAt ?? to, to }, lost)) value.revision = randomUUID();
     value.external = after.id;
     // A write landing while this capture runs can be read by the next one only.
     // Its native tool timestamp is never earlier than this capture's start.
     value.externalCapturedAt = started;
     value.externalDecidedAt = undefined;
     value.notice = externalNotice;
-    for (const extra of [ignored, after.notice]) if (extra) value.notice += ` ${extra}`;
+    for (const extra of [ignored, after.notice, lostNotice(lost)]) if (extra) value.notice += ` ${extra}`;
     return false;
+  }
+  /**
+   * Baselines saved before Git-backed snapshots copied every file. Once per project and session, replace the copies Git
+   * can rebuild exactly with references; automatic cleanup then removes the copies nothing else uses. Manifests written
+   * since then carry a repository or a base, so they are never converted again. Returns true when it changed.
+   */
+  private async gitBackBaseline(value: PendingReview): Promise<boolean> {
+    const id = value.external, key = this.filename(value.project);
+    if (!id || this.gitBacked.has(key) || !this.canReadGit()) return false;
+    this.gitBacked.add(key);
+    const saved = await this.history.snapshot(id);
+    // A base or a repository marks a manifest written with Git-backed content in mind.
+    if (saved.base || saved.repo) return false;
+    const index = await reviewIndexEntries(value.project);
+    if (!index?.size) return false;
+    const found: Record<string, string> = Object.create(null);
+    for (const [name, blob] of Object.entries(saved.files)) {
+      const oid = index.get(name);
+      if (!oid || Object.hasOwn(found, blob)) continue;
+      // A copy that cannot be read stays as it is; cleanup reports missing data separately.
+      const ref = await this.history.gitRefForBlob(blob, oid).catch(() => undefined);
+      if (ref) found[blob] = ref;
+    }
+    const next = await this.history.saveSnapshot(saved.files, undefined, found, await realpath(value.project));
+    value.external = next.id;
+    return true;
   }
   bindConversation(project: string, previous: string, conversation: ReviewConversation) { return this.serial(async () => {
     const value = await this.load(project);
@@ -548,11 +615,13 @@ export class ReviewStore {
   prepareCheckpoint(project: string, target: string) { return this.serial(async (): Promise<CheckpointPlan> => {
     const value = await this.load(project, true);
     if (value.active) throw new Error('Wait for the agent and change capture to finish.');
-    if (value.external) throw new Error('Stop external change tracking before restoring a checkpoint.');
+    // With tracking on, fold saved edits into review first so the preview compares with the real current state.
+    if (value.external && !await this.scanExternalValue(value)) await this.save(value);
     const saved = await this.history.snapshot(target);
     const current = await this.capture(project, [...Object.keys(saved.files), ...value.files.map(file => file.path)], saved);
-    const files: ReviewFile[] = [];
-    for (const name of [...new Set([...Object.keys(current.files), ...Object.keys(saved.files)])].sort()) {
+    const files: ReviewFile[] = [], names = [...new Set([...Object.keys(current.files), ...Object.keys(saved.files)])].sort();
+    await this.history.materialize(names.flatMap(name => current.files[name] === saved.files[name] ? [] : [current.files[name], saved.files[name]]));
+    for (const name of names) {
       const before = current.files[name], after = saved.files[name];
       if (before === after) continue;
       const blobs = await Promise.all([before, after].filter((id): id is string => !!id).map(id => this.history.inspectBlob(id)));
@@ -563,8 +632,8 @@ export class ReviewStore {
   restoreCheckpoint(project: string, plan: CheckpointPlan, backup?: (snapshot: string) => Promise<void>) { return this.serial(async () => {
     const value = await this.load(project, true);
     if (value.active) throw new Error('Wait for the agent and change capture to finish.');
-    if (value.external) throw new Error('Stop external change tracking before restoring a checkpoint.');
-    if (value.revision !== plan.revision) throw new Error('Changes were reviewed after this preview. Preview the checkpoint again.');
+    if (value.external && !await this.scanExternalValue(value)) await this.save(value);
+    if (value.revision !== plan.revision) throw new Error('Files or review changed after this preview. Preview the checkpoint again.');
     // The preview's own snapshot is unreferenced until restore starts, so automatic cleanup may have removed an old one.
     const [before, target] = await Promise.all([this.history.snapshot(plan.current), this.history.snapshot(plan.target)])
       .catch(error => { throw (error as NodeJS.ErrnoException).code === 'ENOENT' ? new Error('This checkpoint preview expired. Preview the checkpoint again.') : error; });
@@ -573,6 +642,7 @@ export class ReviewStore {
     for (const name of names) if (before.files[name] !== fresh.files[name]) throw new Error(`Cannot restore ${name}: it changed after the preview. Preview the checkpoint again; your edits were kept.`);
     // Derive write targets from immutable manifests, never from caller-supplied paths.
     const changes = [...new Set([...Object.keys(before.files), ...Object.keys(target.files)])].sort().filter(name => before.files[name] !== target.files[name]);
+    await this.history.materialize(changes.map(name => target.files[name]));
     for (const name of changes) {
       await this.safePath(project, name);
       if (target.files[name]) await this.history.inspectBlob(target.files[name]!);

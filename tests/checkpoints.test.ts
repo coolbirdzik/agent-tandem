@@ -121,7 +121,7 @@ describe('Per-message checkpoints', () => {
     await expect(f.reviews.prepareCheckpoint(f.project, target)).rejects.toThrow('Wait for the agent');
     await f.set('source.ts', 'agent'); const review = await f.reviews.finish(f.project, 'r1');
     const plan = await f.reviews.prepareCheckpoint(f.project, target); await f.reviews.accept({ project: f.project, revision: review.revision });
-    await expect(f.reviews.restoreCheckpoint(f.project, plan)).rejects.toThrow('reviewed after this preview');
+    await expect(f.reviews.restoreCheckpoint(f.project, plan)).rejects.toThrow('changed after this preview');
     const fresh = await f.reviews.prepareCheckpoint(f.project, target); await f.reviews.restoreCheckpoint(f.project, fresh);
     const matching = await f.reviews.prepareCheckpoint(f.project, target), backup = vi.fn();
     expect(matching.files).toEqual([]); await f.reviews.restoreCheckpoint(f.project, matching, backup); expect(backup).not.toHaveBeenCalled();

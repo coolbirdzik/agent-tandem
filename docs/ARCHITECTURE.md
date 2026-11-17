@@ -128,6 +128,19 @@ The MVP rejects unsupported symlinks, hardlinks/reparse points, submodules and u
 
 Snapshots store bytes by content hash and manifests mapping path → version. Scope is explicit. Excluded/over-quota files mark checkpoints incomplete; incomplete manifests cannot be offered as full restores.
 
+Review manifests (`reviews/history/snapshots`) save storage in two ways. Both keep every manifest a complete path → SHA-256 map once it is read.
+
+- **Git-backed content.** A capture compares each file it would copy with its Git index entry. When the bytes are the object exactly, or the object with every LF written as CRLF (with no lone LF), the manifest records `git.refs[sha256] = "<oid>"` or `"<oid>:crlf"` and no blob is written. Rebuilding reads the objects with one `git cat-file --batch` per repository in `git.repo`, re-applies CRLF itself and verifies the SHA-256, so it does not depend on filters or attributes. Content becomes a real blob as soon as Review refers to it (pending files, captures, revert Undo). Only snapshot manifests, such as tracking baselines, turn-before captures and checkpoints, depend on the repository's objects.
+- **Difference manifests.** A capture derived from a stored snapshot writes only `files` (changed or added) and `removed` relative to a complete `base`. Bases are never differences themselves. The difference is written as a new complete manifest when it exceeds a quarter of the base (minimum 256 entries).
+
+**Change tracking timeline.**
+- Every new tracking baseline (after a capture, accept, revert or restore) is reported by `ReviewStore` to `CheckpointStore.track`. It is stored as a checkpoint record keyed `tracking:timeline` and timed when its capture finished; stopping tracking closes the last point.
+- A user message without its own AgentTandem checkpoint maps to the latest point at or before its native timestamp. Claude timestamps come from the raw `.jsonl`, because the history SDK omits them.
+- After each capture, the extension prunes points that no prompt in the project's native conversations maps to. Points whose successor is under 10 minutes old stay, since a prompt may not be indexed yet.
+- Restore runs with tracking on: prepare and restore first fold saved edits into review.
+
+Storage cleanup keeps a difference manifest's base. When the base is otherwise unused, cleanup keeps only the base entries that some kept difference still shows. Git-backed content has no blob to protect. A baseline written before this format is converted once on the next external scan.
+
 Capture final snapshots after agents and all possible file-writing processes stop. Watchers support UI updates; final file rescans confirm state. Background writers keep the UI unstable and block apply/revert.
 
 Diff initial/final checkpoints, including new untracked files. MVP renames may appear as delete + add. Binary files use hash/size and suitable previews instead of text diffs. Restore preserves bytes, CRLF, BOM and encoding.

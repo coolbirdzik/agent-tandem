@@ -26,7 +26,7 @@ import { belongsToProject } from './providers/conversations';
 import { ReviewStore, type ReviewRequest, type ReviewHunkRequest, type CheckpointPlan } from './core/review';
 import { reviewGroup } from './core/review-groups';
 import { reviewIgnoredPaths } from './core/review-git';
-import { CheckpointStore } from './core/checkpoints';
+import { CheckpointStore, TIMELINE_SETTLE_MS } from './core/checkpoints';
 import { ModelStore } from './core/model-store';
 import { EffortStore } from './core/effort-store';
 import { FastModeStore } from './core/fast-mode-store';
@@ -114,8 +114,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let quotaHistory: QuotaObservation[] = [], quotaHistoryError: string | undefined;
   try { quotaHistory = await quotaHistoryStore.read(); }
   catch { quotaHistoryError = 'Could not load quota history. Refresh to retry.'; }
-  const reviews = new ReviewStore(path.join(context.globalStorageUri.fsPath, 'reviews'), () => vscode.workspace.isTrusted);
   const checkpoints = new CheckpointStore(path.join(context.globalStorageUri.fsPath, 'checkpoints'));
+  // Every workspace state tracking saves joins the timeline that lets messages sent outside AgentTandem restore code.
+  const reviews = new ReviewStore(path.join(context.globalStorageUri.fsPath, 'reviews'), () => vscode.workspace.isTrusted, (project, snapshot) => checkpoints.track(project, snapshot));
   let checkpointPlan: { project: string; key?: string; id: string; token: string; plan: CheckpointPlan } | undefined;
   const accessStore = new AccessModeStore(path.join(context.globalStorageUri.fsPath, 'access'));
   const modelStore = new ModelStore(path.join(context.globalStorageUri.fsPath, 'models'));
@@ -673,6 +674,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         catch (error) { externalPaths = undefined; lastFullExternalScan = 0; throw error; }
         if (!incremental) lastFullExternalScan = Date.now();
         const result = await attributeExternalReview(project, captured);
+        void pruneTimeline(project);
         // A turn that started meanwhile publishes the newer review state itself.
         if (!disposed && generation === version && state.project === project && !chatAbort && !activeReviewProjects.has(project) && JSON.stringify(result) !== JSON.stringify(state.review)) {
           if (result.revision !== state.review?.revision) state.reviewPreview = undefined;
@@ -684,6 +686,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     })();
     externalJob = job;
     try { await job; } finally { if (externalJob === job) externalJob = undefined; if (externalDirty) scheduleExternalCapture(); }
+  }
+  /** Per project: tracking states whose successor came before this time were already kept or dropped. A reload reconsiders them once. */
+  const timelineSettled = new Map<string, number>();
+  let timelineJob: Promise<void> | undefined;
+  /**
+   * Keep only the tracking states a prompt can restore to: the latest one saved at or before each prompt in this
+   * project's native conversations. The rest become unused data for automatic cleanup, so the timeline does not pin
+   * every saved version. Any unreadable conversation skips pruning.
+   */
+  function pruneTimeline(project: string): Promise<void> {
+    timelineJob ??= (async () => {
+      const points = await checkpoints.timeline(project), since = timelineSettled.get(project) ?? 0, now = Date.now();
+      const open = points.findIndex((point, index) => index + 1 < points.length && points[index + 1]!.createdAt > since);
+      if (open < 0) return;
+      const from = points[open]!.createdAt;
+      const listed = state.project === project && state.conversations ? state.conversations : (await source.list(project)).conversations;
+      const prompts: number[] = [];
+      for (const conversation of listed.filter(item => item.updatedAt >= from)) prompts.push(...await source.promptTimes(conversation, project));
+      await checkpoints.prune(project, prompts, now, since);
+      timelineSettled.set(project, now - TIMELINE_SETTLE_MS);
+    })().catch(error => { output.appendLine(`Change tracking history was not pruned: ${error instanceof Error ? error.message : String(error)}`); })
+      .finally(() => { timelineJob = undefined; });
+    return timelineJob;
   }
   async function attributeExternalReview(project: string, review: NonNullable<ViewState['review']>, index?: ConversationIndex) {
     const unresolved = review.files.flatMap(file => file.captures ?? []).filter(capture => !capture.conversations?.length && capture.from > 0);
@@ -712,6 +737,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     }
     const undo = await checkpoints.undo(project);
     if (!disposed && state.project === project) { state.review = review; state.checkpointUndo = undo; configureExternalWatcher(project, !!review.externalTracking); update(); }
+    void pruneTimeline(project);
   }
   await refreshReview(state.project, true).catch(report);
   async function openConversation(key: string): Promise<ConversationContent | undefined> {

@@ -56,6 +56,20 @@ export async function reviewListedPaths(project: string, names: string[]): Promi
   return [...listed];
 }
 
+/** Index blob IDs of regular files at or below `project`, by path relative to it. Undefined outside a repository. */
+export async function reviewIndexEntries(project: string): Promise<Map<string, string> | undefined> {
+  try {
+    const { stdout } = await execute('git', ['ls-files', '--stage', '-z'], { ...options(project), maxBuffer: 256 * 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } });
+    const entries = new Map<string, string>();
+    for (const line of stdout.split('\0')) {
+      // Conflicted stages, links and submodules have no single checkout form.
+      const match = /^100(?:644|755) ([a-f0-9]{40}|[a-f0-9]{64}) 0\t(.+)$/s.exec(line);
+      if (match) entries.set(match[2]!, match[1]!);
+    }
+    return entries;
+  } catch { return undefined; }
+}
+
 /** Untracked paths Git now ignores. Outside a repository nothing is reported. */
 export function reviewIgnoredPaths(project: string, names: string[]): Promise<Set<string>> {
   if (!names.length) return Promise.resolve(new Set());

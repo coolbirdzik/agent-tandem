@@ -154,16 +154,19 @@ describe('External change tracking', () => {
     const next = await f.store.scanExternal(f.project);
     expect((await f.store.preview({ project: f.project, revision: next.revision, file: 'source.ts' })).before).toBe('native chat edit\n');
   });
-  it('blocks restoring a checkpoint prepared before tracking began', async () => {
+  it('restores a checkpoint while tracking stays on, rejecting a preview that saved edits made stale', async () => {
     const f = await fixture();
     await f.store.begin(f.project, 'before');
     const target = await f.store.checkpointBefore(f.project, 'before'); await f.store.finish(f.project, 'before');
     await f.set('source.ts', 'current user edits\n');
-    const plan = await f.store.prepareCheckpoint(f.project, target);
     await f.store.setExternalTracking(f.project, true);
-    await expect(f.store.prepareCheckpoint(f.project, target)).rejects.toThrow('Stop external');
-    await expect(f.store.restoreCheckpoint(f.project, plan)).rejects.toThrow('Stop external');
-    expect(await f.get('source.ts')).toBe('current user edits\n');
+    const stale = await f.store.prepareCheckpoint(f.project, target);
+    await f.set('source.ts', 'newer edits\n');
+    await expect(f.store.restoreCheckpoint(f.project, stale)).rejects.toThrow('after this preview');
+    expect(await f.get('source.ts')).toBe('newer edits\n');
+    const restored = await f.store.restoreCheckpoint(f.project, await f.store.prepareCheckpoint(f.project, target));
+    expect(await f.get('source.ts')).toBe('existing user edits\n');
+    expect(restored.externalTracking).toBe(true);
   });
   it('starts from current user edits and captures additions, deletions and edits without an agent turn', async () => {
     const f = await fixture(); await f.set('deleted.ts', 'keep this\n');

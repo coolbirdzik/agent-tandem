@@ -712,7 +712,7 @@ function render(state: ViewState) {
       const heading = create('div', undefined, 'review-heading');
       heading.append(icon('history'), create('h3', preview.undo ? 'Undo last restore' : 'Restore checkpoint'));
       pane.append(heading, create('p', `${new Date(preview.createdAt).toLocaleString()} · ${preview.files.length} files will change`, 'meta'));
-      pane.append(create('p', preview.files.length ? 'Restore code to this saved point, including later edits to these files. Your chat history stays available.' : 'Your code already matches this checkpoint.', 'checkpoint-description'));
+      pane.append(create('p', preview.files.length ? 'Restore code to this saved point, including later edits to these files from any chat or editor. Your chat history stays available.' : 'Your code already matches this checkpoint.', 'checkpoint-description'));
       const files = create('div', undefined, 'checkpoint-files'); files.setAttribute('aria-label', 'Files affected by restore');
       let displayed = 0;
       const more = button('Show more files', () => appendFiles());
@@ -892,7 +892,7 @@ function render(state: ViewState) {
           undo.classList.add('checkpoint-undo'); undo.title = 'Preview code from before the last restore'; undo.dataset.focusKey = 'undo-checkpoint'; heading.append(undo);
         }
         if (missingCheckpoint) {
-          const hint = create('p', 'Messages without a saved checkpoint cannot restore code. New messages sent here create a checkpoint.', 'checkpoint-hint');
+          const hint = create('p', 'Messages without a saved checkpoint cannot restore code. Messages sent here, and messages sent from any chat while change tracking is on, have one; earlier messages do not.', 'checkpoint-hint');
           heading.append(hint);
         }
       }
@@ -922,7 +922,7 @@ function render(state: ViewState) {
             const preparing = state.chat?.requestId === message.id && state.chat.phase === 'preparing';
             const restore = button('Restore code', () => { if (checkpoint) send('previewCheckpoint', { project: state.project!, id: checkpoint.id }); }, reviewDisabled || !checkpoint);
             restore.className = 'message-restore'; restore.prepend(icon('history'));
-            restore.title = checkpoint ? `Restore code to before this message · ${new Date(checkpoint.createdAt).toLocaleString()}` : preparing ? 'Preparing checkpoint before the agent runs…' : 'No saved checkpoint for this message. Checkpoints are created for new messages sent from AgentTandem.';
+            restore.title = checkpoint ? `Restore code to before this message · ${new Date(checkpoint.createdAt).toLocaleString()}` : preparing ? 'Preparing checkpoint before the agent runs…' : 'No saved checkpoint for this message. Checkpoints exist for messages sent from AgentTandem and for messages sent from any chat while change tracking is on.';
             restore.setAttribute('aria-label', checkpoint ? 'Preview checkpoint before this message' : preparing ? 'Restore unavailable: preparing checkpoint' : 'Restore unavailable: no saved checkpoint for this message');
             restore.dataset.focusKey = `checkpoint:${message.id}`; restore.dataset.checkpointAvailable = String(!!checkpoint);
             actions.append(restore);

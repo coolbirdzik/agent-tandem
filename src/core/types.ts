@@ -1,5 +1,10 @@
 export type Manifest = Record<string, string>;
-export interface Snapshot { id: string; files: Manifest }
+/**
+ * `files` is always the complete path → SHA-256 manifest. Stored review manifests may instead hold only the difference
+ * from a complete `base` manifest, and may name content Git can rebuild (`refs`: SHA-256 → Git ref spec, read in `repo`)
+ * instead of keeping a blob copy.
+ */
+export interface Snapshot { id: string; files: Manifest; base?: string; refs?: Record<string, string>; repo?: string }
 export interface FileChange { path: string; before?: string; after?: string; kind: 'added' | 'modified' | 'deleted'; binary: boolean }
 export interface Step {
   id: string;

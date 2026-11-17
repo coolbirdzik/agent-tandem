@@ -232,10 +232,9 @@ describe('Snapshot storage management', () => {
     await f.age();
     const summary = await f.manager.inspect(), tracking = summary.histories!.find(group => group.kind === 'tracking')!;
     expect(tracking).toMatchObject({ project: f.project, label: 'Change tracking baseline', count: 0 }); expect(tracking.reclaimable).toBeGreaterThan(0);
-    // The first baseline is now unreferenced; normal cleanup still keeps the current one.
-    expect((await f.manager.preview()).files.length).toBeGreaterThan(0);
-    const kept = await f.manager.previewKindCleanup(['unused']);
-    expect(kept.histories).toEqual([]);
+    // A scan stores only its difference from the first baseline, which stays as its base; nothing is left over.
+    expect((await f.manager.preview()).files).toEqual([]);
+    await expect(f.manager.previewKindCleanup(['unused'])).rejects.toThrow('Nothing to clean up');
     const plan = await f.manager.previewHistoryDeletion([tracking.id]);
     expect(plan.histories.map(group => group.kind)).toEqual(['tracking']); expect(plan.records).toEqual([expect.objectContaining({ ids: [] })]);
     expect(plan.bytes).toBeGreaterThanOrEqual(tracking.reclaimable);

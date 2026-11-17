@@ -3,6 +3,7 @@ import { lstat, readdir, readFile, unlink, writeFile, rename } from 'node:fs/pro
 import path from 'node:path';
 import { assertPath } from './history';
 import { withStorageLock } from './storage-lock';
+import { gitRefPattern } from './git-refs';
 
 const uuid = /^[a-f0-9-]{36}$/i, hash = /^[a-f0-9]{64}$/;
 // Blobs and snapshot manifests are written under one lock and referenced under a later one (another
@@ -47,6 +48,30 @@ const reviewFile = /^reviews\/[a-f0-9]{64}\.json$/, checkpointFile = /^checkpoin
 /** Review state with change tracking stopped. Pending changes and revert Undo stay; the preference keeps auto-tracking from recapturing the baseline. */
 const untracked = (value: Record<string, unknown>) => ({ ...value, external: undefined, externalCapturedAt: undefined, externalDecidedAt: undefined, externalPreference: false, notice: 'Change tracking stopped by Storage cleanup to free space. Turn it on again to capture a new baseline.' });
 const discardedReview = (value: Record<string, unknown>) => ({ ...untracked(value), revision: randomUUID(), files: [], revertUndo: undefined, notice: 'Saved review comparisons and Undo were cleared by Storage cleanup. Workspace files were kept. Change tracking is off.' });
+/** A stored snapshot manifest: complete, or the difference (`files`, `removed`) from a complete `base`. Content in `refs` is rebuilt from Git and has no blob. */
+interface ManifestInfo { base?: string; files: Record<string, string>; removed: Set<string>; refs: Set<string> }
+function manifestInfo(value: any, id: string, relative: string): ManifestInfo {
+  if (value.id !== id || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) throw new Error(`Invalid snapshot: ${relative}`);
+  if (value.base !== undefined && (typeof value.base !== 'string' || !uuid.test(value.base) || value.base === id)) throw new Error(`Invalid snapshot: ${relative}`);
+  if (value.removed !== undefined) {
+    if (!value.base || !Array.isArray(value.removed)) throw new Error(`Invalid snapshot: ${relative}`);
+    for (const name of value.removed) { if (typeof name !== 'string') throw new Error(`Invalid snapshot: ${relative}`); assertPath(name); }
+  }
+  const refs = new Set<string>();
+  if (value.git !== undefined) {
+    if (!value.git || typeof value.git.repo !== 'string' || !value.git.refs || typeof value.git.refs !== 'object' || Array.isArray(value.git.refs)) throw new Error(`Invalid snapshot Git reference: ${relative}`);
+    for (const [blob, spec] of Object.entries(value.git.refs)) { if (!hash.test(blob) || typeof spec !== 'string' || !gitRefPattern.test(spec)) throw new Error(`Invalid snapshot Git reference: ${relative}`); refs.add(blob); }
+  }
+  for (const [name, blob] of Object.entries(value.files)) { assertPath(name); if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${relative}`); }
+  return { base: value.base, files: value.files, removed: new Set(value.removed ?? []), refs };
+}
+/** Blobs a manifest needs on disk. A difference manifest needs only the base entries it does not replace. */
+function neededBlobs(info: ManifestInfo, base?: ManifestInfo): Set<string> {
+  const blobs = new Set<string>(), rebuilt = (blob: string) => info.refs.has(blob) || !!base?.refs.has(blob);
+  for (const blob of Object.values(info.files)) if (!rebuilt(blob)) blobs.add(blob);
+  if (base) for (const [name, blob] of Object.entries(base.files)) if (!Object.hasOwn(info.files, name) && !info.removed.has(name) && !rebuilt(blob)) blobs.add(blob);
+  return blobs;
+}
 const add = (set: Set<string>, id: unknown, pattern: RegExp) => {
   if (id === undefined) return;
   if (typeof id !== 'string' || !pattern.test(id)) throw new Error('Invalid storage reference. Cleanup was blocked.');
@@ -135,20 +160,36 @@ export class StorageManager {
         }
       } else if (/^(reviews|checkpoints)\/[^/]+\.json$/.test(file.relative)) throw new Error(`Unrecognized reference metadata: ${file.relative}`);
     }
-    const removable: StoredFile[] = [], manifests = new Set<string>();
+    const removable: StoredFile[] = [], manifests = new Map<string, { file: StoredFile; scope: 'review' | 'demo'; info: ManifestInfo }>();
     for (const file of files) {
       const match = /^(reviews\/history\/)?snapshots\/([^/]+)\.json$/.exec(file.relative);
       if (!match) continue;
       const scope = match[1] ? 'review' : 'demo', id = match[2]!;
       if (!uuid.test(id)) throw new Error(`Invalid snapshot filename: ${file.relative}`);
-      const value = await this.json(file);
-      if (value.id !== id || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) throw new Error(`Invalid snapshot: ${file.relative}`);
-      manifests.add(`${scope}:${id}`);
-      const unused = !snapshots[scope].has(id) && (released.has(file.relative) || (!selectedOnly && now - file.modified >= minAge));
-      for (const [name, blob] of Object.entries(value.files)) { assertPath(name); if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${file.relative}`); if (!unused) blobs[scope].add(blob); }
-      if (unused) removable.push(file);
+      manifests.set(`${scope}:${id}`, { file, scope, info: manifestInfo(await this.json(file), id, file.relative) });
     }
     for (const scope of ['review', 'demo'] as const) for (const id of snapshots[scope]) if (!manifests.has(`${scope}:${id}`)) throw new Error('A referenced snapshot is missing. Repair storage before cleanup.');
+    // Referenced and recent manifests need every entry. Others stay unless they are candidates for removal.
+    const needed = new Set<string>(), kept = new Set<string>(), bases = new Set<string>();
+    for (const [key, { file, scope }] of manifests) {
+      const recent = now - file.modified < minAge;
+      if (snapshots[scope].has(key.slice(scope.length + 1)) || (recent && !released.has(file.relative))) needed.add(key);
+      if (needed.has(key) || !(released.has(file.relative) || (!selectedOnly && !recent))) kept.add(key);
+    }
+    // A difference manifest is only readable with its complete base. A base that is otherwise unused keeps just the
+    // entries its differences still show, so content every later capture replaced can go.
+    for (const key of [...kept]) {
+      const { scope, info } = manifests.get(key)!;
+      if (!info.base) continue;
+      const base = manifests.get(`${scope}:${info.base}`);
+      if (!base || base.info.base) throw new Error('A referenced snapshot is missing. Repair storage before cleanup.');
+      kept.add(`${scope}:${info.base}`); bases.add(`${scope}:${info.base}`);
+    }
+    for (const [key, { file, scope, info }] of manifests) {
+      if (!kept.has(key)) { removable.push(file); continue; }
+      if (!info.base && bases.has(key) && !needed.has(key)) continue;
+      for (const blob of neededBlobs(info, info.base ? manifests.get(`${scope}:${info.base}`)!.info : undefined)) blobs[scope].add(blob);
+    }
     const blobFiles = new Set(files.map(file => file.relative));
     for (const scope of ['review', 'demo'] as const) for (const id of blobs[scope]) if (!blobFiles.has(`${scope === 'review' ? 'reviews/history/' : ''}blobs/${id}`)) throw new Error('A protected snapshot blob is missing. Repair storage before cleanup.');
     for (const file of files) {
@@ -156,6 +197,32 @@ export class StorageManager {
       if (match && (released.has(file.relative) || (!selectedOnly && now - file.modified >= minAge)) && !blobs[match[1] ? 'review' : 'demo'].has(match[2]!)) removable.push(file);
     }
     return removable;
+  }
+  /** Every stored file a Review snapshot needs: its manifest, a difference manifest's base, and blobs Git cannot rebuild. */
+  private manifestPaths(byPath: Map<string, StoredFile>) {
+    const infos = new Map<string, Promise<ManifestInfo>>(), paths = new Map<string, Promise<string[]>>();
+    const relative = (id: string) => `reviews/history/snapshots/${id}.json`;
+    const info = (id: string) => {
+      let entry = infos.get(id);
+      if (!entry) {
+        const file = byPath.get(relative(id));
+        entry = file ? this.json(file).then(value => manifestInfo(value, id, relative(id))) : Promise.reject(new Error('A referenced snapshot is missing. Repair storage before cleanup.'));
+        infos.set(id, entry);
+      }
+      return entry;
+    };
+    return (id: string) => {
+      let entry = paths.get(id);
+      if (!entry) {
+        entry = (async () => {
+          const own = await info(id), base = own.base ? await info(own.base) : undefined;
+          if (base?.base) throw new Error(`Invalid snapshot: ${relative(id)}`);
+          return [relative(id), ...(own.base ? [relative(own.base)] : []), ...[...neededBlobs(own, base)].map(blob => `reviews/history/blobs/${blob}`)];
+        })();
+        paths.set(id, entry);
+      }
+      return entry;
+    };
   }
   private async historyInventory(files: StoredFile[]) {
     const byPath = new Map(files.map(file => [file.relative, file])), projects = new Map<string, string>();
@@ -166,23 +233,7 @@ export class StorageManager {
       projects.set(path.basename(file.relative, '.json'), value.project);
       if (value.external) tracked.push({ file, project: value.project, baseline: value.external, at: value.externalCapturedAt });
     }
-    const manifests = new Map<string, string[]>();
-    const manifestBlobs = async (id: string) => {
-      const manifestPath = `reviews/history/snapshots/${id}.json`;
-      let blobs = manifests.get(manifestPath);
-      if (!blobs) {
-        const file = byPath.get(manifestPath);
-        if (!file) throw new Error('A referenced snapshot is missing. Repair storage before cleanup.');
-        const snapshot = await this.json(file);
-        if (snapshot.id !== id || !snapshot.files || typeof snapshot.files !== 'object' || Array.isArray(snapshot.files)) throw new Error(`Invalid snapshot: ${manifestPath}`);
-        blobs = Object.entries(snapshot.files).map(([name, blob]) => {
-          assertPath(name); if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${manifestPath}`);
-          return `reviews/history/blobs/${blob}`;
-        });
-        manifests.set(manifestPath, blobs);
-      }
-      return [manifestPath, ...blobs];
-    };
+    const manifestBlobs = this.manifestPaths(byPath);
     const groups = new Map<string, { history: StoredHistory; relative: string; records: CheckpointRecord[]; paths: Set<string> }>();
     for (const { file, project, baseline, at } of tracked) {
       const projectId = path.basename(file.relative, '.json'), id = digest(JSON.stringify([projectId, 'tracking'])), time = Number.isFinite(at) ? at! : file.modified;
@@ -409,14 +460,7 @@ export class StorageManager {
         await this.reviewReferences(file, snapshots, blobs);
         if ((await this.json(file)).active) busy.add(path.basename(file.relative, '.json'));
       }
-      const manifest = async (id: string) => {
-        const relative = `reviews/history/snapshots/${id}.json`, file = byPath.get(relative);
-        if (!file) throw new Error('A referenced snapshot is missing. Repair storage before cleanup.');
-        const value = await this.json(file);
-        if (value.id !== id || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) throw new Error(`Invalid snapshot: ${relative}`);
-        return [relative, ...Object.values(value.files).map(blob => { if (typeof blob !== 'string' || !hash.test(blob)) throw new Error(`Invalid snapshot blob: ${relative}`); return `reviews/history/blobs/${blob}`; })];
-      };
-      const paths = new Map<string, string[]>(), pathsOf = async (id: string) => { let list = paths.get(id); if (!list) { list = await manifest(id); paths.set(id, list); } return list; };
+      const pathsOf = this.manifestPaths(byPath);
       for (const blob of blobs) kept.add(`reviews/history/blobs/${blob}`);
       for (const id of snapshots) for (const relative of await pathsOf(id)) kept.add(relative);
       const records: { relative: string; record: CheckpointRecord; removable: boolean }[] = [];

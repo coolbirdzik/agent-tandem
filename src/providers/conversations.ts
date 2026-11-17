@@ -229,6 +229,8 @@ export async function codexSessionMetadata(home: string): Promise<Map<string, { 
   return result;
 }
 
+interface NativeRecords { revision: string; edits: ConversationEdit[]; times: Map<string, string>; prompts: number[] }
+
 export class ProjectConversations {
   private metadata = new Map<string, { cwd: string; id: string }>();
   private codex = new Map<string, { file: string; conversation: Conversation }>();
@@ -237,7 +239,8 @@ export class ProjectConversations {
   private codexErrors: string[] = [];
   private scope = new Map<string, string[]>();
   constructor(private claude: () => Promise<ClaudeHistoryAPI>, private codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), private claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')) {}
-  private editCache = new Map<string, { revision: string; edits: ConversationEdit[] }>();
+  /** One read of a conversation's raw native records per revision serves edit attribution and message times. */
+  private nativeCache = new Map<string, NativeRecords>();
   private claudeEditFiles = new Map<string, string>();
   private editIndexAt = 0;
   private editIndexJob?: Promise<void>;
@@ -257,22 +260,39 @@ export class ProjectConversations {
     })().finally(() => { this.editIndexJob = undefined; });
     return this.editIndexJob;
   }
-  /** Raw local records retain edit timestamps omitted by the Claude history SDK. */
-  async edits(conversation: Conversation, project: string): Promise<ConversationEdit[]> {
+  /** Raw local records retain edit and message timestamps omitted by the Claude history SDK. */
+  private async native(conversation: Conversation, project: string): Promise<NativeRecords> {
     if (!this.belongs(conversation.cwd, project)) throw new Error('Conversation does not belong to this workspace.');
-    const cacheKey = `${project}:${conversation.key}`, cached = this.editCache.get(cacheKey);
-    if (cached?.revision === conversation.revision) return cached.edits;
+    const cacheKey = `${project}:${conversation.key}`, cached = this.nativeCache.get(cacheKey);
+    if (cached?.revision === conversation.revision) return cached;
     let file: string | undefined, root: string;
     if (conversation.provider === 'Claude') {
       await this.indexClaudeEdits(); file = this.claudeEditFiles.get(conversation.id); root = path.join(this.claudeHome, 'projects');
     } else { file = this.codex.get(conversation.key)?.file; root = path.join(this.codexHome, 'sessions'); }
-    if (!file) return [];
+    if (!file) return { revision: conversation.revision, edits: [], times: new Map(), prompts: [] };
     if (!belongsToProject(await realpath(file), await realpath(root))) throw new Error('Edit history escaped the native session store.');
     const data = await readRecords(file);
-    const edits = conversationEdits(data.records, conversation, conversation.cwd, project);
-    if (!data.malformed) this.editCache.set(cacheKey, { revision: conversation.revision, edits });
-    return edits;
+    const result: NativeRecords = { revision: conversation.revision, edits: conversationEdits(data.records, conversation, conversation.cwd, project), times: new Map(), prompts: [] };
+    if (conversation.provider === 'Claude') {
+      // Subagent and meta records are not prompts the user sent.
+      const main = data.records.filter(value => { const r = object(value); return typeof r.uuid === 'string' && r.isSidechain !== true && r.isMeta !== true; }) as Array<{ uuid: string; type: string; message: unknown; timestamp?: unknown }>;
+      const stamps = new Map(main.flatMap(r => typeof r.timestamp === 'string' ? [[r.uuid, r.timestamp] as const] : []));
+      for (const message of claudeMessages(main)) {
+        const stamp = stamps.get(message.id);
+        if (!stamp) continue;
+        result.times.set(message.id, stamp);
+        if (message.role === 'user') result.prompts.push(Date.parse(stamp));
+      }
+    } else {
+      for (const message of codexMessages(data.records)) if (message.role === 'user' && message.timestamp) result.prompts.push(Date.parse(message.timestamp));
+    }
+    result.prompts = result.prompts.filter(Number.isFinite);
+    if (!data.malformed) this.nativeCache.set(cacheKey, result);
+    return result;
   }
+  async edits(conversation: Conversation, project: string): Promise<ConversationEdit[]> { return (await this.native(conversation, project)).edits; }
+  /** When each prompt the user sent was recorded, in milliseconds. */
+  async promptTimes(conversation: Conversation, project: string): Promise<number[]> { return (await this.native(conversation, project)).prompts; }
 
   async list(project: string): Promise<ConversationIndex> {
     let canonical = project; try { canonical = await realpath(project); } catch { /* Project may be temporarily unavailable. */ }
@@ -360,7 +380,11 @@ export class ProjectConversations {
       if (!dir) throw new Error('Refresh the project conversation list before opening this session.');
       const sdk = await this.claude();
       const records = await sdk.getSessionMessages(conversation.id, { dir });
-      return { conversation, messages: claudeMessages(records), usage: claudeHistoryUsage(records) };
+      const messages = claudeMessages(records);
+      // The SDK omits timestamps; per-message restore needs when each prompt was sent.
+      const times = (await this.native(conversation, project).catch(() => undefined))?.times;
+      if (times) for (const message of messages) message.timestamp ??= times.get(message.id);
+      return { conversation, messages, usage: claudeHistoryUsage(records) };
     }
     const entry = this.codex.get(conversation.key);
     if (!entry) throw new Error('Conversation is no longer available. Refresh the project.');

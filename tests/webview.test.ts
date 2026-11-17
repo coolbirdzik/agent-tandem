@@ -515,7 +515,7 @@ describe('Single tandem webview', () => {
     expect(document.querySelector('[data-focus-key="checkpoint:u1"]')!.getAttribute('data-checkpoint-available')).toBe('true');
     const unavailable = document.querySelector<HTMLButtonElement>('[data-focus-key="checkpoint:u2"]')!;
     expect(unavailable.disabled).toBe(true); expect(unavailable.title).toContain('No saved checkpoint');
-    expect(document.querySelector('.checkpoint-hint')!.textContent).toContain('New messages sent here');
+    expect(document.querySelector('.checkpoint-hint')!.textContent).toContain('while change tracking is on');
     unavailable.click(); expect(postMessage).not.toHaveBeenCalled();
     expect(document.querySelector('.message.user .message-text')!.textContent).toContain('<script>bad()</script>');
     expect(document.querySelector('.message.user script')).toBeNull();
