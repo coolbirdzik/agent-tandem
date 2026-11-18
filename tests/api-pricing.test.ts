@@ -21,6 +21,14 @@ describe('API equivalent pricing', () => {
     expect(apiCost('Claude', 'claude-haiku-5-5', usage(100000, 1000)).usd).toBeCloseTo(.0105);
     expect(apiCost('Claude', 'claude-haiku-5-5', usage(100001, 1000)).usd).toBeCloseTo(.0525005);
   });
+  it('prices the GPT-6.2 and Claude 5.2 models', () => {
+    expect(apiCost('Codex', 'gpt-6.2-sol', usage(2e5, 1e4, 1.6e5)).usd).toBeCloseTo(.08 + .016 + .1);
+    expect(apiCost('Codex', 'gpt-6.2-astra', usage(272000, 1000)).usd).toBeCloseTo(2.216);
+    expect(apiCost('Codex', 'gpt-6.2-astra', usage(272001, 1000)).usd).toBeCloseTo(4.412016);
+    expect(apiCost('Codex', 'gpt-6.1-terra', usage(1e6, 1e6)).usd).toBe(2 * 1 + 1.5 * 5);
+    expect(apiCost('Claude', 'claude-fable-5-2', { ...usage(1e6, 1e5, 5e5, 3e5), cacheWrite1h: 1e5 }).usd).toBeCloseTo(1.6 + .1 + 2 + 1.6 + 4);
+    expect(modelApiRate('Claude', 'claude-mythos-5-2')).toEqual(modelApiRate('Claude', 'claude-fable-5-2'));
+  });
   it('accepts dated exact model IDs and leaves unknown models explicitly unpriced', () => {
     expect(modelApiRate('Claude', 'claude-sonnet-4-5-20250929')).toEqual(modelApiRate('Claude', 'claude-sonnet-4-5'));
     expect(modelApiRate('Codex', 'gpt-5-2025-08-07')).toEqual(modelApiRate('Codex', 'gpt-5'));

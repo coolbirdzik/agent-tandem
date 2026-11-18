@@ -963,6 +963,8 @@
     "test:cli:live": "npm run build && node scripts/test-cli-manager-live.mjs",
     "test:context:history": "npm run build && node scripts/test-context-history.mjs",
     "probe:providers": "node scripts/probe-providers.mjs",
+    "pricing:check": "node scripts/pricing-sync.mjs --check",
+    "pricing:update": "node scripts/pricing-sync.mjs --write",
     "package": "node scripts/package.mjs",
     "package:marketplace": "node scripts/package-marketplace.mjs",
     "test:marketplace": "node scripts/test-marketplace.mjs",

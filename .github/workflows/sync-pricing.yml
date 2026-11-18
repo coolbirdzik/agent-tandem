@@ -1,0 +1,67 @@
+name: Sync API pricing
+
+# Weekly: read the OpenAI and Claude pricing pages and open (or refresh) a pull request
+# when a model is added or a price changes. A page the parser no longer understands fails the run.
+on:
+  schedule:
+    - cron: '23 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-api-pricing
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BRANCH: automation/sync-api-pricing
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Update rates from the pricing pages
+        run: node scripts/pricing-sync.mjs --write --summary "$RUNNER_TEMP/pricing.md"
+      - name: Detect changes
+        id: diff
+        run: |
+          if git diff --quiet -- src/core/api-pricing-data.ts; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+      # Pull requests opened with GITHUB_TOKEN do not start other workflows, so verify here.
+      - name: Typecheck and unit tests
+        id: verify
+        if: steps.diff.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          npm run typecheck
+          npm test -- --maxWorkers=2 --testTimeout=15000
+      - name: Open or update the pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY: ${{ steps.verify.outcome }}
+        run: |
+          body="$RUNNER_TEMP/pricing.md"
+          if [ "$VERIFY" != "success" ]; then
+            printf '\n> [!WARNING]\n> Typecheck or unit tests failed with these prices. See the workflow run: %s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$body"
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C "$BRANCH"
+          git commit -am 'chore: sync API pricing'
+          git push --force origin "$BRANCH"
+          if [ "$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null)" = "OPEN" ]; then
+            gh pr edit "$BRANCH" --body-file "$body"
+          else
+            gh pr create --base main --head "$BRANCH" --title 'chore: sync API pricing' --body-file "$body"
+          fi
+      - name: Fail when the new prices break the build
+        if: steps.verify.outcome == 'failure'
+        run: exit 1
