@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { HistoryStore } from './core/history';
 import { runDemo } from './core/demo';
-import type { Session, ViewState } from './core/types';
+import type { Session, SubagentSelection, SubagentTranscript, ViewState } from './core/types';
 import { openChanges, TandemView, selectionFrom, SnapshotDocuments } from './host/preview';
 import { openReviewChanges, ReviewDocuments, reviewSnapshotUri } from './host/review-editor';
 import { ReviewWebview } from './host/review-webview';
@@ -12,7 +12,7 @@ import { ImageDiff } from './host/image-diff';
 import { imageSnapshot, imageSnapshots } from './core/media-preview';
 import { gitImageChanges, redirectGitImageDiffs } from './host/git-image-changes';
 import { ReviewHunkActions } from './host/review-hunk-actions';
-import { probeCodex, probeClaude, cliInfo, installedCLIs } from './providers/probe';
+import { probeCodex, probeClaude, cliInfo, installedCLIs, type CLIInfo } from './providers/probe';
 import { ManagedCLIResolver } from './providers/managed-cli';
 import { ProjectConversations, claudeMessages, type ClaudeHistoryAPI, type ConversationContent, type ConversationIndex } from './providers/conversations';
 import { claudeContent } from './providers/chat-input';
@@ -40,6 +40,7 @@ import { AccessModeStore } from './core/access-store';
 import { accessMode, accessSelection, defaultAccessModes } from './providers/access';
 import { CLIStore, type CLIRegistration } from './core/cli-store';
 import { cliRequest, cliPathKey, emptyCLIRegistry, type CLIRegistry, type CLIActive } from './providers/cli-registry';
+import { addCLIInput } from './host/quick-cli';
 import { ContextStore } from './core/context-store';
 import { ChatQueue } from './core/chat-queue';
 import { ChatQueueStore } from './core/chat-queue-store';
@@ -165,7 +166,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   let generation = 0;
   let fastModeRevision = 0;
   let selectionGeneration = 0;
+  let subagentRefresh: { selection: number; key: string } | undefined;
   let uiGeneration = 0;
+  let providerCheckGeneration = 0;
+  function invalidateProviderChecks() {
+    providerCheckGeneration++;
+    state.providers = [];
+  }
   let syncJob: Promise<ConversationIndex> | undefined;
   // Native conversation deletion pauses history sync instead of failing on the 5-second sync timer.
   let conversationDeleting = false;
@@ -188,6 +195,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (state.project) chatQueue.pause(state.project, 'Workspace changed. Resume when you return.');
     externalWatcher?.dispose(); externalWatcher = undefined; externalProject = undefined; clearTimeout(externalTimer); externalDirty = false;
     state.project = root?.uri.fsPath;
+    invalidateProviderChecks(); state.checkingProviders = false;
     state.accessModes = defaultAccessModes();
     state.selectedModels = defaultModels(); state.modelCatalogs = {};
     state.selectedEfforts = defaultEfforts();
@@ -409,7 +417,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     resetUsage: () => accountManager.action({ action: 'resetUsage', provider: 'Codex' }),
     open: async page => { await vscode.commands.executeCommand(page === 'dashboard' ? 'agentTandem.openSettings' : 'agentTandem.manageAccounts'); }, report });
   context.subscriptions.push(quickAccounts, accountManager);
-  function update() { state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state, dashboardState()); trackingBar.update(state); settings.update(); quickAccounts.update(); }
+  function update() {
+    if (state.subagents && state.subagents.parentKey !== state.conversation?.conversation.key) state.subagents = undefined;
+    state.chatQueue = chatQueue.state(state.project); preview.update(); hunkActions?.update(); reviewEditor?.update(); quotaBar.update(state, dashboardState()); trackingBar.update(state); settings.update(); quickAccounts.update();
+  }
   async function recordQuotaHistory(data = usageState.data) {
     try {
       const ticks = (['Codex', 'Claude'] as const).flatMap(provider => quotaTicks(provider, state.accounts?.[provider]));
@@ -500,6 +511,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       claudeExtensionPaths: claudeExtension ? [claudeExtension.extensionPath] : [],
     }, signal);
   }
+  function configuredProjectCLI(provider: ConversationProvider, registry: CLIRegistry, project?: string): CLIActive {
+    const config = vscode.workspace.getConfiguration('agentTandem', project ? vscode.Uri.file(project) : undefined);
+    if (config.get<string>(cliModeKey(provider)) === 'terminal') return { source: 'path' };
+    const id = config.get<string>(cliIdKey(provider));
+    if (id) return { id, source: 'project' };
+    const executable = config.get<string>(cliKey(provider));
+    if (executable) {
+      const entry = registry.entries.find(entry => entry.provider === provider && cliPathKey(entry.executable) === cliPathKey(executable));
+      return { id: entry?.id, source: 'project' };
+    }
+    return { id: registry.defaults[provider], source: 'default' };
+  }
   async function refreshCLIManager() {
     const project = state.project;
     try {
@@ -507,12 +530,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       for (const provider of ['Codex', 'Claude'] as const) {
         try { const selection = await managedCLI(provider, project); active[provider] = { id: selection.entry?.id, source: selection.source, ...selection.cli }; }
         catch (error) {
-          const config = vscode.workspace.getConfiguration('agentTandem', project ? vscode.Uri.file(project) : undefined);
-          const terminal = config.get<string>(cliModeKey(provider)) === 'terminal', configured = terminal ? '' : config.get<string>(cliKey(provider));
-          const selectedId = terminal ? '' : config.get<string>(cliIdKey(provider));
-          const source = selectedId || configured ? 'project' : terminal ? 'path' : 'default';
-          const id = selectedId || (configured ? registry.entries.find(entry => entry.provider === provider && cliPathKey(entry.executable) === cliPathKey(configured))?.id : source === 'default' ? registry.defaults[provider] : undefined);
-          active[provider] = { id, source, error: (error as Error).message };
+          active[provider] = { ...configuredProjectCLI(provider, registry, project), error: (error as Error).message };
         }
       }
       if (!disposed && project === state.project) { state.cliManager = { registry, active, busy: cliManaging, trusted: vscode.workspace.isTrusted }; update(); }
@@ -740,6 +758,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     void pruneTimeline(project);
   }
   await refreshReview(state.project, true).catch(report);
+  function refreshSubagents() {
+    const parent = state.conversation?.conversation, project = state.project;
+    if (!project || !parent?.id || parent.hiddenFromHistory) return;
+    if (subagentRefresh?.selection === selectionGeneration && subagentRefresh.key === parent.key) return;
+    const request = { selection: selectionGeneration, key: parent.key };
+    subagentRefresh = request;
+    const current = () => !disposed && subagentRefresh === request && request.selection === selectionGeneration &&
+      state.project === project && state.conversation?.conversation.key === parent.key;
+    void source.listSubagents(parent, project).then(entries => {
+      if (!current() || JSON.stringify(entries) === JSON.stringify(state.subagents?.entries ?? [])) return;
+      state.subagents = entries.length ? { parentKey: parent.key, entries } : undefined;
+      update();
+    }).catch(error => {
+      if (current()) output.appendLine(`Could not list subagents: ${error instanceof Error ? error.message : String(error)}`);
+    }).finally(() => { if (subagentRefresh === request) subagentRefresh = undefined; });
+  }
   async function openConversation(key: string): Promise<ConversationContent | undefined> {
     const conversation = state.conversations?.find(item => item.key === key);
     if (!conversation || !state.project) throw new Error('Choose a conversation from this project.');
@@ -756,6 +790,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (state.conversation?.conversation.key !== key) { state.checkpointPreview = undefined; checkpointPlan = undefined; }
       state.checkpoints = savedCheckpoints;
       state.conversation = content; state.composeProvider = content.conversation.provider; update(); void loadModels(content.conversation.provider);
+      refreshSubagents();
     }
     return content;
   }
@@ -792,10 +827,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         }
       }
       else if (!previous && !composingNew && selectedAtStart === selectionGeneration) {
-        const restored = index.conversations.find(item => item.key === selectedConversationKey) ?? index.conversations[0];
+        const history = index.conversations.filter(item => !item.hiddenFromHistory);
+        const restored = history.find(item => item.key === selectedConversationKey) ?? history[0];
         try { if (restored) await openConversation(restored.key); }
         catch (error) { state.syncErrors.push(error instanceof Error ? error.message : 'Could not restore conversation.'); }
       }
+      refreshSubagents();
       return index;
     })().finally(() => { syncJob = undefined; state.syncing = false; if (!disposed) update(); });
     return syncJob;
@@ -848,9 +885,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   }));
   register('agentTandem.open', () => { state.screen = 'changes'; update(); return preview.open(); });
   register('agentTandem.openInTab', () => preview.openInTab());
-  for (const action of ['newChat', 'history', 'review', 'refresh'] as const) {
+  register('agentTandem.focusChat', () => preview.headerAction('focusChat'));
+  register('agentTandem.chooseChangedFile', () => reviewEditor?.active ? reviewEditor.chooseFile() : changeNavigation.chooseFile());
+  for (const action of ['newChat', 'history', 'review'] as const) {
     register(`agentTandem.header.${action}`, () => preview.headerAction(action));
+    // VS Code appends keybindings to tooltips for the command IDs used in the title bar.
+    register(`agentTandem.sidebar.${action}`, () => preview.headerAction(action, true));
   }
+  register('agentTandem.header.refresh', () => state.project && !state.syncing ? syncConversations() : undefined);
   const openImageChanges = async (target: unknown) => {
     const { files, index } = await gitImageChanges(target);
     await changeNavigation.openFile(files, 'Git image changes', index);
@@ -1254,26 +1296,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     for (const change of statusChanges) await config.update(change.key, change.value, vscode.ConfigurationTarget.Global);
     update();
   });
-  register('agentTandem.manageCLIs', async () => { state.screen = 'cli'; update(); await refreshCLIManager(); await preview.open(); });
-  register('agentTandem.refreshCLIs', () => { cliResolver.invalidate(); return refreshCLIManager(); });
-  register('agentTandem.chooseCLI', async value => {
-    if (value !== 'Codex' && value !== 'Claude') throw new Error('Choose a provider.');
-    if (!state.project || !vscode.workspace.isTrusted) throw new Error('Open and trust a local project before choosing its CLI.');
-    if (chatAbort || reviewing || cliManaging) throw new Error('Stop the active agent before changing its CLI.');
-    const project = state.project, provider = value, registry = await ensureCLIRegistry();
-    const selection = await vscode.window.showQuickPick([
-      { label: 'Use Default', description: 'Follow the Default setting in Manage CLIs', id: '' },
-      { label: 'Terminal CLI (PATH)', description: 'Use the terminal CLI if it is enabled', id: 'path' },
-      ...registry.entries.filter(entry => entry.provider === provider && entry.enabled && !entry.error).map(entry => ({ label: entry.name, description: entry.version, detail: entry.executable, id: entry.id })),
-      { label: 'Manage CLIs…', description: 'Add, edit, enable or remove CLI installations', id: 'manage' },
-    ], { title: `${provider} CLI for this project`, matchOnDescription: true, matchOnDetail: true });
-    if (!selection) return;
-    if (selection.id === 'manage') { state.screen = 'cli'; update(); await refreshCLIManager(); return; }
-    if (project !== state.project || chatAbort || reviewing || cliManaging) throw new Error('The workspace or agent changed. Choose the CLI again.');
-    cliManaging = true; cliResolver.invalidate();
-    try { await setProjectCLI(provider, selection.id); await loadModels(provider, true); void loadAccount(provider, true); }
-    finally { cliManaging = false; await refreshCLIManager(); }
+  register('agentTandem.manageCLIs', async () => {
+    const version = ++uiGeneration;
+    state.screen = 'cli'; update(); await refreshCLIManager();
+    if (!disposed && version === uiGeneration) await preview.open();
   });
+  register('agentTandem.refreshCLIs', () => { cliResolver.invalidate(); return refreshCLIManager(); });
   register('agentTandem.cliAction', async value => {
     const request = cliRequest(value);
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before managing local CLIs.');
@@ -1288,19 +1316,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (['edit', 'toggle', 'remove'].includes(request.action) && !entry) throw new Error('Choose an existing CLI entry.');
       const provider = request.provider, name = provider === 'Codex' ? 'codex' : 'claude';
       if (request.action === 'add' || request.action === 'edit') {
-        let executable = request.executable;
-        if (executable === undefined) {
-          const files = await vscode.window.showOpenDialog({ canSelectMany: false, canSelectFolders: false, title: `Add ${provider} CLI`, filters: process.platform === 'win32' ? { Executable: ['exe'] } : undefined });
-          if (!files?.[0]) return; executable = files[0].fsPath;
-        }
-        if (!executable.trim()) throw new Error('Enter a CLI executable path.');
-        const info = await cliInfo(name, executable);
-        if (!(provider === 'Codex' ? /^codex-cli\s+/i.test(info.version) : /Claude Code/i.test(info.version))) throw new Error(`This executable does not identify itself as ${provider}.`);
-        const registered = { ...info, provider, name: request.name?.trim() || entry?.name || `${provider} ${info.version.replace(/^codex-cli\s+/, '').replace(/ \(Claude Code\)$/, '')}` };
+        const checkContext = () => {
+          if (request.project !== state.project || !vscode.workspace.isTrusted || chatAbort || reviewing) throw new Error('The workspace or agent changed. Try the CLI action again.');
+        };
+        const verify = async (executable: string, signal?: AbortSignal): Promise<CLIRegistration> => {
+          checkContext();
+          if (!executable.trim()) throw new Error('Enter a CLI executable path.');
+          const info = await cliInfo(name, executable, signal);
+          if (!(provider === 'Codex' ? /^codex-cli\s+/i.test(info.version) : /Claude Code/i.test(info.version))) throw new Error(`This executable does not identify itself as ${provider}.`);
+          return { ...info, provider, name: request.name?.trim() || entry?.name || `${provider} ${info.version.replace(/^codex-cli\s+/, '').replace(/ \(Claude Code\)$/, '')}` };
+        };
+        const registered = request.action === 'add' && request.executable === undefined
+          ? await addCLIInput(provider, request.project, verify)
+          : await verify(request.executable ?? '');
+        if (!registered) return;
+        checkContext();
         if (request.action === 'add') await cliStore.add(request.revision, registered);
         else await cliStore.edit(request.revision, entry!.id, registered);
-        if (entry && request.project === state.project && cliPathKey(entry.executable) !== cliPathKey(info.executable) && state.project && vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(state.project)).get<string>(cliKey(provider)) === entry.executable) {
-          await vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(state.project)).update(cliKey(provider), info.executable, vscode.ConfigurationTarget.WorkspaceFolder);
+        if (entry && request.project === state.project && cliPathKey(entry.executable) !== cliPathKey(registered.executable) && state.project && vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(state.project)).get<string>(cliKey(provider)) === entry.executable) {
+          await vscode.workspace.getConfiguration('agentTandem', vscode.Uri.file(state.project)).update(cliKey(provider), registered.executable, vscode.ConfigurationTarget.WorkspaceFolder);
         }
       } else if (request.action === 'toggle') {
         if (request.enabled === undefined) throw new Error('Choose whether this CLI is enabled.');
@@ -1318,6 +1352,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
         await cliStore.mutate(request.revision, registry => { for (const result of checked) Object.assign(registry.entries.find(row => row.id === result.id)!, result); });
       }
       if (request.project !== state.project) return;
+      invalidateProviderChecks();
       modelJobs.get(provider)?.abort.abort(); modelJobs.delete(provider);
       state.modelCatalogs = { ...state.modelCatalogs, [provider]: undefined };
       accountJobs.get(provider)?.abort.abort(); accountJobs.delete(provider);
@@ -1455,6 +1490,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       content.usage = undefined;
       content.messages = structuredClone(edit.messages);
       content.conversation = { ...content.conversation, id: '', key: `${request.provider}:draft-${request.requestId}`, title: chatTitle, revision: `live:${request.requestId}` };
+      delete content.conversation.hiddenFromHistory;
       content.notice = 'Edited message · new conversation branch. Current project changes remain applied.';
     }
     content.messages.push({ id: request.requestId, role: 'user', text: request.text, ...(request.attachments?.length ? { attachments: request.attachments } : {}) });
@@ -1643,7 +1679,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   };
   register('agentTandem.linkReviewConversation', value => setReviewConversation(value));
   register('agentTandem.unlinkReviewConversation', value => setReviewConversation(value, true));
-  register('agentTandem.refreshReview', async () => { if (state.review?.externalTracking) await captureExternalReview(true); else await refreshReview(state.project, true); });
+  register('agentTandem.refreshReview', async () => {
+    if (state.review?.externalTracking && !state.review.busy) await captureExternalReview(true);
+    else await refreshReview(state.project, true);
+  });
   register('agentTandem.reviewLatest', async () => {
     followRoot();
     const project = state.project;
@@ -1743,7 +1782,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       await changeNavigation.refreshReview(project, result.files.map(file => ({ file: file.path, original: reviewSnapshotUri(file.before, file.path), modified: reviewSnapshotUri(file.after, file.path), review: { project, revision: result.revision, group: reviewGroup(file) } })));
     } finally { reviewing = false; if (!disposed && project === state.project) { state.reviewBusy = false; await refreshReview(project); update(); } }
   });
-  hunkActions = new ReviewHunkActions(reviews, changeNavigation,
+  hunkActions = new ReviewHunkActions(context.extensionUri, reviews, changeNavigation,
     () => ({ project: state.project, review: state.review, busy: !!chatAbort || reviewing || !!state.review?.busy }),
     decideReview, report);
   context.subscriptions.push(hunkActions);
@@ -1828,9 +1867,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (!disposed && state.project === request.project) { state.reviewBusy = false; await refreshReview(request.project); update(); }
     }
   });
-  register('agentTandem.diagnostics', () => vscode.commands.executeCommand('agentTandem.showSection', 'tools').then(() => preview.open()));
   register('agentTandem.showSection', async screen => {
-    if (screen !== 'conversations' && screen !== 'changes' && screen !== 'tools' && screen !== 'cli') throw new Error('Unknown section.');
+    if (screen !== 'conversations' && screen !== 'changes' && screen !== 'cli') throw new Error('Unknown section.');
     uiGeneration++; state.screen = screen; update(); if (screen === 'cli') void refreshCLIManager();
     if (screen === 'changes') await captureExternalReview();
   });
@@ -1839,8 +1877,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (typeof key !== 'string') throw new Error('Invalid conversation selection.');
     const version = ++uiGeneration;
     const content = await openConversation(key);
-    if (version === uiGeneration) { state.screen = 'conversations'; update(); await preview.open(); }
+    if (version === uiGeneration) {
+      state.screen = 'conversations';
+      state.conversationOpenRevision = version;
+      update(); await preview.open();
+    }
     return content;
+  });
+  register('agentTandem.selectSubagent', async (value): Promise<SubagentTranscript> => {
+    const request = value as Partial<SubagentSelection> | undefined;
+    const parent = state.conversation?.conversation, project = state.project, group = state.subagents;
+    if (!project || !parent || !group || request?.project !== project || request.parentKey !== parent.key ||
+      group.parentKey !== parent.key || typeof request.agentId !== 'string') return { status: 'error', message: 'This subagent is no longer available.' };
+    const agent = group.entries.find(entry => entry.id === request.agentId);
+    if (!agent) return { status: 'error', message: 'This subagent is no longer available.' };
+    try {
+      return { status: 'ready', ...await source.readSubagent(parent, agent.id, project) };
+    } catch (error) {
+      return { status: 'error', message: error instanceof Error ? error.message : 'Could not read transcript.' };
+    }
   });
   register('agentTandem.runDemo', async () => { uiGeneration++; state.screen = 'changes'; state.changePreview = undefined; update(); await preview.open(); return run(); });
   register('agentTandem.stop', () => cancel?.abort());
@@ -1865,17 +1920,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.openStepInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), false, changeNavigation));
   register('agentTandem.openFileInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), false, changeNavigation, true));
   register('agentTandem.openCumulativeInEditor', selected => openChanges(history, state.sessions, selectionFrom(selected), true, changeNavigation));
-  register('agentTandem.checkProviders', async () => {
+  register('agentTandem.checkProviders', async source => {
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before starting provider processes.');
-    const config = vscode.workspace.getConfiguration('agentTandem');
-    const version = ++uiGeneration;
-    state.providers = await Promise.all((['Codex', 'Claude'] as const).map(async provider => {
-      try { const selected = await managedCLI(provider, state.project); return provider === 'Codex' ? await probeCodex(selected.cli.executable) : await probeClaude(selected.cli.executable); }
-      catch (error) { cliResolver.invalidateOnFailure(provider, error); return { provider, available: false, detail: (error as Error).message }; }
-    }));
-    for (const provider of state.providers) output.appendLine(`${provider.provider}: ${provider.detail}`);
-    if (version === uiGeneration) { state.screen = 'tools'; update(); await preview.open(); }
-    return state.providers;
+    if (state.checkingProviders) return;
+    const project = state.project, rootGeneration = generation, checkGeneration = providerCheckGeneration;
+    state.checkingProviders = true; state.providers = []; update();
+    try {
+      const check = Promise.all((['Codex', 'Claude'] as const).map(async provider => {
+        let cli: CLIInfo | undefined;
+        try {
+          cli = (await managedCLI(provider, project)).cli;
+          return await (provider === 'Codex' ? probeCodex(cli.executable) : probeClaude(cli.executable));
+        } catch (error) {
+          cliResolver.invalidateOnFailure(provider, error);
+          return { ...cli, provider, available: false, detail: (error as Error).message };
+        }
+      }));
+      if (source !== 'inline') await vscode.commands.executeCommand('agentTandem.manageCLIs');
+      const providers = await check;
+      for (const provider of providers) output.appendLine(`${provider.provider}: ${provider.detail}`);
+      if (!disposed && checkGeneration === providerCheckGeneration) state.providers = providers;
+      return providers;
+    } finally {
+      if (!disposed && rootGeneration === generation) { state.checkingProviders = false; update(); }
+    }
   });
   const timer = setInterval(() => { void syncConversations(true).catch(error => { state.syncErrors = [error instanceof Error ? error.message : 'Sync failed.']; update(); }); }, 5000);
   const accountTimer = setInterval(() => { void refreshAccounts(); }, 60000);
@@ -1900,6 +1968,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       const claudeRevision = claudeExtensionIdentity();
       if (claudeRevision !== claudeExtensionRevision) {
         claudeExtensionRevision = claudeRevision; cliResolver.invalidate('Claude');
+        invalidateProviderChecks();
         modelJobs.get('Claude')?.abort.abort(); modelJobs.delete('Claude');
         state.modelCatalogs = { ...state.modelCatalogs, Claude: undefined };
         void refreshCLIManager(); void loadModels('Claude', true); void loadAccount('Claude', true);
@@ -1907,6 +1976,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       const revision = codexExtensionIdentity();
       if (revision === codexExtensionRevision) return;
       codexExtensionRevision = revision; cliResolver.invalidate('Codex');
+      invalidateProviderChecks();
       modelJobs.get('Codex')?.abort.abort(); modelJobs.delete('Codex');
       state.modelCatalogs = { ...state.modelCatalogs, Codex: undefined };
       void refreshCLIManager(); void loadModels('Codex', true); void loadAccount('Codex', true);
@@ -1918,6 +1988,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       if (event.affectsConfiguration('agentTandem.autoTrackExternalChanges')) void refreshReview(state.project).catch(report);
       if (!['codexExecutable', 'claudeExecutable', 'codexCLISelection', 'claudeCLISelection', 'codexCLIId', 'claudeCLIId'].some(key => event.affectsConfiguration(`agentTandem.${key}`))) return;
       cliResolver.invalidate();
+      invalidateProviderChecks();
       for (const job of modelJobs.values()) job.abort.abort(); modelJobs.clear(); state.modelCatalogs = {};
       resetAccounts();
       void refreshCLIManager();

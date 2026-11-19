@@ -28,6 +28,22 @@ function fixture() {
   const popup = new QuickAccounts(deps); return { state, deps, popup, picker: () => host.pickers.at(-1)! };
 }
 describe('Quick quota/account popup', () => {
+  it.each(['Codex', 'Claude'] as const)('shows each %s account email once when it is the label', async provider => {
+    const f = fixture();
+    f.state.accounts![provider] = f.state.accounts!.Codex;
+    f.state.managedAccounts = f.state.managedAccounts!.filter(row => row.provider === 'Codex').map(row => ({
+      ...row, provider, label: row.active ? 'ONE@example.test' : 'two@example.test',
+    }));
+
+    await f.popup.show(provider);
+    expect(f.picker().items.find((row: any) => row.id === 'first')).toMatchObject({
+      label: '$(check) ONE@example.test', description: 'Active · plus',
+    });
+    expect(f.picker().items.find((row: any) => row.id === 'second')).toMatchObject({
+      label: '$(account) two@example.test', description: 'plus', action: 'switch',
+    });
+    f.popup.dispose();
+  });
   it('groups each period with its reset countdown for saved and native accounts', async () => {
     const now = Date.now(), clock = vi.spyOn(Date, 'now').mockReturnValue(now);
     const f = fixture();

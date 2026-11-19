@@ -18,12 +18,33 @@ export class ReviewWebview implements vscode.Disposable {
   private posted = '';
   private pending?: ReturnType<typeof setTimeout>;
   private acting = false;
+  private choosingFile = false;
   constructor(private extensionUri: vscode.Uri, private reviews: ReviewStore,
     private current: () => { project?: string; review?: ReviewState; busy: boolean; capturing?: Promise<void>; conversations?: readonly { key: string }[] },
     private invoke: (command: string, value?: unknown) => Promise<unknown>,
     private native: (request: ReviewRequest) => Promise<void>,
     private edit: (request: ReviewRequest, text: string) => Promise<void>) {}
   get state(): ReviewEditorState { return this.model; }
+  get active(): boolean { return this.panel?.active ?? false; }
+  async chooseFile() {
+    if (this.active && this.model.files.length && !this.model.busy) await this.panel?.webview.postMessage({ type: 'chooseFile' });
+  }
+  private async showFilePicker(panel: vscode.WebviewPanel, revision: unknown) {
+    const model = this.model, scope = this.scope;
+    if (!panel.active || !scope || revision !== model.revision || !model.files.length || model.busy || this.acting || this.choosingFile) return;
+    this.choosingFile = true;
+    try {
+      const picked = await vscode.window.showQuickPick(model.files.map(file => ({ label: file.path, description: file.path === model.file?.path ? 'Current file' : file.kind })),
+        { title: 'AgentTandem · Changed files', placeHolder: 'Choose a file to review' });
+      if (!picked) return;
+      await this.current().capturing?.catch(() => undefined);
+      const latest = this.current();
+      if (this.panel !== panel || !panel.active || this.scope !== scope || this.acting || latest.busy || latest.project !== scope.project || latest.review?.busy || latest.review?.revision !== model.revision) return;
+      this.scope = { ...scope, file: picked.label };
+      await this.load('first');
+    } catch (error) { this.error(error); }
+    finally { this.choosingFile = false; }
+  }
   runMenuAction(type: 'refresh' | 'native' | 'workspaceChanges' | 'conversation', value: unknown) {
     if (!value || typeof value !== 'object') return;
     const context = value as Record<string, unknown>;
@@ -43,8 +64,12 @@ export class ReviewWebview implements vscode.Disposable {
       const resource = (folder: string, file: string) => webviewResource(panel.webview, this.extensionUri, folder, file);
       panel.webview.html = reviewWebviewHtml({ script: resource('dist', 'review-webview.js'), monacoStyle: resource('dist', 'review-webview.css'), worker: resource('dist', 'review-editor-worker.js'), style: resource('media', 'review-editor.css'), icons: resource('media', 'codicons/codicon.css'), cspSource: panel.webview.cspSource, nonce: randomBytes(18).toString('base64') });
       this.listeners.push(panel.onDidDispose(() => { if (this.panel === panel) this.close(); }),
-        panel.onDidChangeViewState(() => { if (panel.visible) this.update(); }),
+        panel.onDidChangeViewState(() => {
+          void vscode.commands.executeCommand('setContext', 'agentTandem.reviewEditorActive', panel.active);
+          if (panel.visible) this.update();
+        }),
         panel.webview.onDidReceiveMessage(message => { void this.handle(message); }));
+      void vscode.commands.executeCommand('setContext', 'agentTandem.reviewEditorActive', panel.active);
     } else this.panel.reveal(vscode.ViewColumn.Active);
     await this.load();
   }
@@ -100,6 +125,7 @@ export class ReviewWebview implements vscode.Disposable {
     if (!message || typeof message !== 'object' || !panel) return;
     const data = message as Record<string, unknown>;
     if (data.type === 'ready') { this.post(true); return; }
+    if (data.type === 'chooseFile') { await this.showFilePicker(panel, data.revision); return; }
     const editing = data.type === 'saveEdit';
     const reply = (saved: boolean) => {
       if (editing && panel === this.panel) void panel.webview.postMessage({ type: 'editResult', saved });
@@ -154,6 +180,7 @@ export class ReviewWebview implements vscode.Disposable {
     }
   }
   private close() {
+    void vscode.commands.executeCommand('setContext', 'agentTandem.reviewEditorActive', false);
     clearTimeout(this.pending); this.version++; this.panel = undefined; this.scope = undefined; this.signature = ''; this.posted = ''; this.model = { files: [], busy: false };
     for (const listener of this.listeners.splice(0)) listener.dispose();
   }

@@ -1,12 +1,15 @@
-/** Shared hints for existing title attributes, including dynamically rendered controls. */
-export function hoverHints(root: Document = document): () => void {
+import { isMacKeyboard, shortcutMarkup } from './keyboard-shortcuts';
+
+/** Shared hints for titles and controls that provide rich tooltip content. */
+export function hoverHints(root: Document = document, renderContent?: (target: Element) => Node | undefined): () => void {
   const view = root.defaultView!;
+  const mac = isMacKeyboard(view.navigator.platform);
   const hint = root.createElement('div');
   hint.className = 'tandem-hover-hint'; hint.id = 'tandem-hover-hint';
   hint.setAttribute('role', 'tooltip'); hint.hidden = true;
   if (typeof hint.showPopover === 'function') hint.setAttribute('popover', 'manual');
   root.body.append(hint);
-  let target: Element | undefined, title = '', description: string | null = null;
+  let target: Element | undefined, title: string | null = null, description: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let keyboard = false;
   let leaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -16,7 +19,7 @@ export function hoverHints(root: Document = document): () => void {
     hint.hidden = true;
     if (target) {
       // Do not overwrite a title updated by a render while the hint was open.
-      if (target.getAttribute('title') === '') target.setAttribute('title', title);
+      if (title !== null && target.getAttribute('title') === '') target.setAttribute('title', title);
       if (description === null) target.removeAttribute('aria-describedby');
       else target.setAttribute('aria-describedby', description);
     }
@@ -32,17 +35,27 @@ export function hoverHints(root: Document = document): () => void {
   };
   const show = (node: EventTarget | null, immediate: boolean) => {
     if (!(node instanceof view.Element)) return;
-    const next = node.closest('[title]');
+    const next = node.closest(renderContent ? '[title], [data-hover-hint]' : '[title]');
     if (next === target) return;
     hide();
     // Native select options and Monaco's own hover widgets retain their own behavior.
-    if (!next || next.matches('option') || next.closest('.monaco-editor') || !next.getAttribute('title')?.trim()) return;
-    target = next; title = next.getAttribute('title')!;
+    if (!next || next.matches('option') || (next.closest('.monaco-editor') && !next.hasAttribute('data-shortcut'))) return;
+    const nextTitle = next.getAttribute('title');
+    const rich = renderContent && next.hasAttribute('data-hover-hint');
+    if (!rich && !nextTitle?.trim()) return;
+    target = next; title = nextTitle;
     description = next.getAttribute('aria-describedby');
-    next.setAttribute('title', '');
+    if (title !== null) next.setAttribute('title', '');
     timer = setTimeout(() => {
       if (!target?.isConnected || target.closest('[hidden], [inert]')) { hide(); return; }
-      hint.textContent = title; hint.hidden = false;
+      const content = rich ? renderContent(target) : undefined;
+      if (!content && !title) { hide(); return; }
+      hint.replaceChildren(content ?? title ?? '');
+      const keys = shortcutMarkup(target.getAttribute('data-shortcut') ?? '', mac);
+      if (keys) hint.insertAdjacentHTML('beforeend', keys);
+      const alternative = shortcutMarkup(target.getAttribute('data-shortcut-alternative') ?? '', mac);
+      if (alternative) { hint.append(' · Newline'); hint.insertAdjacentHTML('beforeend', alternative); }
+      hint.hidden = false;
       if (hint.hasAttribute('popover')) hint.showPopover();
       target.setAttribute('aria-describedby', [description, hint.id].filter(Boolean).join(' '));
       position();
@@ -67,7 +80,7 @@ export function hoverHints(root: Document = document): () => void {
   const down = () => { keyboard = false; hide(); };
   // A view rerender must not leave a hint attached to a removed control.
   const observer = new view.MutationObserver(() => {
-    if (target && (!target.isConnected || target.closest('[hidden], [inert]') || target.getAttribute('title') !== '')) hide();
+    if (target && (!target.isConnected || target.closest('[hidden], [inert]') || target.getAttribute('title') !== (title === null ? null : ''))) hide();
   });
   observer.observe(root.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title', 'hidden', 'inert'] });
   root.addEventListener('mouseover', over);

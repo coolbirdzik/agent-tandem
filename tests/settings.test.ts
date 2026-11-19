@@ -378,7 +378,7 @@ describe('Settings usage dashboard', () => {
     const items = [...document.querySelectorAll<HTMLElement>('.status-bar-preview-item')];
     expect(items).toHaveLength(2); expect(items.every(item => item.textContent === '')).toBe(true);
     expect(items[1]!.getAttribute('aria-label')).toContain('Claude Code');
-    expect(items[1]!.title).toContain('5h: 75% remaining');
+    expect(items[1]!.getAttribute('aria-label')).toContain('5h: 75% remaining');
     const quota = document.querySelector<HTMLInputElement>('[data-status-field="quota"]')!;
     expect(quota.disabled).toBe(true); expect(quota.checked).toBe(true);
     choose('status-bar-style', 'text');
@@ -428,7 +428,7 @@ describe('Settings usage dashboard', () => {
     const items = [...document.querySelectorAll<HTMLElement>('.status-bar-preview-item')];
     expect(items.map(item => item.textContent)).toEqual(['Quota —', '\uE030 ███▊░ 75%']);
     expect(items[1]!.getAttribute('aria-label')).toContain('Claude Code');
-    expect(items[1]!.title).toContain('5h: 75% remaining');
+    expect(items[1]!.getAttribute('aria-label')).toContain('5h: 75% remaining');
     expect(document.querySelector<HTMLInputElement>('[data-status-field="quota"]')!.disabled).toBe(false);
     render({ ...value, preferences: { ...value.preferences, statusBar: { providers: 'claude', fields: ['quota'], quotaWindows: 'all', alignment: 'right', style: 'progress', codexColor: '', claudeColor: '' } } });
     expect(document.querySelector<HTMLSelectElement>('#status-bar-style')!.value).toBe('progress');
@@ -440,6 +440,30 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#status-bar-preview')!.textContent).toBe('\uE030  75%');
     choose('status-bar-style', 'minimal');
     expect(document.querySelector('#status-bar-preview')!.textContent).toBe(' 75%');
+  });
+  it('opens the rich quota hover from the status bar preview with keyboard focus', () => {
+    vi.useFakeTimers();
+    try {
+      const now = Date.now();
+      const identity = { signedIn: true, email: 'codex@example.test', method: 'ChatGPT', plan: 'plus' };
+      render({ ...value, accountsRefreshing: true, accounts: { ...value.accounts, Codex: {
+        status: 'ready', account: identity, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 64, resetsAt: now + 10800000 }],
+          bankedResets: { availableCount: 1, credits: [{ title: 'Full reset', expiresAt: now + 86400000 }] } },
+      } }, managedAccounts: [{ id: 'work', provider: 'Codex', label: 'Work <acct> $(zap)', createdAt: 1 }] });
+      document.querySelector<HTMLButtonElement>('[data-page=preferences]')!.click();
+      const item = document.querySelector<HTMLElement>('#status-bar-preview [data-hover-hint=Codex]')!;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+      item.focus(); vi.advanceTimersByTime(0);
+      const hint = document.querySelector<HTMLElement>('#tandem-hover-hint')!;
+      expect(hint.hidden).toBe(false);
+      expect(item.getAttribute('aria-describedby')).toBe(hint.id);
+      expect(hint.querySelector('svg rect')).not.toBeNull();
+      expect(hint.querySelector('.quota-window-badge')?.getAttribute('aria-label')).toBe('5h');
+      expect(hint.querySelector('.codicon-zap')).toBeNull();
+      for (const text of ['codex@example.test', 'Active', '36%', 'resets in 3h', '1 earned reset available', 'Full reset', 'SAVED ACCOUNTS', 'Work <acct> $(zap)', 'Refreshing…']) expect(hint.textContent).toContain(text);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(hint.hidden).toBe(true);
+    } finally { vi.useRealTimers(); }
   });
   it('shows banked reset counts and expiry in dashboard account cards and managed accounts', () => {
     const expiresAt = Date.parse('2026-11-01T00:00:00Z');
@@ -885,13 +909,17 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('.storage-history-row input')).toBe(checkbox);
     const historyPlan = { token: 'approved-history', createdAt: Date.now(), histories: [histories[0]!], records: [], files: [], bytes: 0 };
     render({ ...value, storage: { ...storage, historyPlan } });
-    expect(document.querySelector<HTMLElement>('#storage-history-plan')!.hidden).toBe(false);
+    const dialog = document.querySelector<HTMLDialogElement>('dialog#storage-history-plan')!;
+    expect(dialog.open).toBe(true);
     expect(document.querySelector('#storage-history-impact')!.textContent).toContain('permanently unavailable');
     expect(document.querySelector('#storage-history-plan-files')!.textContent).toContain('shared');
     expect(document.querySelector<HTMLInputElement>('.storage-history-row input')!.disabled).toBe(true);
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'storage', value: undefined });
     document.querySelector<HTMLButtonElement>('#storage-history-delete')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'deleteHistory', value: { token: 'approved-history' } });
     render({ ...value, storage: { ...storage, histories: histories.slice(1), historyResult: { checkpointsRemoved: 2, trackingStopped: 0, removed: 1, bytes: 100, skipped: 1, failures: ['locked: EBUSY'] } } });
+    expect(dialog.open).toBe(false);
     expect(document.querySelector('#storage-selection')!.textContent).toContain('No history selected');
     expect(document.querySelector('#storage-history-result')!.textContent).toContain('Deleted 2 restore points');
     expect(document.querySelector('#storage-history-result')!.textContent).not.toContain('tracking');

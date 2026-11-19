@@ -23,6 +23,7 @@ export class ReviewHunkActions implements vscode.Disposable {
   private editors = new Map<vscode.TextEditor, EditorCards>();
   private insets = typeof vscode.window.createWebviewTextEditorInset === 'function';
   constructor(
+    private extensionUri: vscode.Uri,
     private reviews: ReviewStore,
     private navigation: ChangeNavigation,
     private state: () => { project?: string; review?: ReviewState; busy: boolean },
@@ -166,7 +167,7 @@ export class ReviewHunkActions implements vscode.Disposable {
       const request = { project, revision: review.revision, file, hunk: hunk.id, line: hunk.newLine };
       const collection = blocks;
       try {
-        const card = new ReviewBlockCard(editor, hunk, hunks.indexOf(hunk), hunks.length, hunks.length > 1 || this.navigation.comparisons().length > 1,
+        const card = new ReviewBlockCard(this.extensionUri, editor, hunk, hunks.indexOf(hunk), hunks.length, hunks.length > 1 || this.navigation.comparisons().length > 1,
           action => { if (action === 'next') void vscode.commands.executeCommand('agentTandem.nextChange'); else void this.act(editor, request, action === 'revert'); },
           () => collection.cards.delete(hunk.id));
         blocks.cards.set(hunk.id, card);

@@ -1,3 +1,4 @@
+@import url('./keyboard-shortcuts.css');
 /* Shared translucent-popover recipe: backgrounds mix with transparent so the blur shows through. */
 :root{--tandem-popover-opacity:80%;--tandem-popover-filter:blur(16px) saturate(1.4)}
 @media (prefers-reduced-transparency:reduce){:root{--tandem-popover-opacity:100%;--tandem-popover-filter:none}}

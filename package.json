@@ -295,12 +295,17 @@
       {
         "command": "agentTandem.chooseChangedFile",
         "title": "Choose changed file",
+        "category": "AgentTandem",
         "icon": "$(files)",
-        "enablement": "agentTandem.changeNavigation"
+        "enablement": "agentTandem.changeNavigation || agentTandem.reviewEditorActive"
       },
       {
         "command": "agentTandem.open",
         "title": "AgentTandem: Open Conversations"
+      },
+      {
+        "command": "agentTandem.focusChat",
+        "title": "AgentTandem: Focus Chat"
       },
       {
         "command": "agentTandem.openSettings",
@@ -427,11 +432,13 @@
       {
         "command": "agentTandem.header.newChat",
         "title": "New chat",
+        "category": "AgentTandem",
         "icon": "$(add)"
       },
       {
         "command": "agentTandem.header.history",
         "title": "Conversation history",
+        "category": "AgentTandem",
         "icon": "$(history)"
       },
       {
@@ -440,14 +447,20 @@
         "icon": "$(diff)"
       },
       {
-        "command": "agentTandem.header.refresh",
-        "title": "Refresh conversations",
-        "icon": "$(refresh)"
+        "command": "agentTandem.sidebar.newChat",
+        "title": "New chat",
+        "icon": "$(add)",
+        "enablement": "!agentTandem.newChatBlocked"
       },
       {
-        "command": "agentTandem.diagnostics",
-        "title": "Diagnostics",
-        "category": "AgentTandem"
+        "command": "agentTandem.sidebar.history",
+        "title": "Conversation history",
+        "icon": "$(history)"
+      },
+      {
+        "command": "agentTandem.sidebar.review",
+        "title": "Review changes",
+        "icon": "$(diff)"
       }
     ],
     "viewsContainers": {
@@ -494,6 +507,21 @@
       ],
       "view/title": [
         {
+          "command": "agentTandem.sidebar.newChat",
+          "when": "view == agentTandem.panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentTandem.sidebar.history",
+          "when": "view == agentTandem.panel",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agentTandem.sidebar.review",
+          "when": "view == agentTandem.panel",
+          "group": "navigation@3"
+        },
+        {
           "command": "agentTandem.stop",
           "when": "view == agentTandem.panel && agentTandem.running",
           "group": "1_actions@0"
@@ -516,17 +544,12 @@
         {
           "command": "agentTandem.gettingStarted",
           "when": "view == agentTandem.panel",
-          "group": "1_actions@4"
+          "group": "1_onboarding@1"
         },
         {
           "command": "agentTandem.manageCLIs",
           "when": "view == agentTandem.panel",
           "group": "2_tools@1"
-        },
-        {
-          "command": "agentTandem.diagnostics",
-          "when": "view == agentTandem.panel",
-          "group": "2_tools@2"
         }
       ],
       "editor/title": [
@@ -568,17 +591,12 @@
         {
           "command": "agentTandem.gettingStarted",
           "when": "activeWebviewPanelId == 'agentTandem.preview'",
-          "group": "1_actions@4"
+          "group": "1_onboarding@1"
         },
         {
           "command": "agentTandem.manageCLIs",
           "when": "activeWebviewPanelId == 'agentTandem.preview'",
           "group": "2_tools@1"
-        },
-        {
-          "command": "agentTandem.diagnostics",
-          "when": "activeWebviewPanelId == 'agentTandem.preview'",
-          "group": "2_tools@2"
         }
       ],
       "editor/content": [
@@ -632,7 +650,7 @@
         },
         {
           "command": "agentTandem.chooseChangedFile",
-          "when": "agentTandem.changeNavigation"
+          "when": "agentTandem.changeNavigation || agentTandem.reviewEditorActive"
         },
         {
           "command": "agentTandem.acceptCurrentChange",
@@ -663,19 +681,19 @@
           "when": "resourceExtname =~ /^.(png|apng|jpe?g|jfif|gif|webp|bmp|ico|avif|svg|tiff?)$/i"
         },
         {
-          "command": "agentTandem.header.newChat",
-          "when": "false"
-        },
-        {
-          "command": "agentTandem.header.history",
-          "when": "false"
-        },
-        {
           "command": "agentTandem.header.review",
           "when": "false"
         },
         {
-          "command": "agentTandem.header.refresh",
+          "command": "agentTandem.sidebar.newChat",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.sidebar.history",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.sidebar.review",
           "when": "false"
         }
       ],
@@ -688,6 +706,36 @@
       ]
     },
     "keybindings": [
+      {
+        "command": "agentTandem.focusChat",
+        "key": "ctrl+k ctrl+shift+t",
+        "mac": "cmd+k cmd+shift+t",
+        "when": "!terminalFocus && !inQuickOpen"
+      },
+      {
+        "command": "agentTandem.header.newChat",
+        "key": "ctrl+k ctrl+shift+n",
+        "mac": "cmd+k cmd+shift+n",
+        "when": "!terminalFocus && !inQuickOpen"
+      },
+      {
+        "command": "agentTandem.header.history",
+        "key": "ctrl+k ctrl+shift+h",
+        "mac": "cmd+k cmd+shift+h",
+        "when": "!terminalFocus && !inQuickOpen"
+      },
+      {
+        "command": "agentTandem.chooseChangedFile",
+        "key": "ctrl+k ctrl+shift+j",
+        "mac": "cmd+k cmd+shift+j",
+        "when": "!terminalFocus && !inQuickOpen"
+      },
+      {
+        "command": "agentTandem.quickAccounts",
+        "key": "ctrl+k ctrl+shift+a",
+        "mac": "cmd+k cmd+shift+a",
+        "when": "!terminalFocus && !inQuickOpen"
+      },
       {
         "command": "agentTandem.previousFile",
         "key": "alt+pageup",
@@ -782,7 +830,7 @@
             "quota",
             "bankedResets"
           ],
-          "description": "Details shown beside each agent, in this order: remaining quota, quota reset countdown, banked reset count, account and plan. With remaining quota shown, each reset countdown follows its quota window after a clock icon, shortened to two units such as 2h14m or 3d4h; the Text style keeps the spelled-out form. Hover always shows full details. An empty list shows agent icons only."
+          "description": "Choose which details appear beside each agent. An empty list shows icons only. Hover for full details."
         },
         "agentTandem.statusBarQuotaWindows": {
           "type": "string",
@@ -830,7 +878,7 @@
           "type": "number",
           "default": 1024,
           "minimum": 0,
-          "description": "Warn when AgentTandem extension data reaches this size in MB. Shown in the quota hover; a notification appears at most once per day. Set 0 to disable size warnings. Cleanup always requires selecting and previewing data."
+          "description": "Warn when AgentTandem data reaches this size in MB. The warning appears in the quota hover, with a notification at most once a day. Set 0 to disable."
         },
         "agentTandem.autoCleanReviewData": {
           "type": "boolean",
@@ -875,7 +923,7 @@
         "agentTandem.openGitImageDiffs": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Open image changes from Source Control in AgentTandem's Before / After view. VS Code's built-in Git image diff fails with `Cannot read properties of undefined (reading 'selection')` and closes."
+          "markdownDescription": "Open Git image diffs in AgentTandem's Before / After view."
         },
         "agentTandem.showFileCounterInEditor": {
           "type": "boolean",

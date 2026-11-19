@@ -39,6 +39,16 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const [type, listener, options] of listeners.splice(0)) window.removeEventListener(type, listener, options); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Shared Webview review', () => {
+  it('opens the native file picker for the displayed revision and ignores the shortcut with a dirty draft', () => {
+    const choose = () => window.dispatchEvent(new MessageEvent('message', { data: { type: 'chooseFile' } }));
+    choose();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'chooseFile', revision: 'r1', file: 'first.ts' });
+    const editor = editors.at(-1)!;
+    editor.dirty = true; editor.onEdit();
+    postMessage.mockClear();
+    choose();
+    expect(postMessage).not.toHaveBeenCalled();
+  });
   it('selects a changed file from the shared picker and keeps review shortcuts out of the list', () => {
     const trigger = document.querySelector<HTMLButtonElement>('#files-trigger')!, menu = document.getElementById('files-options')!;
     expect(trigger.textContent).toBe('first.ts');

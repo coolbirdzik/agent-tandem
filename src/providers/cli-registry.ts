@@ -5,6 +5,21 @@ export interface CLIRegistry { version: 1; initialized: boolean; revision: strin
 export interface CLIActive { id?: string; executable?: string; version?: string; source: 'project' | 'default' | 'path' | 'extension' | 'automatic-path'; error?: string }
 export interface CLIManagerState { registry: CLIRegistry; active: Partial<Record<ConversationProvider, CLIActive>>; busy: boolean; trusted: boolean; error?: string }
 export interface CLIRequest { project?: string; revision: string; provider: ConversationProvider; action: 'add' | 'edit' | 'toggle' | 'remove' | 'default' | 'use' | 'scan' | 'refresh'; id?: string; name?: string; executable?: string; enabled?: boolean }
+interface ProjectCLIChoice { id: string; label: string; disabled?: boolean; entry?: CLIEntry }
+export function projectCLISelection(active?: CLIActive): string {
+  if (active?.source === 'path') return 'path';
+  return active?.source === 'project' ? active.id ?? 'unavailable' : '';
+}
+export function projectCLIChoices(rows: readonly CLIEntry[], selected: string): ProjectCLIChoice[] {
+  const choices: ProjectCLIChoice[] = [
+    { id: '', label: 'Use Default' },
+    ...rows.map(entry => ({ id: entry.id, label: entry.name, disabled: !entry.enabled || !!entry.error, entry })),
+  ];
+  if (!choices.some(choice => choice.id === selected)) {
+    choices.push({ id: selected, label: selected === 'path' ? 'Using terminal PATH' : 'Unavailable selection', disabled: true });
+  }
+  return choices;
+}
 export const emptyCLIRegistry = (): CLIRegistry => ({ version: 1, initialized: false, revision: 'new', entries: [], defaults: { Codex: '', Claude: '' } });
 export function cliRequest(value: unknown): CLIRequest {
   if (!value || typeof value !== 'object') throw new Error('Choose a CLI action.');

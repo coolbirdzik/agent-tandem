@@ -1,9 +1,9 @@
 import { hoverHints } from './ui/hover-hints';
+import { isMacKeyboard, shortcutMarkup, shortcuts } from './ui/keyboard-shortcuts';
 import { autoHideScrollbars } from './ui/scrollbars';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
+import { renderMessageText, renderToolMessage } from './ui/chat-message';
 import type { Selection } from './core/change-preview';
-import type { ViewState } from './core/types';
+import type { SubagentSelection, SubagentTranscript, ViewState } from './core/types';
 import type { ConversationProvider } from './providers/conversations';
 import type { ChatEdit, ChatRequest, PromptAnswer } from './providers/chat';
 import type { ReviewRequest, ReviewFile } from './core/review';
@@ -20,15 +20,29 @@ import type { FastModeSelection } from './providers/fast-mode';
 import { accessChoices, type AccessMode, type AccessSelection } from './providers/access';
 import type { ChatAttachment } from './core/attachments';
 import { ChatAttachments, attachmentCards } from './ui/chat-attachments';
+import { setModalOpen } from './ui/modal';
 interface EditDraft extends ChatEdit { previousDraft: string; previousAttachments?: ChatAttachment[] }
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState?(): { reviewCollapsed?: boolean; collapsedReviewGroups?: string[] }; setState?(value: unknown): void };
 autoHideScrollbars();
 hoverHints();
 const api = acquireVsCodeApi();
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const sidebarNavigation = document.querySelector<HTMLButtonElement>('#sidebar-navigation');
+const newChatButton = document.querySelector<HTMLButtonElement>('#new-chat');
+const historyButton = document.querySelector<HTMLButtonElement>('#history-open');
 const dropdowns = new Dropdowns(document.body);
 const contextStatus = new ContextStatus(element('chat-context'));
-const send = (type: string, selection?: Selection | string | ChatRequest | PromptAnswer | ReviewRequest | AccessSelection | ModelSelection | EffortSelection | FastModeSelection | CLIRequest | QueueAction | { project: string; provider: ConversationProvider } | { project: string; id: string; token?: string } | { token: string }) => api.postMessage({ type, selection });
+const send = (type: string, selection?: Selection | string | ChatRequest | PromptAnswer | ReviewRequest | AccessSelection | ModelSelection | EffortSelection | FastModeSelection | CLIRequest | QueueAction | SubagentSelection | { project: string; provider: ConversationProvider } | { project: string; id: string; token?: string } | { token: string }) => api.postMessage({ type, selection });
+const revertDialog = element<HTMLDialogElement>('revert-preview');
+const checkpointDialog = element<HTMLDialogElement>('checkpoint-preview');
+const approvalDialog = element<HTMLDialogElement>('agent-approval');
+const approvalPrompts = element('agent-approval-prompts');
+const approvalStop = element<HTMLButtonElement>('agent-approval-stop');
+const dialogs = [revertDialog, checkpointDialog, approvalDialog];
+revertDialog.oncancel = event => { event.preventDefault(); revertDialog.querySelector<HTMLButtonElement>('.modal-cancel')?.click(); };
+checkpointDialog.oncancel = event => { event.preventDefault(); checkpointDialog.querySelector<HTMLButtonElement>('.modal-cancel')?.click(); };
+approvalDialog.oncancel = event => event.preventDefault();
+approvalStop.onclick = () => send('stopChat');
 let lastState: ViewState | undefined;
 const providerAccounts = new ProviderAccounts(element('provider-accounts'), provider => { if (lastState?.project) send('refreshAccount', { project: lastState.project, provider }); });
 const queueView = new ChatQueueView(element('chat-queue'), action => send('queueAction', action));
@@ -43,8 +57,15 @@ const messageResize = typeof ResizeObserver === 'function' ? new ResizeObserver(
 window.addEventListener('resize', () => { for (const update of messageFolds.values()) update(); });
 let changeRevision = '';
 const screenScroll = new Map<string, number>();
-let currentScreen = 'conversations';
+type PanelView = NonNullable<ViewState['screen']> | 'history';
+const panelTitles = { changes: 'Review', cli: 'Manage CLIs', history: 'Conversations' };
+let currentScreen: PanelView = 'conversations';
+const returnViews: PanelView[] = [];
+let backDestination: PanelView | undefined;
 let historyVisible = false;
+let activeSubagent: { selection: SubagentSelection; label: string } | undefined;
+let parentChatScroll = 0;
+let chatFocus: 'composer' | 'history' | undefined;
 let providerFilter = 'all';
 let pendingConversation: string | undefined;
 let pendingAccess: AccessSelection | undefined;
@@ -64,7 +85,7 @@ let accepted: { id: string; key: string; text: string; attachments: ChatAttachme
 let promptRevision = '';
 let reviewRevision = '';
 let reviewPreviewRevision = '';
-let revertPreviewToken: string | undefined;
+let revertPreviewRevision = '';
 const savedGroups = api.getState?.()?.collapsedReviewGroups;
 const collapsedReviewGroups = new Set<string>(Array.isArray(savedGroups) ? savedGroups.filter(item => typeof item === 'string').slice(-200) : []);
 let checkpointPreviewRevision = '';
@@ -74,6 +95,7 @@ const chatAccess = element<HTMLSelectElement>('chat-access');
 const chatModel = element<HTMLSelectElement>('chat-model');
 const chatEffort = element<HTMLSelectElement>('chat-effort');
 const reasoningSlider = element<HTMLInputElement>('reasoning-slider');
+const reasoningTrigger = element<HTMLButtonElement>('reasoning-trigger');
 function renderReasoningSlider() {
   reasoningSlider.max = String(Math.max(0, chatEffort.options.length - 1));
   reasoningSlider.value = String(Math.max(0, chatEffort.selectedIndex));
@@ -82,11 +104,15 @@ function renderReasoningSlider() {
   const label = chatEffort.selectedOptions[0]?.textContent ?? 'Auto';
   reasoningSlider.setAttribute('aria-valuetext', label);
   reasoningSlider.title = chatEffort.title;
+  reasoningTrigger.disabled = chatEffort.disabled;
+  reasoningTrigger.title = chatEffort.title;
+  reasoningTrigger.setAttribute('aria-label', `Choose reasoning effort: ${label}`);
+  const triggerLabel = element('reasoning-trigger-label');
+  if (triggerLabel.textContent !== label) triggerLabel.textContent = label;
   const output = element('reasoning-value');
   if (output.textContent !== label) output.replaceChildren(create('span', label, 'reasoning-value-change'));
   const ticks = element('reasoning-ticks');
   if (ticks.childElementCount !== chatEffort.options.length) ticks.replaceChildren(...[...chatEffort.options].map(() => create('span')));
-  reasoningSlider.closest<HTMLElement>('.reasoning-control')!.dataset.disabled = String(chatEffort.disabled);
 }
 reasoningSlider.oninput = () => {
   if (reasoningSlider.disabled) return;
@@ -98,36 +124,63 @@ reasoningSlider.oninput = () => {
 const chatFastMode = element<HTMLButtonElement>('chat-fast-mode');
 const fastModeChip = element<HTMLButtonElement>('fast-mode-chip');
 const modelTrigger = element<HTMLButtonElement>('model-trigger');
-const modelPopover = element('model-popover');
 const attachmentComposer = new ChatAttachments(element('chat-attachments'), chatInput, element('chat-form'), element<HTMLInputElement>('attachment-picker'), () => draftKey, composerControls);
 element('attach-files').onclick = () => element<HTMLInputElement>('attachment-picker').click();
-function closeModelPopover(restoreFocus = false) {
-  dropdowns.closeWithin(modelPopover);
-  const wasOpen = !modelPopover.hidden;
-  modelPopover.hidden = true; modelTrigger.setAttribute('aria-expanded', 'false');
-  if (wasOpen && restoreFocus) modelTrigger.focus();
+let activeComposerPopover: { trigger: HTMLButtonElement; panel: HTMLElement } | undefined;
+function closeComposerPopover(restoreFocus = false) {
+  if (!activeComposerPopover) return;
+  const { trigger, panel } = activeComposerPopover;
+  activeComposerPopover = undefined;
+  dropdowns.closeWithin(panel);
+  panel.hidden = true;
+  trigger.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) trigger.focus();
 }
-function positionModelPopover() {
-  if (modelPopover.hidden) return;
-  const anchor = modelTrigger.getBoundingClientRect(), bounds = modelPopover.getBoundingClientRect();
-  modelPopover.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - bounds.width - 8))}px`;
+function positionComposerPopover() {
+  if (!activeComposerPopover) return;
+  const { trigger, panel } = activeComposerPopover;
+  const anchor = trigger.getBoundingClientRect(), bounds = panel.getBoundingClientRect();
+  panel.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - bounds.width - 8))}px`;
   const above = anchor.top - bounds.height - 7;
-  modelPopover.style.top = `${Math.max(8, above >= 8 ? above : Math.min(anchor.bottom + 7, window.innerHeight - bounds.height - 8))}px`;
+  panel.style.top = `${Math.max(8, above >= 8 ? above : Math.min(anchor.bottom + 7, window.innerHeight - bounds.height - 8))}px`;
 }
-modelTrigger.onclick = () => {
-  if (modelTrigger.disabled) return;
-  if (!modelPopover.hidden) { closeModelPopover(); return; }
-  modelPopover.hidden = false; modelTrigger.setAttribute('aria-expanded', 'true');
-  positionModelPopover(); dropdowns.focus(chatModel);
+function bindComposerPopover(trigger: HTMLButtonElement, id: string, focus: () => void) {
+  const panel = element(id);
+  trigger.onclick = () => {
+    if (trigger.disabled) return;
+    const wasOpen = activeComposerPopover?.trigger === trigger;
+    closeComposerPopover(wasOpen);
+    if (wasOpen) return;
+    activeComposerPopover = { trigger, panel };
+    panel.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    positionComposerPopover();
+    focus();
+  };
+  element(`${id}-close`).onclick = () => closeComposerPopover(true);
+}
+bindComposerPopover(modelTrigger, 'model-popover', () => dropdowns.focus(chatModel));
+bindComposerPopover(reasoningTrigger, 'reasoning-popover', () => reasoningTrigger.focus());
+// The popover sits outside the form, so the next native Tab stop would dismiss it.
+reasoningTrigger.onkeydown = event => {
+  if (event.key !== 'Tab' || event.shiftKey || activeComposerPopover?.trigger !== reasoningTrigger) return;
+  event.preventDefault();
+  reasoningSlider.focus();
 };
-element('model-popover-close').onclick = () => closeModelPopover(true);
 // Place the parent before Dropdowns repositions an open child list.
-window.addEventListener('resize', positionModelPopover, true);
-window.addEventListener('focusin', event => {
-  if (!modelPopover.hidden && !modelPopover.contains(event.target as Node) && !modelTrigger.contains(event.target as Node)) closeModelPopover();
-});
+window.addEventListener('resize', positionComposerPopover, true);
+function dismissComposerPopoverOutside(event: Event) {
+  const target = event.target;
+  if (!activeComposerPopover || !(target instanceof Node)) return;
+  const { trigger, panel } = activeComposerPopover;
+  if (!panel.contains(target) && !trigger.contains(target)) closeComposerPopover();
+}
+window.addEventListener('focusin', dismissComposerPopoverOutside);
+window.addEventListener('click', dismissComposerPopoverOutside);
 const cliManagerView = new CLIManagerView(element('cli-manager'), element('cli-manager-status'), request => send('cliAction', request),
   executable => send('copyCLIPath', executable));
+element('history-refresh').onclick = () => send('refreshConversations');
+element('review-refresh').onclick = () => send('refreshReview');
 element('cli-refresh').onclick = () => send('refreshCLIs');
 function invalidModel() {
   const provider = chatProvider.value as ConversationProvider;
@@ -179,11 +232,11 @@ chatInput.addEventListener('keydown', event => {
 element('chat-form').addEventListener('submit', event => { event.preventDefault(); submitChat(); });
 function submitChat() {
   const queue = canQueue();
-  if (!lastState?.project || (!queue && (lastState.chat?.status === 'running' || lastState.chat?.phase === 'finishing' || lastState.review?.busy || invalidModel())) || lastState.reviewBusy || submitted || lastState.cliManager?.busy || attachmentComposer.busy || (!chatInput.value.trim() && !attachmentComposer.items.length)) return;
+  if (activeSubagent || !lastState?.project || (!queue && (lastState.chat?.status === 'running' || lastState.chat?.phase === 'finishing' || lastState.review?.busy || invalidModel())) || lastState.reviewBusy || submitted || lastState.cliManager?.busy || attachmentComposer.busy || (!chatInput.value.trim() && !attachmentComposer.items.length)) return;
   const edit = edits.get(draftKey);
   if (edit && edit.revision !== lastState.conversation?.conversation.revision) return;
   const id = crypto.randomUUID(); submitted = { id, key: draftKey, text: chatInput.value, attachments: [...attachmentComposer.items], edit };
-  closeModelPopover();
+  closeComposerPopover();
   send('sendChat', { requestId: id, project: lastState.project, provider: chatProvider.value as ConversationProvider,
     text: chatInput.value, model: chatModel.value, reasoningEffort: chatEffort.value, accessMode: chatAccess.value as AccessMode, conversationKey: lastState.conversation?.conversation.id ? lastState.conversation.conversation.key : undefined,
     ...(submitted.attachments.length ? { attachments: submitted.attachments } : {}),
@@ -191,8 +244,12 @@ function submitChat() {
     ...(edit ? { edit: { messageId: edit.messageId, revision: edit.revision } } : {}) });
   composerControls();
 }
-function newChat() { closeModelPopover(); saveDraft(); historyVisible = false; send('newChat', chatProvider.value); chatInput.focus(); }
-element('new-chat').onclick = newChat;
+function newChat() {
+  closeComposerPopover(); saveDraft(); historyVisible = false; chatFocus = 'composer';
+  returnViews.length = 0; backDestination = undefined; pendingConversation = undefined;
+  send('newChat', chatProvider.value); chatInput.focus();
+}
+if (newChatButton) newChatButton.onclick = newChat;
 chatProvider.onchange = newChat;
 chatAccess.onchange = () => {
   if (!lastState?.project || chatAccess.disabled) return;
@@ -225,17 +282,14 @@ fastModeChip.onclick = () => {
   setFastMode(false);
   if (restoreFocus && fastModeChip.hidden) modelTrigger.focus();
 };
-element('choose-codex-cli').onclick = () => send('chooseCLI', 'Codex');
-element('choose-claude-cli').onclick = () => send('chooseCLI', 'Claude');
 element('models-refresh').onclick = () => {
   if (!lastState?.project || submitted || element<HTMLButtonElement>('models-refresh').disabled) return;
   send('refreshModels', { project: lastState.project, provider: chatProvider.value as ConversationProvider, model: '' });
 };
 element('chat-stop').onclick = () => send('stopChat');
 element('activity-stop').onclick = () => send('stopChat');
-const escapeHtml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-marked.use({ renderer: { html: ({ text }) => escapeHtml(text), image: ({ text }) => escapeHtml(text) } });
 function showHistory(show: boolean) {
+  activeSubagent = undefined;
   if (show && !historyVisible) {
     providerFilter = 'all';
     element<HTMLInputElement>('conversation-search').value = '';
@@ -245,35 +299,100 @@ function showHistory(show: boolean) {
   else if (lastState) render(lastState);
 }
 
+function sidebarBackView() {
+  return returnViews.at(-1) ?? (currentScreen === 'conversations' ? undefined : 'conversations');
+}
+
+function goBack(view: PanelView) {
+  backDestination = view;
+  const screen = view === 'history' ? 'conversations' : view;
+  if (screen === 'conversations') historyVisible = view === 'history';
+  if (lastState && (lastState.screen ?? 'conversations') === screen) render(lastState);
+  else send('screen', screen);
+}
+
+function renderSidebarHeader(navigation: HTMLButtonElement, state: ViewState, view: PanelView) {
+  const title = view === 'conversations'
+    ? activeSubagent?.label ?? (state.conversation?.conversation.title || (state.project ? 'New chat' : 'Open a workspace'))
+    : panelTitles[view];
+  const heading = element('panel-title');
+  if (heading.textContent !== title) {
+    heading.textContent = title;
+    heading.title = title;
+  }
+  const back = activeSubagent ? 'conversations' : sidebarBackView();
+  if (!back && document.activeElement === navigation) heading.focus({ preventScroll: true });
+  navigation.hidden = !back;
+  if (back) {
+    const label = activeSubagent ? 'Back to parent chat' : back === 'conversations' ? 'Back to chat' : `Back to ${panelTitles[back]}`;
+    if (navigation.getAttribute('aria-label') !== label) {
+      navigation.title = label;
+      navigation.setAttribute('aria-label', label);
+    }
+  }
+  element('conversation-count').hidden = view !== 'history';
+  element('review-count').hidden = view !== 'changes';
+  element('history-refresh').hidden = view !== 'history';
+  element('review-refresh').hidden = view !== 'changes';
+  element('cli-refresh').hidden = view !== 'cli';
+}
+
+if (sidebarNavigation) sidebarNavigation.onclick = () => {
+  if (activeSubagent) { closeSubagent(); return; }
+  const back = sidebarBackView();
+  if (back) goBack(back);
+};
+const subagentBack = document.querySelector<HTMLButtonElement>('#subagent-back');
+if (subagentBack) subagentBack.onclick = closeSubagent;
+
+function closeSubagent() {
+  if (!activeSubagent || !lastState) return;
+  const focusKey = `subagent:${activeSubagent.selection.agentId}`;
+  activeSubagent = undefined;
+  render(lastState);
+  [...element('subagent-list').querySelectorAll('button')].find(button => button.dataset.focusKey === focusKey)?.focus({ preventScroll: true });
+}
+
+function focusChat() {
+  closeComposerPopover();
+  chatFocus = 'composer';
+  showHistory(false);
+}
+document.querySelector<HTMLButtonElement>('#focus-chat')?.addEventListener('click', focusChat);
+
 
 element('stop').onclick = () => send(lastState?.chat?.status === 'running' ? 'stopChat' : 'stop');
-element('probe').onclick = () => send('probe');
-element('sync').onclick = () => send('sync');
-element('history-open').onclick = () => showHistory(true);
-element('history-close').onclick = () => showHistory(false);
+element('probe').onclick = () => send('probe', 'inline');
+if (historyButton) historyButton.onclick = () => showHistory(true);
+document.querySelector<HTMLButtonElement>('#history-close')?.addEventListener('click', () => showHistory(false));
 element<HTMLSelectElement>('history-workspace').onchange = () => { if (lastState) render(lastState); };
-element('review-tracking').onclick = () => send('trackingControls');
 element('conversation-search').oninput = () => { if (lastState) render(lastState); };
 document.querySelectorAll<HTMLButtonElement>('[data-provider]').forEach(node => { node.onclick = () => { providerFilter = node.dataset.provider!; if (lastState) render(lastState); }; });
 document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach(node => { node.onclick = () => { send('screen', node.dataset.screen); }; });
 window.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !modelPopover.hidden) { event.preventDefault(); event.stopPropagation(); closeModelPopover(true); return; }
-  if (event.key === 'Escape') { if (historyVisible) showHistory(false); else cancelEdit(); }
+  if (dialogs.some(dialog => dialog.open)) return;
+  if (event.key === 'Escape' && activeComposerPopover) { event.preventDefault(); event.stopPropagation(); closeComposerPopover(true); return; }
+  if (event.key !== 'Escape') return;
+  if (activeSubagent) { event.preventDefault(); closeSubagent(); }
+  else if (sidebarNavigation && currentScreen === 'history') goBack(sidebarBackView() ?? 'conversations');
+  else if (historyVisible) showHistory(false);
+  else cancelEdit();
 });
-window.addEventListener('click', event => {
-  if (!modelPopover.contains(event.target as Node) && !modelTrigger.contains(event.target as Node)) closeModelPopover();
-});
-
-/** The pending-changes box collapses to its heading so the chat keeps the room. */
+const reviewToggle = element<HTMLButtonElement>('review-toggle');
+reviewToggle.onclick = () => setReviewCollapsed(!reviewCollapsed);
+/** An empty review stays collapsed without changing the user's preference. */
 function applyReviewCollapsed() {
-  element('pending-changes').classList.toggle('collapsed', reviewCollapsed);
-  const body = document.getElementById('review-body');
-  if (body) body.hidden = reviewCollapsed;
-  const toggle = document.getElementById('review-toggle');
-  if (!toggle) return;
-  toggle.setAttribute('aria-expanded', String(!reviewCollapsed));
-  toggle.title = reviewCollapsed ? 'Show changed files' : 'Hide changed files';
-  toggle.setAttribute('aria-label', `${toggle.title}: ${toggle.textContent}`);
+  const collapsed = reviewToggle.disabled || reviewCollapsed;
+  element('pending-changes').classList.toggle('collapsed', collapsed);
+  element('review-body').hidden = collapsed;
+  reviewToggle.setAttribute('aria-expanded', String(!collapsed));
+  if (reviewToggle.disabled) {
+    reviewToggle.removeAttribute('title');
+    reviewToggle.removeAttribute('aria-label');
+  } else {
+    reviewToggle.title = collapsed ? 'Show changed files' : 'Hide changed files';
+    reviewToggle.setAttribute('aria-label', `${reviewToggle.title}: ${reviewToggle.textContent}`);
+  }
 }
 function setReviewCollapsed(value: boolean) { reviewCollapsed = value; persistDrafts(); applyReviewCollapsed(); }
 
@@ -301,16 +420,16 @@ function currentMessage(anchors: HTMLElement[]) {
 }
 function updateMessageNav() {
   const anchors = messageAnchors();
-  const visible = currentScreen === 'conversations' && !historyVisible && anchors.length > 1;
+  const visible = currentScreen === 'conversations' && !historyVisible && !activeSubagent && anchors.length > 1;
   messageNav.hidden = !visible;
   if (!visible) return;
   const index = currentMessage(anchors), label = `${index + 1}/${anchors.length}`;
   if (element('message-position').textContent !== label) element('message-position').textContent = label;
-  messageNav.title = `Message ${label} · Alt+Up and Alt+Down jump between your messages`;
   element<HTMLButtonElement>('message-previous').disabled = index === 0;
   element<HTMLButtonElement>('message-next').disabled = index === anchors.length - 1;
 }
 function jumpToMessage(direction: -1 | 1) {
+  if (activeSubagent) return;
   const anchors = messageAnchors();
   if (anchors.length < 2) return;
   const scroller = document.querySelector<HTMLElement>('.scroll-body')!;
@@ -333,7 +452,7 @@ document.querySelector<HTMLElement>('.scroll-body')!.addEventListener('scroll', 
 });
 window.addEventListener('resize', () => { clearMessageSelection(); updateMessageNav(); });
 window.addEventListener('keydown', event => {
-  if (messageNav.hidden || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (messageNav.hidden || dialogs.some(dialog => dialog.open) || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
   event.preventDefault(); jumpToMessage(event.key === 'ArrowUp' ? -1 : 1);
 });
@@ -369,44 +488,51 @@ function providerIcon(provider: ConversationProvider) {
   icon.src = provider === 'Claude' ? document.body.dataset.claudeIcon! : document.body.dataset.codexIcon!;
   icon.alt = ''; icon.setAttribute('aria-hidden', 'true'); return icon;
 }
-function providerBadge(provider: ConversationProvider, icon = true) {
+function providerBadge(provider: ConversationProvider) {
   const badge = create('span', undefined, 'provider-badge'); badge.dataset.provider = provider;
-  if (icon) badge.append(providerIcon(provider));
+  badge.append(providerIcon(provider));
   badge.append(create('span', provider === 'Claude' ? 'Claude Code' : 'Codex')); return badge;
 }
-function reviewFileRow(state: ViewState, file: ReviewFile, disabled: boolean, group?: string, prefix = 'review') {
-  const request = (): ReviewRequest => ({ project: state.project!, revision: state.review!.revision, file: file.path, ...(group ? { group } : {}) });
+function reviewFileRow(state: ViewState, file: ReviewFile, disabled: boolean, group: string, surface: 'review' | 'changes' = 'review') {
+  const request = (): ReviewRequest => ({ project: state.project!, revision: state.review!.revision, file: file.path, group });
   const row = create('div', undefined, 'review-file');
-  row.append(icon(file.kind === 'added' ? 'new-file' : file.kind === 'deleted' ? 'trash' : 'edit'));
-  const link = button(file.path, () => send('previewReview', request()));
-  link.className = 'review-file-link'; link.title = `View ${file.path} changes in the VS Code editor`; link.dataset.focusKey = `${prefix}:${file.path}`; row.append(link);
-  const stats = create('span', undefined, 'review-stats');
-  if (file.additions !== undefined) stats.append(create('span', `+${file.additions}`, 'review-added'), create('span', `−${file.deletions ?? 0}`, 'review-deleted'));
-  else stats.textContent = file.binary ? 'Binary' : file.kind;
-  row.append(stats);
+  const link = button('', () => send('previewReview', request()));
+  link.className = 'review-file-link'; link.title = `View ${file.path} changes in the VS Code editor`; link.dataset.focusKey = `${surface}:${file.path}`;
+  const label = create('span', undefined, 'review-file-label');
+  label.append(icon(file.kind === 'added' ? 'new-file' : file.kind === 'deleted' ? 'trash' : 'edit'), create('span', file.path, 'review-file-path'));
+  link.append(label);
+  const actions = create('div', undefined, 'review-file-actions');
   for (const [available, type, label, mark] of [
     [hasUnassignedCaptures(file), 'linkReviewConversation', 'Link to conversation', 'link'],
     [hasManualConversationLink(file), 'unlinkReviewConversation', 'Remove manual link', 'close'],
   ] as const) if (available) {
     const action = button('', () => send(type, request()), disabled);
     action.className = 'review-file-action'; action.append(icon(mark)); action.title = `${label}: ${file.path}`;
-    action.setAttribute('aria-label', action.title); action.dataset.focusKey = `${prefix}:${type}:${file.path}`; row.append(action);
+    action.setAttribute('aria-label', action.title); action.dataset.focusKey = `${surface}:${type}:${file.path}`; actions.append(action);
   }
-  for (const [type, name, title] of [['previewRevert', 'discard', 'Revert'], ['acceptChanges', 'check', 'Accept']]) {
-    const action = button(title!, () => send(type!, request()), disabled);
-    action.className = 'review-file-action'; action.prepend(icon(name!)); action.title = `${title} ${file.path}`; action.setAttribute('aria-label', action.title); action.dataset.focusKey = `${prefix}:${type}:${file.path}`; row.append(action);
+  for (const [type, name, title] of [['previewRevert', 'discard', 'Revert'], ['acceptChanges', 'check', 'Accept']] as const) {
+    const action = button('', () => send(type, request()), disabled);
+    action.className = 'review-file-action'; action.append(icon(name)); action.title = `${title} ${file.path}`; action.setAttribute('aria-label', action.title); action.dataset.focusKey = `${surface}:${type}:${file.path}`; actions.append(action);
   }
+  const stats = create('span', undefined, 'review-stats');
+  if (file.additions !== undefined) stats.append(create('span', `+${file.additions}`, 'review-added'), create('span', `−${file.deletions ?? 0}`, 'review-deleted'));
+  else stats.textContent = file.binary ? 'Binary' : file.kind;
+  row.append(link, actions, stats);
   return row;
 }
 function renderConversationChanges(state: ViewState, disabled: boolean) {
   const pane = element('conversation-changes'); pane.replaceChildren();
   const review = state.review;
-  const toolbar = create('div', undefined, 'changes-toolbar');
+  const status = element('review-notice');
+  const notice = review?.notice ?? '';
+  if (status.textContent !== notice) status.textContent = notice;
   const count = review?.files.length ?? 0;
-  toolbar.append(create('span', `${count} pending ${count === 1 ? 'file' : 'files'}`, 'meta'));
-  const tools = create('div', undefined, 'review-actions');
-  if (review?.files.length) tools.append(button('Review latest', () => send('reviewLatest')));
-  tools.append(button('Refresh', () => send('refreshReview'), disabled)); toolbar.append(tools); pane.append(toolbar);
+  element('review-count').textContent = String(count);
+  if (count) {
+    const toolbar = create('div', undefined, 'changes-toolbar review-actions');
+    toolbar.append(button('Review latest', () => send('reviewLatest')));
+    pane.append(toolbar);
+  }
   const bulk = create('div', undefined, 'review-actions changes-bulk-actions');
   bulk.setAttribute('role', 'group'); bulk.setAttribute('aria-label', 'Workspace review actions');
   const requestAll = (): ReviewRequest => ({ project: state.project!, revision: review!.revision });
@@ -437,7 +563,9 @@ function renderConversationChanges(state: ViewState, disabled: boolean) {
   for (const [key, files] of [...groups].sort(([a], [b]) => rank(a) - rank(b))) {
     const sources = [...new Map(files.flatMap(fileConversations).map(source => [source.key, source])).values()];
     const source = sources[0], named = key !== 'shared' && key !== 'unassigned';
+    const hasManualLinks = files.some(hasManualConversationLink);
     const card = create('section', undefined, 'conversation-change-group'); card.dataset.group = key;
+    const header = create('div', undefined, 'conversation-change-header');
     const heading = button('', () => {
       const collapsed = !body.hidden; body.hidden = collapsed;
       if (collapsed) collapsedReviewGroups.add(identity); else collapsedReviewGroups.delete(identity);
@@ -447,21 +575,36 @@ function renderConversationChanges(state: ViewState, disabled: boolean) {
     const identity = `${state.project}:${key}`;
     const body = create('div', undefined, 'conversation-change-body'); body.hidden = collapsedReviewGroups.has(identity);
     body.id = `review-group-${pane.childElementCount}`; heading.setAttribute('aria-controls', body.id); heading.setAttribute('aria-expanded', String(!body.hidden)); heading.dataset.focusKey = `review-group:${key}`;
-    heading.append(named && source ? providerIcon(source.provider) : icon(key === 'shared' ? 'git-merge' : 'folder-opened'));
-    const title = create('span', named ? source!.title : key === 'shared' ? 'Shared workspace changes' : 'Unassigned workspace changes', 'conversation-change-title'); heading.append(title);
-    heading.append(create('span', `${files.length}`, 'count'), icon('chevron-down')); card.append(heading);
+    const identityLabel = create('span', undefined, 'conversation-change-identity');
+    identityLabel.append(
+      named && source ? providerIcon(source.provider) : icon(key === 'shared' ? 'git-merge' : 'folder-opened'),
+      create('span', named ? source!.title : key === 'shared' ? 'Shared workspace changes' : 'Unassigned workspace changes', 'conversation-change-title'),
+    );
+    heading.append(identityLabel, create('span', `${files.length}`, 'count'), icon('chevron-down'));
+    header.append(heading);
+    if (named && state.conversations?.some(item => item.key === key)) {
+      const open = button('', () => send('conversation', key));
+      open.className = 'icon-button review-chat-link';
+      open.title = 'Open conversation';
+      open.setAttribute('aria-label', open.title);
+      open.dataset.focusKey = `review-group-open:${key}`;
+      open.append(icon('comment-discussion'));
+      header.append(open);
+    }
+    card.append(header);
     if (named) {
-      const caption = create('p', `${source!.provider === 'Claude' ? 'Claude Code' : 'Codex'}${key === selected ? ' · Current conversation' : ''}${files.some(hasManualConversationLink) ? ' · Includes manual links' : ''}`, 'review-caption conversation-change-caption'); caption.title = source!.id || 'New conversation';
-      if (state.conversations?.some(item => item.key === key)) {
-        const open = button('', () => send('conversation', key)); open.className = 'review-chat-link'; open.title = 'Open this conversation in AgentTandem chat'; open.setAttribute('aria-label', 'Open conversation'); open.append(icon('comment-discussion'), create('span', 'Open conversation')); caption.append(open);
+      const details = [key === selected ? 'Current conversation' : '', hasManualLinks ? 'Includes manual links' : ''].filter(Boolean);
+      if (details.length) {
+        const caption = create('p', details.join(' · '), 'review-caption conversation-change-caption');
+        caption.title = source!.id || 'New conversation';
+        body.append(caption);
       }
-      body.append(caption);
     } else body.append(create('p', key === 'shared' ? 'Multiple conversations or mixed edits. Review these files together.' : 'No automatic conversation match. Link these files to the conversation that produced them, or review them here.', 'review-caption'));
     const actions = create('div', undefined, 'review-actions');
     const request = (): ReviewRequest => ({ project: state.project!, revision: review.revision, group: key });
     actions.append(button('View changes', () => send('previewReview', request())), button('Revert group', () => send('previewRevert', request()), disabled), button('Accept group', () => send('acceptChanges', request()), disabled));
     if (files.some(hasUnassignedCaptures)) actions.append(button('Link to conversation', () => send('linkReviewConversation', request()), disabled));
-    if (files.some(hasManualConversationLink)) actions.append(button('Remove manual links', () => send('unlinkReviewConversation', request()), disabled));
+    if (hasManualLinks) actions.append(button('Remove manual links', () => send('unlinkReviewConversation', request()), disabled));
     body.append(actions);
     const list = create('div', undefined, 'review-files');
     for (const file of files) list.append(reviewFileRow(state, file, disabled, key, 'changes'));
@@ -469,10 +612,12 @@ function renderConversationChanges(state: ViewState, disabled: boolean) {
   }
 }
 function renderRevertPreview(state: ViewState, disabled: boolean) {
-  const pane = element('revert-preview'), preview = state.revertPreview; pane.replaceChildren(); pane.hidden = !preview;
+  const pane = revertDialog, preview = state.revertPreview;
+  pane.replaceChildren();
   if (!preview) return;
   const stale = preview.request.project !== state.project || preview.request.revision !== state.review?.revision;
-  pane.append(create('h3', preview.hunk ? 'Revert this change?' : `Revert ${preview.files.length} ${preview.files.length === 1 ? 'file' : 'files'}?`));
+  const title = create('h2', preview.hunk ? 'Revert this change?' : `Revert ${preview.files.length} ${preview.files.length === 1 ? 'file' : 'files'}?`);
+  title.id = 'revert-preview-title'; title.tabIndex = -1; title.autofocus = true; pane.append(title);
   pane.append(create('p', stale ? 'Changes updated. Cancel and preview the current review again.' : 'Restore saved code in this scope. Undo will be available after Revert.', 'review-caption'));
   const list = create('ul', undefined, 'revert-scope');
   for (const file of preview.files) {
@@ -481,9 +626,10 @@ function renderRevertPreview(state: ViewState, disabled: boolean) {
     row.append(create('span', preview.hunk ? 'Selected change' : file.kind === 'added' ? 'Delete' : file.kind === 'deleted' ? 'Restore' : 'Restore baseline', 'meta')); list.append(row);
   }
   pane.append(list);
-  const actions = create('div', undefined, 'review-actions');
-  const confirm = button('Confirm Revert', () => send('confirmRevert', { token: preview.token }), disabled || stale); confirm.className = 'revert-confirm'; confirm.dataset.focusKey = 'confirm-revert';
-  actions.append(confirm, button('Cancel', () => send('cancelRevert'), disabled)); pane.append(actions);
+  const actions = create('div', undefined, 'confirmation-actions');
+  const confirm = button('Confirm Revert', () => send('confirmRevert', { token: preview.token }), disabled || stale); confirm.className = 'primary'; confirm.dataset.focusKey = 'confirm-revert';
+  const cancel = button('Cancel', () => send('cancelRevert'), disabled); cancel.classList.add('modal-cancel'); cancel.dataset.focusKey = 'cancel-revert';
+  actions.append(confirm, cancel); pane.append(actions);
 }
 /** Leave matching nodes attached so focus, selection and hover survive refreshes. */
 function reconcileChildren(root: HTMLElement, children: HTMLElement[]) {
@@ -493,18 +639,137 @@ function reconcileChildren(root: HTMLElement, children: HTMLElement[]) {
     if (root.children[index] !== child) root.insertBefore(child, root.children[index] ?? null);
   });
 }
+function groupToolRows(chat: HTMLElement, messages: HTMLElement[]) {
+  const existing = new Map([...chat.querySelectorAll<HTMLDetailsElement>(':scope > .conversation-tools')].map(group => [group.dataset.firstToolId, group]));
+  const rows: HTMLElement[] = [];
+  let tools: HTMLElement[] = [];
+  const appendGroup = () => {
+    if (!tools.length) return;
+    const firstToolId = tools[0]!.dataset.messageId;
+    let group = existing.get(firstToolId);
+    if (!group) {
+      group = create('details', undefined, 'conversation-accordion conversation-tools');
+      group.dataset.firstToolId = firstToolId;
+      const summary = create('summary', undefined, 'conversation-accordion-heading');
+      const identity = create('span', undefined, 'conversation-accordion-identity');
+      identity.append(icon('tools'), create('span', 'Tools', 'conversation-accordion-title'));
+      const chevron = icon('chevron-down');
+      chevron.classList.add('conversation-accordion-chevron');
+      summary.append(identity, create('span', undefined, 'meta'), chevron);
+      group.append(summary, create('div', undefined, 'tool-list'));
+    }
+    const count = group.querySelector('.meta')!;
+    if (count.textContent !== String(tools.length)) count.textContent = String(tools.length);
+    reconcileChildren(group.querySelector<HTMLElement>('.tool-list')!, tools);
+    rows.push(group);
+    tools = [];
+  };
+  for (const message of messages) {
+    if (message.classList.contains('tool')) {
+      tools.push(message);
+      continue;
+    }
+    const assistant = message.classList.contains('assistant');
+    // Give a recorded tool run the following agent message as an anchor within the same turn.
+    if (!assistant) appendGroup();
+    rows.push(message);
+    if (assistant) appendGroup();
+  }
+  appendGroup();
+  return rows;
+}
+function renderSubagents(state: ViewState) {
+  const details = element<HTMLDetailsElement>('conversation-subagents');
+  const parentKey = state.conversation?.conversation.key;
+  const group = state.subagents?.parentKey === parentKey ? state.subagents : undefined;
+  const identity = JSON.stringify([state.project, parentKey]);
+  if (details.dataset.parent !== identity) {
+    details.dataset.parent = identity;
+    details.open = parentKey !== undefined;
+  }
+  const appeared = details.hidden && !!group?.entries.length;
+  details.hidden = !group?.entries.length;
+  const signature = JSON.stringify([identity, group?.entries]);
+  if (details.dataset.signature === signature) return appeared;
+  details.dataset.signature = signature;
+  const count = element('subagent-count');
+  count.textContent = String(group?.entries.length ?? 0);
+  const list = element('subagent-list');
+  const project = state.project;
+  list.replaceChildren();
+  if (!group || !project) return appeared;
+  for (const entry of group.entries) {
+    const row = create('li');
+    const open = button(entry.label, () => {
+      if (!lastState) return;
+      const selection = { project, parentKey: group.parentKey, agentId: entry.id, requestId: crypto.randomUUID() };
+      activeSubagent = { selection, label: entry.label };
+      if (subagentBack) element('subagent-title').textContent = entry.label;
+      renderSubagentTranscript();
+      render(lastState);
+      (sidebarNavigation ?? subagentBack)?.focus({ preventScroll: true });
+      send('selectSubagent', selection);
+    });
+    open.type = 'button';
+    open.dataset.focusKey = `subagent:${entry.id}`;
+    open.title = entry.id;
+    row.append(open);
+    list.append(row);
+  }
+  return appeared;
+}
+function renderSubagentTranscript(transcript?: SubagentTranscript) {
+  const chat = element('subagent-conversation');
+  chat.replaceChildren();
+  const status = !transcript ? 'Loading transcript…' : transcript.status === 'error' ? transcript.message
+    : transcript.notice ?? (transcript.messages.length ? undefined : 'This subagent has no saved messages yet.');
+  if (status) {
+    const notice = create('p', status, transcript?.status === 'error' ? 'error' : 'meta subagent-notice');
+    notice.setAttribute('role', 'status');
+    chat.append(notice);
+  }
+  if (transcript?.status !== 'ready') return;
+  const messages = transcript.messages.map(message => {
+    const node = create('article', undefined, `message ${message.role}`);
+    node.dataset.messageId = message.id;
+    if (message.role === 'tool') {
+      const tool = renderToolMessage(message);
+      tool.id = `subagent-${tool.id}`;
+      node.append(tool);
+    } else {
+      const author = create('div', undefined, 'message-author');
+      author.append(create('span', message.role === 'user' ? 'Input' : activeSubagent?.label));
+      node.append(author, renderMessageText(message.text));
+      if (message.attachments?.length) {
+        const cards = create('div', undefined, 'message-attachments chat-attachments');
+        attachmentCards(cards, message.attachments);
+        node.append(cards);
+      }
+    }
+    return node;
+  });
+  chat.append(...groupToolRows(chat, messages));
+}
 function render(state: ViewState) {
-  if (lastState?.project !== state.project || lastState?.conversation?.conversation.key !== state.conversation?.conversation.key ||
-    (lastState?.conversation?.conversation.provider ?? lastState?.composeProvider) !== (state.conversation?.conversation.provider ?? state.composeProvider)) closeModelPopover();
+  const conversationKey = state.conversation?.conversation.key;
+  const conversationChanged = lastState?.conversation?.conversation.key !== conversationKey;
+  const conversationOpened = lastState?.conversationOpenRevision !== state.conversationOpenRevision;
+  const providerResultsChanged = JSON.stringify(lastState?.providers) !== JSON.stringify(state.providers);
+  if (lastState?.project !== state.project || conversationChanged ||
+    (lastState?.conversation?.conversation.provider ?? lastState?.composeProvider) !== (state.conversation?.conversation.provider ?? state.composeProvider)) closeComposerPopover();
+  if (conversationOpened) historyVisible = false;
   lastState = state;
-  if (currentProject !== state.project) {
+  const projectChanged = currentProject !== state.project;
+  if (projectChanged) {
     currentProject = state.project; element<HTMLSelectElement>('history-workspace').value = ''; historyVisible = false; pendingConversation = undefined;
+    returnViews.length = 0; backDestination = undefined;
     submitted = undefined; accepted = undefined;
     pendingAccess = undefined;
     providerFilter = 'all'; element<HTMLInputElement>('conversation-search').value = '';
     screenScroll.clear();
   }
-  if (pendingConversation && state.conversation?.conversation.key === pendingConversation) {
+  const openedFromHistory = !!pendingConversation && conversationKey === pendingConversation && currentScreen === 'history';
+  if (pendingConversation && conversationKey === pendingConversation) {
     const openedDraftKey = draftIdentity(state);
     drafts.delete(openedDraftKey); edits.delete(openedDraftKey); attachmentComposer.delete(openedDraftKey);
     if (draftKey === openedDraftKey) chatInput.value = '';
@@ -513,21 +778,38 @@ function render(state: ViewState) {
   const focusKey = (document.activeElement as HTMLElement | null)?.dataset.focusKey;
   const opened = new Set([...document.querySelectorAll('details[open]')].map(node => node.id));
   const scroller = document.querySelector<HTMLElement>('.scroll-body')!;
-  const previousScroll = scroller.scrollTop;
-  const atBottom = scroller.scrollHeight - scroller.clientHeight - previousScroll < 40;
+  const subagentThread = element('subagent-thread');
+  const transcriptWasVisible = !subagentThread.hidden;
   const nextScreen = state.screen ?? 'conversations';
+  if (activeSubagent && (activeSubagent.selection.project !== state.project || activeSubagent.selection.parentKey !== conversationKey ||
+    nextScreen !== 'conversations' || historyVisible || conversationOpened)) activeSubagent = undefined;
+  const transcriptVisible = !!activeSubagent;
+  const previousScroll = transcriptWasVisible && !transcriptVisible && !conversationChanged && !projectChanged ? parentChatScroll : scroller.scrollTop;
+  if (transcriptVisible && !transcriptWasVisible) parentChatScroll = previousScroll;
+  if (transcriptWasVisible && !transcriptVisible) element('subagent-conversation').replaceChildren();
+  const atBottom = scroller.scrollHeight - scroller.clientHeight - previousScroll < 40;
   const viewKey = nextScreen === 'conversations' && historyVisible ? 'history' : nextScreen;
   const screenChanged = viewKey !== currentScreen;
-  if (screenChanged) { screenScroll.set(currentScreen, previousScroll); currentScreen = viewKey; }
+  if (screenChanged) {
+    if (sidebarNavigation && !projectChanged) {
+      if (viewKey === backDestination) returnViews.pop();
+      else if (viewKey === 'conversations' && !openedFromHistory) returnViews.length = 0;
+      else returnViews.push(currentScreen);
+      backDestination = undefined;
+    }
+    screenScroll.set(currentScreen, previousScroll); currentScreen = viewKey;
+  } else if (conversationChanged && viewKey === 'conversations') returnViews.length = 0;
   document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.screen === nextScreen)));
-  for (const section of ['conversations', 'changes', 'tools', 'cli']) element(`screen-${section}`).hidden = section !== nextScreen;
+  for (const section of ['conversations', 'changes', 'cli']) element(`screen-${section}`).hidden = section !== nextScreen;
   element('history-view').hidden = !historyVisible;
-  element('thread-view').hidden = historyVisible;
-  element('history-open').setAttribute('aria-pressed', String(historyVisible && nextScreen === 'conversations'));
-  const root = element('root-name'); root.textContent = state.projectName ?? state.project?.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace'; root.title = state.project ?? 'No folder open';
-  element('sync').title = state.syncing ? 'Syncing conversations…' : state.syncedAt ? `Refresh conversations · last synced ${new Date(state.syncedAt).toLocaleTimeString()}` : 'Refresh workspace conversations';
-  element('sync').setAttribute('aria-busy', String(!!state.syncing));
-  element<HTMLButtonElement>('sync').disabled = !!state.syncing || !state.project;
+  element('thread-view').hidden = historyVisible || transcriptVisible;
+  subagentThread.hidden = !transcriptVisible;
+  historyButton?.setAttribute('aria-pressed', String(historyVisible && nextScreen === 'conversations'));
+  element<HTMLButtonElement>('history-refresh').disabled = !state.project || !!state.syncing;
+  if (sidebarNavigation) renderSidebarHeader(sidebarNavigation, state, viewKey);
+  else {
+    const root = element('root-name'); root.textContent = state.projectName ?? state.project?.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Workspace'; root.title = state.project ?? 'No folder open';
+  }
   element('sync-errors').textContent = state.syncErrors?.join('\n') ?? '';
   element('error').textContent = state.error ?? '';
   if (submitted && state.chatQueue?.items.some(item => item.requestId === submitted!.id)) {
@@ -602,7 +884,6 @@ function render(state: ViewState) {
   const modelDescription = catalog?.choices.find(choice => choice.id === selectedModel)?.description ?? (selectedModel || 'Use the native provider configuration or default model.');
   chatModel.title = [modelDescription, catalog?.cli?.version, catalog?.cli?.executable].filter(Boolean).join('\n');
   element('models-refresh').title = catalog?.cli ? `Refresh models from ${catalog.cli.version}\n${catalog.cli.executable}` : 'Refresh available models';
-  for (const name of ['codex', 'claude']) element<HTMLButtonElement>(`choose-${name}-cli`).disabled = chatAccess.disabled;
   element<HTMLButtonElement>('models-refresh').disabled = chatAccess.disabled || catalog?.status === 'loading';
   const selectedChoice = catalog?.choices.find(choice => choice.id === selectedModel);
   if (pendingEffort && (pendingEffort.project !== state.project || pendingEffort.provider !== provider || pendingEffort.model !== selectedModel || state.selectedEfforts?.[provider]?.[selectedModel] === pendingEffort.effort || state.error)) pendingEffort = undefined;
@@ -627,8 +908,7 @@ function render(state: ViewState) {
   modelTrigger.title = [chatModel.title, `Reasoning: ${selectedEffort ? effortLabel(selectedEffort) : 'Auto'}`].filter(Boolean).join('\n');
   modelTrigger.disabled = chatModel.disabled;
   modelTrigger.setAttribute('aria-label', `Choose model: ${element('model-trigger-label').textContent}, ${selectedEffort ? effortLabel(selectedEffort) : 'Auto'}`);
-  if (modelTrigger.disabled || nextScreen !== 'conversations' || historyVisible) closeModelPopover();
-  positionModelPopover();
+  if (activeComposerPopover?.trigger.disabled || viewKey !== 'conversations' || transcriptVisible) closeComposerPopover();
   chatAccess.title = accessChoices[provider].find(choice => choice.mode === chatAccess.value)?.description ?? '';
   element('access-caption').textContent = chatAccess.value === 'full-access' ? 'No tool approvals' : chatAccess.value === 'dont-ask' ? 'Deny if approval needed' : '';
   element('composer-permissions').dataset.mode = chatAccess.value;
@@ -638,11 +918,14 @@ function render(state: ViewState) {
     (state.conversation?.usage?.selectedModel !== undefined && state.conversation.usage.selectedModel !== selectedModel));
   providerAccounts.render(state.accounts, state.project, provider, nextScreen === 'conversations' && !historyVisible);
   queueView.render(state.chatQueue, !!chatRunning || !!state.reviewBusy || !!state.cliManager?.busy);
-  element<HTMLButtonElement>('new-chat').disabled = chatRunning || !!state.review?.busy || !!state.reviewBusy;
+  if (newChatButton) newChatButton.disabled = chatRunning || !!state.review?.busy || !!state.reviewBusy;
   chatInput.disabled = !state.project;
-  element('chat-composer').hidden = nextScreen !== 'conversations' || historyVisible;
+  if (transcriptVisible) element('chat-queue').hidden = true;
+  const composerHidden = viewKey !== 'conversations' || transcriptVisible;
+  element('chat-composer').hidden = composerHidden;
+  element('pending-changes').hidden = composerHidden;
   element('chat-stop').hidden = !chatRunning || state.chat?.phase === 'finishing';
-  const activity = element('agent-activity'); activity.hidden = !chatRunning;
+  const activity = element('agent-activity'); activity.hidden = !chatRunning || transcriptVisible;
   const waiting = !!state.chat?.prompts.length;
   const activityState = state.chat?.phase === 'stopping' ? 'stopping' : waiting ? 'waiting' : state.chat?.phase ?? 'working';
   const activityLabel = activityState === 'stopping' ? 'Stopping…' : waiting ? 'Waiting for you…' : activityState === 'preparing' ? 'Preparing…' : activityState === 'finishing' ? 'Saving changes…' : state.chat?.activity ?? 'Working…';
@@ -655,61 +938,63 @@ function render(state: ViewState) {
   if (element('activity-label').textContent !== activityLabel) element('activity-label').textContent = activityLabel;
   element<HTMLButtonElement>('activity-stop').disabled = activityState === 'finishing' || activityState === 'stopping';
   element<HTMLButtonElement>('chat-stop').disabled = activityState === 'stopping';
+  approvalStop.disabled = !chatRunning || activityState === 'finishing' || activityState === 'stopping';
   element('conversation').setAttribute('aria-busy', String(chatRunning && state.conversation?.conversation.key === state.chat?.conversationKey));
   const chatStatus = element('chat-status'); chatStatus.setAttribute('aria-live', chatRunning ? 'off' : 'polite');
-  const chatStatusLabel = chatRunning ? activityLabel : state.chat?.status === 'interrupted' ? 'Stopped' : state.chat?.status === 'failed' ? 'Failed · retry' : 'Enter to send';
-  chatStatus.title = chatRunning ? activityLabel : 'Enter to send · Shift+Enter for newline';
-  if (chatStatus.textContent !== chatStatusLabel) chatStatus.textContent = chatStatusLabel;
+  const chatStatusLabel = chatRunning ? activityLabel : state.chat?.status === 'interrupted' ? 'Stopped' : state.chat?.status === 'failed' ? 'Failed · retry' : '';
+  if (chatStatus.dataset.label !== chatStatusLabel) {
+    chatStatus.dataset.label = chatStatusLabel;
+    chatStatus.textContent = chatStatusLabel;
+    if (!chatStatusLabel) chatStatus.innerHTML = `${shortcutMarkup(shortcuts.send, isMacKeyboard(navigator.platform))} to send`;
+  }
   composerControls();
-  const review = state.review, reviewDisabled = chatRunning || !!review?.busy || !!state.reviewBusy;
-  const revertPreviewChanged = revertPreviewToken !== state.revertPreview?.token; revertPreviewToken = state.revertPreview?.token;
-  const tracking = !!review?.externalTracking;
-  element('external-review-hint').textContent = tracking ? 'Chat in Codex or Claude. Review saved changes here.' : 'Tracking paused · captured changes remain available.';
-  const conversationKey = state.conversation?.conversation.key;
-  const scopedGroup = review?.files.some(file => fileConversations(file).length) && conversationKey ? conversationKey : undefined;
-  const reviewFiles = review?.files.filter(file => !scopedGroup || reviewGroup(file) === scopedGroup) ?? [];
-  const nextReview = JSON.stringify([state.project, review, reviewDisabled, conversationKey, state.revertPreview]);
-  const pending = element('pending-changes');
-  pending.hidden = state.screen === 'changes' || (!review?.files.length && !review?.busy && !review?.externalTracking);
+  const review = state.review, reviewInProgress = chatRunning || !!state.reviewBusy;
+  const reviewDisabled = reviewInProgress || !!review?.busy;
+  const reviewRefresh = element<HTMLButtonElement>('review-refresh');
+  reviewRefresh.disabled = reviewInProgress;
+  reviewRefresh.title = review?.busy && !reviewInProgress ? 'Retry change capture' : 'Refresh review';
+  reviewRefresh.setAttribute('aria-label', reviewRefresh.title);
+  const nextRevertPreview = JSON.stringify([state.revertPreview, state.project, review?.revision, reviewDisabled]);
+  if (nextRevertPreview !== revertPreviewRevision) {
+    revertPreviewRevision = nextRevertPreview;
+    renderRevertPreview(state, reviewDisabled);
+  }
+  element('review-tracking-status').hidden = !!review?.externalTracking;
+  const reviewFiles = conversationKey ? review?.files.filter(file => reviewGroup(file) === conversationKey) ?? [] : [];
+  const nextReview = JSON.stringify([state.project, review, chatRunning, !!state.reviewBusy, conversationKey]);
   if (nextReview !== reviewRevision) {
     reviewRevision = nextReview;
     renderConversationChanges(state, reviewDisabled);
-    renderRevertPreview(state, reviewDisabled);
-    const previousReviewScroll = pending.querySelector('.review-files')?.scrollTop ?? 0;
-    pending.replaceChildren();
-    if (review) {
-      const heading = create('div', undefined, 'review-heading');
-      const toggle = button('', () => setReviewCollapsed(!reviewCollapsed));
-      toggle.id = 'review-toggle'; toggle.className = 'review-toggle'; toggle.append(icon('chevron-down'));
-      toggle.setAttribute('aria-controls', 'review-body'); toggle.dataset.focusKey = 'review-toggle';
-      toggle.append(icon('diff'), create('span', review.externalTracking && !review.files.length ? 'Watching external changes' : reviewFiles.length ? `${reviewFiles.length} ${reviewFiles.length === 1 ? 'file' : 'files'} pending review` : 'Changes in other conversations', 'review-toggle-label'));
-      const title = create('h3'); title.append(toggle); heading.append(title);
-      const totals = reviewFiles.reduce((sum, file) => ({ added: sum.added + (file.additions ?? 0), deleted: sum.deleted + (file.deletions ?? 0) }), { added: 0, deleted: 0 });
-      if (totals.added || totals.deleted) {
-        const total = create('span', undefined, 'review-total');
-        total.append(create('span', `+${totals.added}`, 'review-added'), create('span', `−${totals.deleted}`, 'review-deleted'));
-        heading.append(total);
-      }
-      const request = (file?: string): ReviewRequest => ({ project: state.project!, revision: review.revision, file, ...(scopedGroup ? { group: scopedGroup } : {}) });
-      const actions = create('div', undefined, 'review-actions');
-      const view = button('View changes', () => reviewFiles.length ? send('previewReview', request()) : send('screen', 'changes'), !review.files.length);
+    const body = element('review-body');
+    const actions = element('pending-review-actions');
+    const total = element('review-total');
+    const previousReviewScroll = body.querySelector('.review-files')?.scrollTop ?? 0;
+    body.replaceChildren();
+    actions.replaceChildren();
+    total.replaceChildren();
+    reviewToggle.disabled = !reviewFiles.length;
+    actions.hidden = reviewToggle.disabled;
+    element('review-toggle-label').textContent = `${reviewFiles.length} ${reviewFiles.length === 1 ? 'file' : 'files'} pending review`;
+    const totals = reviewFiles.reduce((sum, file) => ({ added: sum.added + (file.additions ?? 0), deleted: sum.deleted + (file.deletions ?? 0) }), { added: 0, deleted: 0 });
+    total.hidden = !totals.added && !totals.deleted;
+    if (!total.hidden) total.append(create('span', `+${totals.added}`, 'review-added'), create('span', `−${totals.deleted}`, 'review-deleted'));
+    if (review && conversationKey && reviewFiles.length) {
+      const request = (): ReviewRequest => ({ project: state.project!, revision: review.revision, group: conversationKey });
+      const view = button('View changes', () => send('previewReview', request()));
       view.title = 'View all changes in the VS Code editor'; view.setAttribute('aria-label', view.title);
-      const revert = button('Revert all', () => send('previewRevert', request()), reviewDisabled || !reviewFiles.length);
+      const revert = button('Revert all', () => send('previewRevert', request()), reviewDisabled);
       revert.prepend(icon('discard-all'));
       revert.title = 'Revert all pending changes'; revert.setAttribute('aria-label', revert.title);
-      const accept = button('Accept all', () => send('acceptChanges', request()), reviewDisabled || !reviewFiles.length);
+      const accept = button('Accept all', () => send('acceptChanges', request()), reviewDisabled);
       accept.prepend(icon('check-all'));
       accept.title = 'Accept all pending changes'; accept.setAttribute('aria-label', accept.title); accept.classList.add('review-accept');
-      actions.append(view, revert, accept); heading.append(actions); pending.append(heading);
-      const body = create('div', undefined, 'review-body'); body.id = 'review-body';
-      if (review.busy && !chatRunning && !state.reviewBusy) body.append(button('Retry change capture', () => send('refreshReview')));
-      body.append(create('p', review.busy ? 'Capturing agent changes…' : state.reviewBusy ? 'Updating changes…' : 'Already applied · Accept keeps the code; Revert restores it. Review each file below or all files above.', 'review-caption'));
-      if (review.notice) body.append(create('p', review.notice, 'review-caption'));
-      if (scopedGroup) body.append(create('p', 'Pending review for the current conversation.', 'review-caption'));
-      body.append(button(`${review.files.length - reviewFiles.length ? `${review.files.length - reviewFiles.length} other files · ` : ''}Browse workspace changes`, () => send('screen', 'changes')));
+      actions.append(view, revert, accept);
+      if (review.busy || state.reviewBusy) {
+        body.append(create('p', review.busy ? 'Capturing agent changes…' : 'Updating changes…', 'review-caption'));
+      }
       const files = create('div', undefined, 'review-files');
-      for (const file of reviewFiles) files.append(reviewFileRow(state, file, reviewDisabled, scopedGroup));
-      body.append(files); pending.append(body); files.scrollTop = previousReviewScroll;
+      for (const file of reviewFiles) files.append(reviewFileRow(state, file, reviewDisabled, conversationKey));
+      body.append(files); files.scrollTop = previousReviewScroll;
     }
     applyReviewCollapsed();
   }
@@ -718,11 +1003,13 @@ function render(state: ViewState) {
   const checkpointPreviewChanged = nextCheckpointPreview !== checkpointPreviewRevision;
   if (checkpointPreviewChanged) {
     checkpointPreviewRevision = nextCheckpointPreview;
-    const pane = element('checkpoint-preview'), preview = state.checkpointPreview;
-    pane.replaceChildren(); pane.hidden = !preview;
+    const pane = checkpointDialog, preview = state.checkpointPreview;
+    pane.replaceChildren();
     if (preview) {
       const heading = create('div', undefined, 'review-heading');
-      heading.append(icon('history'), create('h3', preview.undo ? 'Undo last restore' : 'Restore checkpoint'));
+      const title = create('h2', preview.undo ? 'Undo last restore' : 'Restore checkpoint');
+      title.id = 'checkpoint-preview-title'; title.tabIndex = -1; title.autofocus = true;
+      heading.append(icon('history'), title);
       pane.append(heading, create('p', `${new Date(preview.createdAt).toLocaleString()} · ${preview.files.length} files will change`, 'meta'));
       pane.append(create('p', preview.files.length ? 'Restore code to this saved point, including later edits to these files from any chat or editor. Your chat history stays available.' : 'Your code already matches this checkpoint.', 'checkpoint-description'));
       const files = create('div', undefined, 'checkpoint-files'); files.setAttribute('aria-label', 'Files affected by restore');
@@ -737,11 +1024,12 @@ function render(state: ViewState) {
         displayed += 100; more.hidden = displayed >= preview.files.length;
       };
       appendFiles(); pane.append(files, more);
-      const actions = create('div', undefined, 'actions');
+      const actions = create('div', undefined, 'confirmation-actions');
       const cancel = button('Cancel', () => send('closeCheckpointPreview'), reviewDisabled);
+      cancel.classList.add('modal-cancel'); cancel.dataset.focusKey = 'cancel-checkpoint';
       const restore = button(preview.undo ? 'Undo restore' : 'Restore code', () => send('restoreCheckpoint', { project: state.project!, id: preview.id, token: preview.token }), reviewDisabled || !preview.files.length);
       restore.classList.add('primary'); restore.dataset.focusKey = 'confirm-checkpoint';
-      actions.append(cancel, restore); pane.append(actions);
+      actions.append(restore, cancel); pane.append(actions);
     }
   }
   const reviewPreviewChanged = nextReviewPreview !== reviewPreviewRevision;
@@ -753,9 +1041,10 @@ function render(state: ViewState) {
   if (prompts !== promptRevision) {
     promptRevision = prompts;
     const container = element('agent-prompts');
-    const previous = new Map([...container.children].map(node => [(node as HTMLElement).dataset.prompt, node]));
-    const cards: HTMLElement[] = [];
+    const previous = new Map([...container.children, ...approvalPrompts.children].map(node => [(node as HTMLElement).dataset.prompt, node]));
+    const questions: HTMLElement[] = [], approvals: HTMLElement[] = [];
     for (const prompt of state.chat?.prompts ?? []) {
+      const cards = prompt.questions ? questions : approvals;
       const signature = JSON.stringify(prompt), existing = previous.get(signature);
       if (existing) { cards.push(existing as HTMLElement); continue; }
       const card = create('form', undefined, 'agent-prompt'); card.dataset.prompt = signature; card.append(create('h3', prompt.title));
@@ -781,7 +1070,7 @@ function render(state: ViewState) {
         choices.forEach(choice => { choice.onchange = () => { input.setCustomValidity(''); if (!q.multiSelect) input.value = ''; }; });
         label.append(input); field.append(label); card.append(field); fields.set(q.id, { text: input, choices });
       }
-      const actions = create('div', undefined, 'actions');
+      const actions = create('div', undefined, prompt.questions ? 'actions' : 'confirmation-actions');
       if (prompt.questions) {
         const answer = button('Reply', () => undefined); answer.type = 'submit'; actions.append(answer);
         card.onsubmit = event => {
@@ -797,6 +1086,7 @@ function render(state: ViewState) {
         };
       } else {
         const decline = button('Decline', () => send('answerAgent', { id: prompt.id, allow: false })), allow = button('Allow once', () => send('answerAgent', { id: prompt.id, allow: true })); decline.type = allow.type = 'button'; actions.append(decline, allow);
+        allow.classList.add('primary');
         for (const option of prompt.allowOptions ?? []) {
           const remember = button(option.label, () => send('answerAgent', { id: prompt.id, allow: true, allowScope: option.scope }));
           remember.type = 'button'; remember.title = option.description; actions.append(remember);
@@ -805,7 +1095,8 @@ function render(state: ViewState) {
       }
       card.append(actions); cards.push(card);
     }
-    container.replaceChildren(...cards);
+    reconcileChildren(container, questions);
+    reconcileChildren(approvalPrompts, approvals);
   }
 
   const workspacePicker = element<HTMLSelectElement>('history-workspace');
@@ -813,8 +1104,9 @@ function render(state: ViewState) {
     const normalized = value.replace(/\\/g, '/').replace(/\/$/, '');
     return /^[a-z]:\//i.test(normalized) || normalized.startsWith('//') ? normalized.toLowerCase() : normalized;
   };
+  const historyConversations = (state.conversations ?? []).filter(item => !item.hiddenFromHistory);
   const workspacePaths = new Map<string, string>();
-  for (const item of state.conversations ?? []) workspacePaths.set(pathKey(item.cwd), item.cwd);
+  for (const item of historyConversations) workspacePaths.set(pathKey(item.cwd), item.cwd);
   const workspaceSignature = JSON.stringify([state.project, [...workspacePaths]]);
   if (workspacePicker.dataset.signature !== workspaceSignature) {
     const selected = workspacePicker.value;
@@ -828,7 +1120,7 @@ function render(state: ViewState) {
   }
   workspacePicker.disabled = !state.project;
   workspacePicker.title = workspacePicker.selectedOptions[0]?.title ?? '';
-  const workspaceConversations = (state.conversations ?? []).filter(item => !workspacePicker.value || pathKey(item.cwd) === workspacePicker.value);
+  const workspaceConversations = historyConversations.filter(item => !workspacePicker.value || pathKey(item.cwd) === workspacePicker.value);
   document.querySelectorAll<HTMLButtonElement>('.history-filters [data-provider]').forEach(node => {
     const provider = node.dataset.provider!;
     const count = workspaceConversations.filter(item => provider === 'all' || item.provider === provider).length;
@@ -840,8 +1132,6 @@ function render(state: ViewState) {
     node.setAttribute('aria-label', `${label}: ${count} conversations`);
     node.setAttribute('aria-pressed', String(provider === providerFilter));
   });
-  const historyRoot = element('history-root');
-  historyRoot.textContent = state.project ?? 'No workspace open'; historyRoot.title = historyRoot.textContent;
   const query = element<HTMLInputElement>('conversation-search').value.trim().toLocaleLowerCase();
   const conversations = workspaceConversations.filter(item => (providerFilter === 'all' || item.provider === providerFilter) && `${item.title} ${item.provider}`.toLocaleLowerCase().includes(query));
   element('conversation-count').textContent = String(conversations.length);
@@ -860,14 +1150,14 @@ function render(state: ViewState) {
     if (!link) {
       link = button('', () => { pendingConversation = conversation.key; send('conversation', conversation.key); });
       link.className = 'conversation-link'; link.dataset.focusKey = conversation.key;
-      const label = create('span', undefined, 'conversation-label'), meta = create('span', undefined, 'conversation-meta');
-      meta.append(providerBadge(conversation.provider, false), create('span', '', 'conversation-time'));
-      label.append(create('span', '', 'conversation-title'), meta);
-      link.append(providerIcon(conversation.provider), label);
+      link.append(providerIcon(conversation.provider), create('span', '', 'conversation-title'), create('span', '', 'conversation-time'));
     }
     link.setAttribute('aria-pressed', String(state.conversation?.conversation.key === conversation.key));
     const title = link.querySelector<HTMLElement>('.conversation-title')!, time = link.querySelector<HTMLElement>('.conversation-time')!;
-    if (title.textContent !== conversation.title) title.textContent = conversation.title;
+    if (title.textContent !== conversation.title) {
+      title.textContent = conversation.title;
+      title.title = conversation.title;
+    }
     const label = relativeTime(conversation.updatedAt);
     if (time.textContent !== label) time.textContent = label;
     if (time.dataset.updatedAt !== String(conversation.updatedAt)) {
@@ -880,25 +1170,27 @@ function render(state: ViewState) {
 
   const revision = JSON.stringify([state.project, state.conversation?.conversation.key, state.conversation?.conversation.revision, state.conversation?.notice, state.conversation?.messages, state.conversation ? '' : !state.syncedAt && state.syncing, reviewDisabled, state.checkpoints, state.checkpointUndo]);
   const chatChanged = revision !== conversationRevision;
-  const sameConversation = !!state.conversation && element('conversation').dataset.key === state.conversation.conversation.key;
+  const sameConversation = !projectChanged && !!state.conversation && element('conversation').dataset.key === state.conversation.conversation.key;
   if (chatChanged) {
     conversationRevision = revision;
     const chat = element('conversation'), heading = element('thread-heading');
-    const existingMessages = new Map(sameConversation ? [...chat.querySelectorAll<HTMLElement>(':scope > .message')].map(node => [node.dataset.messageId!, node]) : []);
+    const existingMessages = new Map(sameConversation ? [...chat.querySelectorAll<HTMLElement>('.message[data-message-id]')].map(node => [node.dataset.messageId!, node]) : []);
     const nextMessages: HTMLElement[] = [];
     if (!sameConversation || !state.conversation) chat.replaceChildren();
     chat.dataset.key = state.conversation?.conversation.key ?? ''; heading.hidden = !state.conversation;
     if (selectedMessage?.key !== chat.dataset.key) clearMessageSelection();
     if (!state.conversation) {
       heading.replaceChildren(); delete heading.dataset.signature;
-      chat.append(emptyState(!state.project ? 'Open a workspace' : 'What are we building?', !state.project ? 'Open a folder in VS Code to chat with Claude Code or Codex.' : 'Choose your agent below and send a message to start working on this project.', !state.project ? 'folder-opened' : 'comment-discussion', state.conversations?.length ? () => showHistory(true) : undefined));
+      chat.append(emptyState(!state.project ? 'Open a workspace' : 'What are we building?', !state.project ? 'Open a folder in VS Code to chat with Claude Code or Codex.' : 'Choose your agent below and send a message to start working on this project.', !state.project ? 'folder-opened' : 'comment-discussion', historyConversations.length ? () => showHistory(true) : undefined));
     } else {
       const provider = state.conversation.conversation.provider;
       const missingCheckpoint = !chatRunning && state.conversation.messages.some(message => message.role === 'user' && !state.checkpoints?.some(entry => entry.messageId === message.id));
       const headingSignature = JSON.stringify([state.project, state.conversation.conversation.key, provider, state.conversation.conversation.title, state.conversation.messages.length, relativeTime(state.conversation.conversation.updatedAt), state.checkpointUndo, reviewDisabled, missingCheckpoint]);
       if (heading.dataset.signature !== headingSignature) {
         heading.dataset.signature = headingSignature; heading.replaceChildren();
-        heading.append(providerBadge(provider), create('h2', state.conversation.conversation.title), create('div', `${state.conversation.messages.length} messages · ${relativeTime(state.conversation.conversation.updatedAt)}`, 'thread-meta'));
+        heading.append(providerBadge(provider));
+        if (!sidebarNavigation) heading.append(create('h2', state.conversation.conversation.title));
+        heading.append(create('div', `${state.conversation.messages.length} messages · ${relativeTime(state.conversation.conversation.updatedAt)}`, 'thread-meta'));
         if (state.checkpointUndo) {
           const undo = button('Undo restore', () => send('previewCheckpoint', { project: state.project!, id: state.checkpointUndo!.id }), reviewDisabled);
           undo.classList.add('checkpoint-undo'); undo.title = 'Preview code from before the last restore'; undo.dataset.focusKey = 'undo-checkpoint'; heading.append(undo);
@@ -923,9 +1215,7 @@ function render(state: ViewState) {
           if (selectedMessage?.id === message.id) node.classList.add('message-focused');
         }
         if (message.role === 'tool') {
-          const details = create('details'); details.id = `tool-${message.id}`; details.open = opened.has(details.id);
-          const summary = create('summary'); summary.append(icon('terminal'), create('span', message.toolName ?? 'Tool', 'tool-name'), providerBadge(provider), icon('chevron-right')); summary.lastElementChild!.classList.add('tool-chevron');
-          details.append(summary, create('pre', message.text)); node.append(details);
+          node.append(renderToolMessage(message, sameConversation && opened.has(`tool-${message.id}`)));
         } else {
           const author = create('div', undefined, 'message-author'); author.append(message.role === 'user' ? create('span', 'You') : providerBadge(provider)); node.append(author);
           if (message.role === 'user') {
@@ -941,12 +1231,7 @@ function render(state: ViewState) {
             const edit = button('', () => editMessage(message.id), reviewDisabled || !state.conversation.conversation.id);
             edit.className = 'icon-button message-edit'; edit.append(icon('edit')); edit.title = 'Edit and resend'; edit.setAttribute('aria-label', 'Edit and resend message'); edit.dataset.focusKey = `edit:${message.id}`; actions.append(edit); author.append(actions);
           }
-          const content = create('div', undefined, 'message-text markdown');
-          content.innerHTML = DOMPurify.sanitize(marked.parse(message.text, { async: false }), { ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td'], ALLOWED_ATTR: ['href', 'title', 'class', 'start'], ALLOW_DATA_ATTR: false });
-          content.querySelectorAll<HTMLAnchorElement>('a').forEach(link => {
-            if (!/^(https?:|mailto:)/i.test(link.getAttribute('href') ?? '')) link.removeAttribute('href');
-            else { link.rel = 'noopener noreferrer'; link.target = '_blank'; }
-          });
+          const content = renderMessageText(message.text);
           node.append(content);
           if (message.role === 'user') {
             const key = JSON.stringify([state.project, chat.dataset.key, message.id]);
@@ -976,12 +1261,13 @@ function render(state: ViewState) {
         }
         nextMessages.push(node);
       }
-      reconcileChildren(chat, nextMessages);
+      reconcileChildren(chat, groupToolRows(chat, nextMessages));
       for (const update of messageFolds.values()) update();
     }
     for (const content of messageFolds.keys()) if (!chat.contains(content)) { messageResize?.unobserve(content); messageFolds.delete(content); }
   }
 
+  const subagentsAppeared = renderSubagents(state);
   const stop = element<HTMLButtonElement>('stop');
   stop.hidden = !state.running && (!chatRunning || state.chat?.phase === 'finishing');
   stop.disabled = state.chat?.phase === 'stopping';
@@ -1004,32 +1290,70 @@ function render(state: ViewState) {
       if (change.output) { const output = create('details'); output.id = 'change-output'; output.open = opened.has(output.id) || !change.files.length; output.append(create('summary', 'Step output'), create('pre', change.output)); preview.append(output); }
     }
   }
-  const providers = element('providers'); providers.replaceChildren();
-  for (const provider of state.providers) {
-    const item = create('article', undefined, 'provider'); item.append(providerBadge(provider.provider), create('div', provider.version ?? '', 'meta'), ...(provider.executable ? [create('p', provider.executable, 'cli-path')] : []), create('p', provider.detail)); providers.append(item);
+  const probe = element<HTMLButtonElement>('probe');
+  probe.disabled = !!state.checkingProviders || !!state.cliManager?.busy || state.cliManager?.trusted === false;
+  probe.textContent = state.checkingProviders ? 'Checking providers…' : 'Check providers';
+  if (providerResultsChanged) {
+    element('providers').replaceChildren(...state.providers.map(provider => {
+      const item = create('article', undefined, 'provider-check-result');
+      const status = provider.available ? 'Available' : 'Unavailable';
+      item.append(providerBadge(provider.provider), create('span', provider.version ? `${status} · ${provider.version}` : status, 'meta'));
+      if (provider.executable) item.append(create('p', provider.executable, 'provider-check-path'));
+      item.append(create('p', provider.detail));
+      return item;
+    }));
   }
   cliManagerView.render(state);
+  positionComposerPopover();
   dropdowns.sync();
   element<HTMLButtonElement>('cli-refresh').disabled = !!state.cliManager?.busy;
   if (focusKey) [...document.querySelectorAll<HTMLElement>('[data-focus-key]')].find(node => node.dataset.focusKey === focusKey)?.focus({ preventScroll: true });
-  if (revertPreviewChanged && state.revertPreview && nextScreen === 'changes') scroller.scrollTop = 0;
-  else if (checkpointPreviewChanged && state.checkpointPreview && nextScreen === 'conversations' && !historyVisible) element('checkpoint-preview').scrollIntoView({ block: 'nearest' });
+  if (transcriptVisible) scroller.scrollTop = transcriptWasVisible ? previousScroll : 0;
+  else if (transcriptWasVisible && !screenChanged && !conversationChanged && !projectChanged) scroller.scrollTop = previousScroll;
   else if (reviewPreviewChanged && state.reviewPreview && nextScreen === 'conversations' && !historyVisible) scroller.scrollTop = scroller.scrollHeight;
   else if (((chatChanged && !sameConversation) || screenChanged) && nextScreen === 'conversations' && !historyVisible) scroller.scrollTop = scroller.scrollHeight;
   else if (screenChanged) scroller.scrollTop = screenScroll.get(viewKey) ?? 0;
   else if (changeChanged && nextScreen === 'changes') scroller.scrollTop = 0;
-  else if (chatChanged && sameConversation && atBottom && !selectedMessage && nextScreen === 'conversations' && !historyVisible) scroller.scrollTop = scroller.scrollHeight;
+  else if ((chatChanged || subagentsAppeared) && sameConversation && atBottom && !selectedMessage && nextScreen === 'conversations' && !historyVisible) scroller.scrollTop = scroller.scrollHeight;
   else scroller.scrollTop = previousScroll;
   updateMessageNav();
+  if (chatFocus && nextScreen === 'conversations' && !transcriptVisible) {
+    const target = chatFocus === 'history' ? element('conversation-search') : chatInput;
+    target.focus({ preventScroll: true });
+    chatFocus = undefined;
+  }
+  const activeDialog = approvalPrompts.children.length ? approvalDialog
+    : state.revertPreview && nextScreen === 'changes' ? revertDialog
+    : state.checkpointPreview && !composerHidden ? checkpointDialog : undefined;
+  for (const dialog of dialogs) if (dialog !== activeDialog) setModalOpen(dialog, false);
+  if (activeDialog) {
+    setModalOpen(activeDialog, true);
+    const error = activeDialog.querySelector<HTMLElement>('.confirmation-error');
+    if (!state.error) error?.remove();
+    else if (error) {
+      if (error.textContent !== state.error) error.textContent = state.error;
+    } else {
+      const alert = create('p', undefined, 'confirmation-error');
+      alert.setAttribute('role', 'alert');
+      activeDialog.firstElementChild?.after(alert);
+      alert.textContent = state.error;
+    }
+    if (!activeDialog.contains(document.activeElement)) activeDialog.querySelector<HTMLElement>('[autofocus]')?.focus({ preventScroll: true });
+  }
 }
 window.addEventListener('message', event => {
   if (event.data?.type === 'state' && event.data.state) render(event.data.state as ViewState);
+  if (event.data?.type === 'subagentTranscript' && activeSubagent && event.data.requestId === activeSubagent.selection.requestId) {
+    renderSubagentTranscript(event.data.transcript as SubagentTranscript);
+  }
   if (event.data?.type === 'headerAction') {
     switch (event.data.action) {
-      case 'newChat': element<HTMLButtonElement>('new-chat').click(); break;
-      case 'history': showHistory(true); break;
+      case 'newChat':
+        if (lastState?.chat?.status !== 'running' && lastState?.chat?.phase !== 'finishing' && !lastState?.review?.busy && !lastState?.reviewBusy) newChat();
+        break;
+      case 'history': chatFocus = 'history'; showHistory(true); break;
+      case 'focusChat': focusChat(); break;
       case 'review': send('screen', 'changes'); break;
-      case 'refresh': element<HTMLButtonElement>('sync').click(); break;
     }
   }
 });

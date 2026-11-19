@@ -4,7 +4,7 @@ This document describes the version 0.1 recorder/diff demo. The main UI supports
 
 ## Usage
 
-Run `npm ci` and `npm run build`, open VS Code and press F5 with the Run AgentTandem configuration. In the Development Host, run AgentTandem: Open Conversations, select More actions → Diagnostics and then Run demo. There is one AgentTandem sidebar WebviewView; Changes contains the preview and Recorded demo steps.
+Run `npm ci` and `npm run build`, open VS Code and press F5 with the Run AgentTandem configuration. In the Development Host, run **AgentTandem: Run Step Demo** from the Command Palette. **Changes** in the AgentTandem sidebar contains the preview and recorded demo steps.
 
 A demo reads a file, edits whitespace, edits the same file again and adds a test, deletes an old fixture, and checks the final content. Operations affect only private extension storage. The open repository is not copied, sent to a provider or edited by the demo.
 

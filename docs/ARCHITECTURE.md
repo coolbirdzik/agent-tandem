@@ -4,7 +4,7 @@ This is the MVP design described in the [implementation plan](PLAN.md). AgentTan
 
 ## Main layers
 
-The host registers one `WebviewViewProvider` for `agentTandem.panel`, containing sessions, messages, previews and diagnostics. Inline diffs use stored snapshots and line patches. `openStep/openFile/openCumulative` commands update panel state only; `InEditor` suffixes and `openInTab` are opt-in editor actions. Two native tree views plus a default editor tab are no longer used.
+The host registers one `WebviewViewProvider` for `agentTandem.panel`, containing sessions, messages, previews and CLI management. Inline diffs use stored snapshots and line patches. `openStep/openFile/openCumulative` commands update panel state only; `InEditor` suffixes and `openInTab` are opt-in editor actions. Two native tree views plus a default editor tab are no longer used.
 
 Provider conversations are the primary input. `ProjectConversations` lists/reads local history, maps `(provider, sessionId)` and filters cwd by workspace root. The host polls revisions, retains selections and rejects stale asynchronous reads after project/session switches. Claude uses SDK session history; Codex currently uses a rollout compatibility reader. AgentTandem owns only snapshots/journals and UI metadata; it never rewrites CLI transcripts to simulate synchronization. See [Conversation sync](CONVERSATION-SYNC.md).
 

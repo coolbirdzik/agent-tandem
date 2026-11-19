@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import type { ReviewHunk } from '../core/review-hunks';
+import { shortcutMarkup, shortcuts } from '../ui/keyboard-shortcuts';
+import { webviewResource } from './webview-resource';
 
 export type BlockAction = 'accept' | 'revert' | 'next';
 
@@ -9,10 +11,10 @@ export class ReviewBlockCard implements vscode.Disposable {
   readonly inset: vscode.WebviewEditorInset;
   private listeners: vscode.Disposable[];
   private disposed = false;
-  constructor(editor: vscode.TextEditor, hunk: ReviewHunk, index: number, total: number, more: boolean, act: (action: BlockAction) => void, onDispose: () => void) {
+  constructor(extensionUri: vscode.Uri, editor: vscode.TextEditor, hunk: ReviewHunk, index: number, total: number, more: boolean, act: (action: BlockAction) => void, onDispose: () => void) {
     const line = Math.min(hunk.newLine, Math.max(editor.document.lineCount - 1, 0));
     // The native API adds one line, so -1 anchors the card directly above the block.
-    this.inset = vscode.window.createWebviewTextEditorInset(editor, line - 1, 2, { enableScripts: true, localResourceRoots: [] });
+    this.inset = vscode.window.createWebviewTextEditorInset(editor, line - 1, 2, { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')] });
     this.listeners = [this.inset.onDidDispose(() => { this.dispose(); onDispose(); }), this.inset.webview.onDidReceiveMessage(message => {
       if (this.disposed || !['accept', 'revert', 'next'].includes(message?.type)) return;
       if (message.type !== 'next') void this.inset.webview.postMessage({ type: 'busy' }).then(undefined, () => undefined);
@@ -20,8 +22,12 @@ export class ReviewBlockCard implements vscode.Disposable {
     })];
     const nonce = randomBytes(16).toString('hex');
     const place = `block ${index + 1} of ${total}`;
+    const webview = this.inset.webview;
+    const stylesheet = webviewResource(webview, extensionUri, 'media', 'keyboard-shortcuts.css');
+    const hint = (shortcut: string) => `<span class="hint"><span class="mac-keys">${shortcutMarkup(shortcut, true)}</span><span class="other-keys">${shortcutMarkup(shortcut, false)}</span></span>`;
     this.inset.webview.html = `<!doctype html><html><head><meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}'">
+<link rel="stylesheet" href="${stylesheet}">
 <style nonce="${nonce}">
 html,body{margin:0;height:100%;overflow:hidden;background:var(--vscode-editor-background);color:var(--vscode-foreground);font-family:var(--vscode-font-family);font-size:12px}
 body{display:flex;align-items:center;padding:0 10px;box-sizing:border-box}
@@ -39,7 +45,8 @@ button.ghost{background:transparent;color:var(--vscode-foreground);border-color:
 button.ghost:hover{background:var(--vscode-toolbar-hoverBackground)}
 button:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
 button:disabled{opacity:.5;cursor:default}
-.hint{opacity:.65;font-size:10px}
+.mac-keys,body.mac .other-keys{display:none}
+body.mac .mac-keys{display:inline}
 @media(max-width:700px){.hint{display:none}}
 @media(max-width:520px){.stats{display:none}}
 @media(max-width:430px){.chip{display:none}}
@@ -48,12 +55,13 @@ button:disabled{opacity:.5;cursor:default}
 <div class="card">
 <span class="chip">Block ${index + 1}/${total}</span>
 <span class="stats" aria-label="${hunk.newLines} added, ${hunk.oldLines} removed"><span class="add">+${hunk.newLines}</span><span class="del">&#8722;${hunk.oldLines}</span></span>
-<button class="primary" data-action="accept" aria-label="Accept ${place}" title="Keep ${place} and mark it reviewed">&#10003; Accept<span class="hint">Alt+Y</span></button>
-<button class="secondary" data-action="revert" aria-label="Reject ${place}" title="Reject ${place} and restore its previous content">&#10005; Reject<span class="hint">Alt+N</span></button>
-${more ? '<button class="ghost" data-action="next" aria-label="Go to the next change" title="Go to the next change, continuing into the next changed file">&#8595; Next change</button>' : ''}
+<button class="primary" data-action="accept" aria-label="Accept ${place}" title="Keep ${place} and mark it reviewed">&#10003; Accept${hint(shortcuts.accept)}</button>
+<button class="secondary" data-action="revert" aria-label="Reject ${place}" title="Reject ${place} and restore its previous content">&#10005; Reject${hint(shortcuts.reject)}</button>
+${more ? `<button class="ghost" data-action="next" aria-label="Go to the next change" title="Go to the next change, continuing into the next changed file">&#8595; Next change${hint(shortcuts.next)}</button>` : ''}
 </div>
 <script nonce="${nonce}">
 const api=acquireVsCodeApi();
+document.body.classList.toggle('mac',/^mac/i.test(navigator.platform));
 document.querySelectorAll('button').forEach(button=>button.addEventListener('click',()=>{
   if(button.dataset.action!=='next')document.querySelectorAll('button').forEach(b=>b.disabled=true);
   api.postMessage({type:button.dataset.action});

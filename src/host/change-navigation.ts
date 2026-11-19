@@ -53,7 +53,6 @@ export class ChangeNavigation {
       const job = this.queue.then(() => this.navigateFile(direction, anchor));
       this.queue = job.catch(() => undefined); return job;
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('agentTandem.chooseChangedFile', () => this.chooseFile()));
     this.update();
   }
   async restore() {
@@ -145,7 +144,7 @@ export class ChangeNavigation {
     this.counter.accessibilityInformation = { label: `AgentTandem changed file ${state.index} of ${state.total}: ${state.file}` };
     this.counter.show();
   }
-  private async chooseFile() {
+  async chooseFile() {
     const tab = activeTab(), scope = this.scope(tab);
     if (!tab || !scope) return;
     const current = this.index(scope, tab);

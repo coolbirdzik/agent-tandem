@@ -3,13 +3,15 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { HistoryStore } from '../core/history';
 import { assertPath, decodeText } from '../core/history';
-import type { Session, ViewState } from '../core/types';
+import type { Session, SubagentSelection, ViewState } from '../core/types';
 import type { Selection } from '../core/change-preview';
 import { panelHtml } from './panel-html';
 import { webviewResource } from './webview-resource';
 import type { ChangeNavigation } from './change-navigation';
 import { imageMime } from '../core/media-preview';
 export type { Selection } from '../core/change-preview';
+
+type HeaderAction = 'focusChat' | 'newChat' | 'history' | 'review';
 
 export function snapshotUri(sessionId: string, snapshotId: string, file: string): vscode.Uri {
   assertPath(file);
@@ -87,6 +89,10 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
   private view?: vscode.WebviewView;
   private tab?: vscode.WebviewPanel;
   private subscriptions: vscode.Disposable[] = [];
+  private ready = new WeakSet<vscode.Webview>();
+  private pendingAction = new WeakMap<vscode.Webview, HeaderAction>();
+  private pendingSidebarAction?: HeaderAction;
+  private newChatBlocked?: boolean;
   constructor(private readonly extensionUri: vscode.Uri, private readonly state: () => ViewState,
     private readonly invoke: (command: string, selection?: unknown) => Promise<unknown>,
     private readonly report: (error: unknown) => void) {}
@@ -102,9 +108,13 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
     this.subscriptions.push(view.onDidChangeVisibility(() => { if (view.visible) this.update(); }));
     this.update();
   }
-  async headerAction(action: 'newChat' | 'history' | 'review' | 'refresh') {
-    await this.open();
-    await this.view?.webview.postMessage({ type: 'headerAction', action });
+  async headerAction(action: HeaderAction, sidebarOnly = false) {
+    const tab = !sidebarOnly && this.tab?.active ? this.tab : undefined;
+    if (!tab) await this.open();
+    const webview = tab?.webview ?? this.view?.webview;
+    if (!webview) { this.pendingSidebarAction = action; return; }
+    if (!this.ready.has(webview)) { this.pendingAction.set(webview, action); return; }
+    await webview.postMessage({ type: 'headerAction', action });
   }
   openInTab() {
     if (this.tab) { this.tab.reveal(); this.update(); return; }
@@ -113,31 +123,45 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
     this.subscriptions.push(tab.onDidDispose(() => { this.tab = undefined; }));
     this.update();
   }
-  private configure(webview: vscode.Webview, editorTab: boolean) {
+  private resources(webview: vscode.Webview) {
     webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist'), vscode.Uri.joinPath(this.extensionUri, 'media')] };
     const resource = (folder: string, file: string) => webviewResource(webview, this.extensionUri, folder, file);
-    webview.html = panelHtml({ script: resource('dist', 'webview.js'), style: resource('media', 'panel.css'), icons: resource('media', 'codicons/codicon.css'), claude: resource('media', 'claude.svg'), codex: resource('media', 'codex.svg'), cspSource: webview.cspSource, nonce: randomBytes(18).toString('base64') }, editorTab);
+    return { script: resource('dist', 'webview.js'), style: resource('media', 'panel.css'), icons: resource('media', 'codicons/codicon.css'), claude: resource('media', 'claude.svg'), codex: resource('media', 'codex.svg'), cspSource: webview.cspSource, nonce: randomBytes(18).toString('base64') };
+  }
+  private configure(webview: vscode.Webview, editorTab: boolean) {
+    webview.html = panelHtml(this.resources(webview), editorTab);
     const bridge = webview.onDidReceiveMessage(async (message: unknown) => {
       try {
         if (!message || typeof message !== 'object') throw new Error('Invalid request.');
         const data = message as Record<string, unknown>;
-        if (data.type === 'ready') { this.update(); return; }
+        if (data.type === 'ready') {
+          this.ready.add(webview); this.update();
+          const action = this.pendingAction.get(webview) ?? (editorTab ? undefined : this.pendingSidebarAction);
+          if (!editorTab) this.pendingSidebarAction = undefined;
+          if (action) { this.pendingAction.delete(webview); await webview.postMessage({ type: 'headerAction', action }); }
+          return;
+        }
         if (data.type === 'copyCLIPath') {
           if (typeof data.selection !== 'string' || !data.selection) throw new Error('Choose an executable path to copy.');
           await vscode.env.clipboard.writeText(data.selection);
           vscode.window.setStatusBarMessage('Copied executable path', 2500);
           return;
         }
-        const commands: Record<string, string> = { demo: 'agentTandem.runDemo', stop: 'agentTandem.stop', probe: 'agentTandem.checkProviders', step: 'agentTandem.openStep', cumulative: 'agentTandem.openCumulative', file: 'agentTandem.openFile', sync: 'agentTandem.syncConversations', conversation: 'agentTandem.openConversation', screen: 'agentTandem.showSection', previewFile: 'agentTandem.previewFile', tab: 'agentTandem.openInTab', 'editor-step': 'agentTandem.openStepInEditor', 'editor-file': 'agentTandem.openFileInEditor', 'editor-cumulative': 'agentTandem.openCumulativeInEditor' };
+        if (data.type === 'selectSubagent') {
+          const selection = data.selection as Partial<SubagentSelection> | undefined;
+          const transcript = await this.invoke('agentTandem.selectSubagent', selection);
+          await webview.postMessage({ type: 'subagentTranscript', requestId: selection?.requestId, transcript });
+          return;
+        }
+        const commands: Record<string, string> = { demo: 'agentTandem.runDemo', stop: 'agentTandem.stop', probe: 'agentTandem.checkProviders', step: 'agentTandem.openStep', cumulative: 'agentTandem.openCumulative', file: 'agentTandem.openFile', conversation: 'agentTandem.openConversation', screen: 'agentTandem.showSection', previewFile: 'agentTandem.previewFile', 'editor-step': 'agentTandem.openStepInEditor', 'editor-file': 'agentTandem.openFileInEditor', 'editor-cumulative': 'agentTandem.openCumulativeInEditor' };
         const type = String(data.type);
         Object.assign(commands, { previewCheckpoint: 'agentTandem.previewCheckpoint', restoreCheckpoint: 'agentTandem.restoreCheckpoint', closeCheckpointPreview: 'agentTandem.closeCheckpointPreview' });
-        Object.assign(commands, { sendChat: 'agentTandem.sendChat', newChat: 'agentTandem.newChat', setAccessMode: 'agentTandem.setAccessMode', setModel: 'agentTandem.setModel', setReasoningEffort: 'agentTandem.setReasoningEffort', chooseCLI: 'agentTandem.chooseCLI', cliAction: 'agentTandem.cliAction', refreshCLIs: 'agentTandem.refreshCLIs', refreshModels: 'agentTandem.refreshModels', stopChat: 'agentTandem.stopChat', answerAgent: 'agentTandem.answerAgent', acceptChanges: 'agentTandem.acceptChanges', revertChanges: 'agentTandem.revertChanges', previewReview: 'agentTandem.previewReview', closeReviewPreview: 'agentTandem.closeReviewPreview', refreshReview: 'agentTandem.refreshReview' });
+        Object.assign(commands, { sendChat: 'agentTandem.sendChat', newChat: 'agentTandem.newChat', setAccessMode: 'agentTandem.setAccessMode', setModel: 'agentTandem.setModel', setReasoningEffort: 'agentTandem.setReasoningEffort', cliAction: 'agentTandem.cliAction', refreshCLIs: 'agentTandem.refreshCLIs', refreshModels: 'agentTandem.refreshModels', stopChat: 'agentTandem.stopChat', answerAgent: 'agentTandem.answerAgent', acceptChanges: 'agentTandem.acceptChanges', revertChanges: 'agentTandem.revertChanges', previewReview: 'agentTandem.previewReview', closeReviewPreview: 'agentTandem.closeReviewPreview', refreshReview: 'agentTandem.refreshReview' });
         commands.setFastMode = 'agentTandem.setFastMode';
         commands.refreshAccount = 'agentTandem.refreshAccount';
         commands.queueAction = 'agentTandem.queueAction';
         commands.settings = 'agentTandem.openSettings';
         commands.toggleExternalReview = 'agentTandem.toggleExternalReview';
-        commands.trackingControls = 'agentTandem.trackingControls';
         commands.gettingStarted = 'agentTandem.gettingStarted';
         commands.captureExternalChanges = 'agentTandem.captureExternalChanges';
         commands.previewRevert = 'agentTandem.previewRevert';
@@ -145,6 +169,7 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
         commands.cancelRevert = 'agentTandem.cancelRevert';
         commands.undoRevert = 'agentTandem.undoRevert';
         commands.reviewLatest = 'agentTandem.reviewLatest';
+        commands.refreshConversations = 'agentTandem.header.refresh';
         commands.linkReviewConversation = 'agentTandem.linkReviewConversation';
         commands.unlinkReviewConversation = 'agentTandem.unlinkReviewConversation';
         if (!Object.hasOwn(commands, type)) throw new Error('Unsupported request.');
@@ -157,11 +182,20 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
   update() {
     const message = { type: 'state', state: this.state() };
     if (this.view) {
+      const { chat, review, reviewBusy } = message.state;
+      const blocked = chat?.status === 'running' || chat?.phase === 'finishing' || !!review?.busy || !!reviewBusy;
+      if (blocked !== this.newChatBlocked) {
+        this.newChatBlocked = blocked;
+        void vscode.commands.executeCommand('setContext', 'agentTandem.newChatBlocked', blocked);
+      }
       const count = message.state.review?.files.length ?? 0;
       this.view.badge = count ? { value: count, tooltip: `${count} files pending review` } : undefined;
       void this.view.webview.postMessage(message);
     }
     if (this.tab) void this.tab.webview.postMessage(message);
   }
-  dispose() { for (const item of this.subscriptions.splice(0)) item.dispose(); this.tab?.dispose(); }
+  dispose() {
+    for (const item of this.subscriptions.splice(0)) item.dispose();
+    this.tab?.dispose();
+  }
 }

@@ -5,10 +5,9 @@ import os from 'node:os';
 import { isAccountProvider, isChatAccount, type AccountProvider } from './account-providers';
 import { DesktopAccounts, desktopHome, validateDesktopSignIn, readDesktopSignIn } from './desktop-accounts';
 import type { AccountIdentity } from '../providers/account-status';
-import { usageAccount } from './usage-account';
 import { withStorageLock } from './storage-lock';
 import type { RollbackProgress } from './account-switch';
-import { assertAccountIdentity, codexAuthIdentity, sameAccountIdentity } from './account-identity';
+import { assertAccountIdentity, codexAuthIdentity, profileIdentityKey, sameAccountIdentity } from './account-identity';
 import { claudeKeychainService, macKeychain, type ClaudeKeychain } from './claude-keychain';
 
 export interface AccountProfile { id: string; provider: AccountProvider; label: string; identity?: AccountIdentity; createdAt: number; needsActivation?: boolean }
@@ -16,7 +15,7 @@ export interface ProfileRegistry { version: 1; profiles: AccountProfile[] }
 export function nativeHome(provider: 'Codex' | 'Claude'): string;
 export function nativeHome(provider: AccountProvider): string | Promise<string>;
 export function nativeHome(provider: AccountProvider) { return !isChatAccount(provider) ? desktopHome(provider) : provider === 'Codex' ? process.env.CODEX_HOME || path.join(os.homedir(), '.codex') : process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'); }
-export const profileIdentityKey = (provider: AccountProvider, identity?: AccountIdentity) => isChatAccount(provider) ? usageAccount(provider, identity)?.id : identity?.signedIn && (identity.id || identity.email) ? `${provider}:${identity.id || identity.email!.trim().toLowerCase()}` : undefined;
+export { profileIdentityKey } from './account-identity';
 const validId = (id: string) => /^[a-f0-9-]{36}$/i.test(id);
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
 async function optional(file: string) { try { return await readFile(file, 'utf8'); } catch (error) { if (missing(error)) return undefined; throw error; } }

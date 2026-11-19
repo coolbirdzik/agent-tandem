@@ -12,6 +12,7 @@ import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
 import { bankedResetDetails } from './core/banked-resets';
 import { compactCountdown, quotaGlyphCharacter, quotaStatuses, resetClock } from './core/quota-status';
+import { quotaAccountHoverHtml } from './core/quota-account-hover';
 import { statusBarPreferences, type StatusBarField, type StatusBarPreferences } from './core/status-bar-preferences';
 import { ACCOUNT_PROVIDERS, accountProviderName, accountProviderDetail, isChatAccount, type AccountProvider } from './core/account-providers';
 import { validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution';
@@ -24,10 +25,11 @@ import { storageUsageLevel, storageSize } from './core/storage-usage';
 import { quotaWindowLabel } from './ui/quota-window-label';
 import { Dropdowns } from './ui/dropdown';
 import { DatePickers } from './ui/date-picker';
+import { setModalOpen } from './ui/modal';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 autoHideScrollbars();
-hoverHints();
+hoverHints(document, renderStatusBarHover);
 const api = acquireVsCodeApi(), send = (type: string, value?: unknown) => api.postMessage({ type, value });
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const dropdowns = new Dropdowns(document.body);
@@ -252,7 +254,7 @@ function renderAttributionPreview() {
   const scope = assignmentScope(), valid = validAssignmentScope(scope);
   const days = scope.conversationId ? state?.data?.conversations?.find(row => row.provider === scope.provider && row.id === scope.conversationId)?.days ?? [] : state?.data?.days ?? [];
   const totals = usageBreakdown(days.filter(row => !row.account || !!row.accountSource), { grouping: 'day', provider: scope.provider, from: scope.from, to: scope.to }).totals;
-  el('attribution-preview').textContent = valid ? `${number(totals.total)} tokens · ${number(totals.requests)} requests eligible. Only history without native per-turn evidence is reassigned. New history within this scope follows this choice until removed; the latest matching assignment wins.`
+  el('attribution-preview').textContent = valid ? `${number(totals.total)} tokens · ${number(totals.requests)} requests eligible. The latest matching assignment applies to existing and future eligible history until removed.`
     : 'Choose a conversation, or enter both dates for all conversations. Dates are inclusive; leave them blank to cover an entire conversation.';
   el<HTMLButtonElement>('attribution-save').disabled = !state?.data || !!state.attributionBusy || !valid || !el<HTMLSelectElement>('attribution-account').value || !totals.total;
 }
@@ -351,6 +353,7 @@ function storagePage(value: string) {
 document.querySelectorAll<HTMLButtonElement>('[data-storage-page]').forEach(button => { button.onclick = () => storagePage(button.dataset.storagePage!); });
 document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(button => { button.onclick = () => { page(button.dataset.page!); if (button.dataset.page === 'storage') send('storage'); if (button.dataset.page === 'accounts') send('accountAction', { action: 'refresh' }); }; });
 el('accounts-refresh').onclick = () => send('accountAction', { action: 'refresh' });
+el('accounts-quick').onclick = () => send('quickAccounts');
 el('account-switch-view').onclick = showSwitchDialog;
 el('account-switch-close').onclick = hideSwitchDialog;
 el('account-switch-dialog').addEventListener('cancel', event => { event.preventDefault(); hideSwitchDialog(); });
@@ -441,6 +444,9 @@ const selectedHistory = new Set<string>();
 const historyRange = new CheckboxRangeSelection();
 let historySignature = '';
 let historyPreviewToken: string | undefined;
+const historyDialog = el<HTMLDialogElement>('storage-history-plan');
+const cancelHistory = el<HTMLButtonElement>('storage-history-cancel');
+historyDialog.oncancel = event => { event.preventDefault(); cancelHistory.click(); };
 el('storage-project').onchange = el('storage-kind').onchange = () => { historyRange.reset(); renderStorageHistories(state?.storage); };
 el('storage-select-visible').onclick = () => { historyRange.reset(); for (const group of visibleHistory(state?.storage)) selectedHistory.add(group.id); renderStorageHistories(state?.storage); };
 el('storage-clear-selection').onclick = () => { selectedHistory.clear(); historyRange.reset(); renderStorageHistories(state?.storage); };
@@ -451,7 +457,7 @@ el('storage-quick-select').onchange = () => {
   renderStorageHistories(state?.storage);
 };
 el('storage-history-preview').onclick = () => send('previewHistoryDeletion', { ids: [...selectedHistory] });
-el('storage-history-cancel').onclick = () => send('storage');
+cancelHistory.onclick = () => send('storage');
 // "Clean up…" opens a category chooser; the extension previews only the chosen kinds.
 const cleanKinds = new Set<CleanupKind>(['checkpoints', 'undo', 'unused']);
 let cleanChooser = false, cleanSignature = '';
@@ -488,6 +494,19 @@ function selectedStatusBarFields(): StatusBarField[] {
   const previous = state?.preferences.statusBar?.fields ?? [];
   return [...previous.filter(field => selected.includes(field)), ...selected.filter(field => !previous.includes(field))];
 }
+function renderStatusBarHover(target: Element) {
+  const provider = target.getAttribute('data-hover-hint');
+  if (provider !== 'Codex' && provider !== 'Claude') return undefined;
+  const content = node('div', undefined, 'quota-account-hover');
+  // Only the shared template emits icon syntax. Account strings are already HTML-escaped.
+  content.innerHTML = quotaAccountHoverHtml(provider, state ?? {}, 'webview').replace(/\$\(([\w-]+)(~spin)?\)/g, (reference, name: string, spin?: string) => {
+    const glyph = quotaGlyphCharacter(reference);
+    if (glyph) return `<span class="quota-window-badge" role="img" aria-label="${name.endsWith('-5h') ? '5h' : '7d'}">${glyph}</span>`;
+    if (name === 'agent-tandem-codex' || name === 'agent-tandem-claude') return `<span class="quota-hover-provider-icon" aria-hidden="true">${name === 'agent-tandem-codex' ? '\uE001' : '\uE002'}</span>`;
+    return `<span class="codicon codicon-${name}${spin ? ' codicon-modifier-spin' : ''}" aria-hidden="true"></span>`;
+  });
+  return content;
+}
 function renderStatusBarPreview() {
   const enabled = el<HTMLInputElement>('show-status-quota').checked, root = el('status-bar-preview'); root.replaceChildren();
   const iconsOnly = el<HTMLSelectElement>('status-bar-style').value === 'icons';
@@ -497,7 +516,8 @@ function renderStatusBarPreview() {
   const preferences = statusBarPreferences({ providers: el<HTMLSelectElement>('status-bar-providers').value as StatusBarPreferences['providers'], fields: selectedStatusBarFields(), quotaWindows: el<HTMLSelectElement>('status-bar-windows').value as StatusBarPreferences['quotaWindows'], style: el<HTMLSelectElement>('status-bar-style').value as StatusBarPreferences['style'], codexColor: statusBarColor('codex'), claudeColor: statusBarColor('claude') });
   for (const value of quotaStatuses({ accounts: state?.accounts, composeProvider: state?.activeProvider }, preferences)) {
     const item = node('span', undefined, 'status-bar-preview-item'), icon = providerIcon(value.provider);
-    icon.setAttribute('aria-hidden', 'true'); item.append(icon); item.title = value.tooltip;
+    icon.setAttribute('aria-hidden', 'true'); item.append(icon);
+    item.dataset.hoverHint = value.provider; item.tabIndex = 0;
     const custom = value.provider === 'Claude' ? preferences.claudeColor : preferences.codexColor;
     item.style.color = custom ? statusBarCss(custom) : value.tone === 'healthy' ? statusBarCss('charts.green') : value.tone === 'loading' ? statusBarCss(value.provider === 'Claude' ? 'charts.orange' : 'charts.blue') : '';
     for (const part of value.label.split(/(\$\([\w-]+\))/).filter(Boolean)) {
@@ -595,7 +615,7 @@ function renderApiActivity(filters: UsageFilters) {
   }
   root.append(metrics);
   const details = node('details', undefined, 'usage-details'); details.append(node('summary', 'API details'));
-  details.append(node('p', 'Source: API · account/usage/read. Dates use the API timezone, which is unspecified. Missing days are not counted. Model breakdowns and API cost use local history.', 'muted'));
+  details.append(node('p', 'The API timezone is unspecified. Missing days are excluded. Model breakdowns and cost estimates use local history.', 'muted'));
   root.append(details);
   if (filters.model) root.append(node('p', 'Model filter: Local only', 'muted'));
   if (usage.detail) root.append(node('p', usage.detail, 'muted'));
@@ -1346,9 +1366,9 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
     bytes.title = 'Space freed by deleting only this history. Data shared with other history or Review stays; deleting those together can free more.';
     row.append(checkbox, copy, bytes); list.append(row);
   }
-  const preview = storage?.historyPlan; el('storage-history-plan').hidden = !preview;
+  const preview = storage?.historyPlan;
   el<HTMLButtonElement>('storage-history-delete').disabled = blocked || !preview || (!!preview.reviewScope && !preview.files.length && !preview.records.length);
-  el<HTMLButtonElement>('storage-history-cancel').disabled = busy;
+  cancelHistory.disabled = busy;
   if (preview) {
     const kinds = preview.kinds, lost = kinds ? [kinds.includes('checkpoints') && 'every message checkpoint', kinds.includes('undo') && 'every restore backup'].filter((item): item is string => !!item) : [];
     const tracking = preview.histories.filter(group => group.kind === 'tracking').length;
@@ -1381,10 +1401,7 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
       ? 'Nothing to clean yet. Remaining snapshots are protected or less than 10 minutes old.'
       : 'These snapshots are shared with retained history or Review. Only the selected restore points will be removed.'));
   }
-  if (preview && preview.token !== historyPreviewToken) {
-    el('storage-history-plan').scrollIntoView?.({ block: 'nearest' });
-    const heading = el('storage-history-plan-heading'); heading.tabIndex = -1; heading.focus({ preventScroll: true });
-  }
+  setModalOpen(historyDialog, !!preview);
   historyPreviewToken = preview?.token;
   const result = el('storage-history-result'); result.replaceChildren();
   if (storage?.historyResult) {
@@ -1686,7 +1703,7 @@ function renderDataPolicies(value: UsageDashboardState) {
   rows.push({
     key: 'review', title: 'Review snapshots', bytes: size('Review snapshots & tracking'),
     chip: auto?.error ? 'Cleanup blocked' : auto?.enabled ? 'Cleaned automatically' : 'Automatic cleanup off', tone: auto?.error ? 'protected' : auto?.enabled ? 'auto' : 'choice',
-    text: 'Copies of your files that let you review, accept and undo agent changes. Ones nothing needs any more, for example after you accept changes, are removed once they are an hour old. Pending changes, tracking baselines and Undo are always kept.',
+    text: 'When automatic cleanup is on, unused snapshots become eligible after one hour. Pending changes, tracking baselines and Undo stay protected.',
     facts: [
       unused ? (unused.bytes ? `${fileSize(unused.bytes)} unused right now` : 'Nothing unused right now') : 'Measuring…',
       total?.runs ? `${fileSize(total.bytes)} cleaned automatically so far${total.lastAt ? ` · last ${sinceLabel(total.lastAt)}` : ''}` : 'Nothing cleaned automatically yet',
@@ -1705,8 +1722,8 @@ function renderDataPolicies(value: UsageDashboardState) {
     key: 'restore', title: 'Restore points', bytes: size('Message checkpoints & Undo'),
     chip: limit?.error || limit?.blocked ? 'Limit not met' : cap ? `Oldest removed above ${fileSize(cap)}` : 'You decide', tone: limit?.error || limit?.blocked ? 'protected' : cap ? 'auto' : 'choice',
     text: cap
-      ? `A checkpoint is saved before each message so you can restore your code, plus the last restore backup. When AgentTandem data goes over ${fileSize(cap)}, the oldest checkpoints are removed first until it is back to about 90% of the limit. The last restore backup is kept. Set 0 to turn the limit off.`
-      : 'A checkpoint is saved before each message so you can restore your code, plus the last restore backup. The size limit is off, so they are never deleted automatically.',
+      ? `Above ${fileSize(cap)} of AgentTandem data, cleanup removes the oldest checkpoints as needed to reach about 90% of the limit. The last restore backup is kept. Set the limit to 0 to turn it off.`
+      : 'The size limit is off. Automatic cleanup keeps message checkpoints and the last restore backup.',
     facts: [
       ...(cap && used !== undefined ? [`AgentTandem data uses ${fileSize(used)} of ${fileSize(cap)}`] : []),
       ...(limitTotal?.runs ? [`${fileSize(limitTotal.bytes)} removed to stay under the limit${limitTotal.lastAt ? ` · last ${sinceLabel(limitTotal.lastAt)}` : ''}`] : []),

@@ -1,4 +1,5 @@
 import { hoverHints } from './ui/hover-hints';
+import { isMacKeyboard, shortcuts } from './ui/keyboard-shortcuts';
 import { autoHideScrollbars } from './ui/scrollbars';
 import { ReviewCodeEditor } from './review-monaco';
 import type { ReviewEditorState } from './core/review-webview';
@@ -14,6 +15,7 @@ const saved = api.getState();
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const dropdowns = new Dropdowns(document.body);
 const filePicker = element<HTMLSelectElement>('files');
+const mac = isMacKeyboard(navigator.platform);
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = '') => {
   const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
 };
@@ -31,8 +33,9 @@ const send = (type: string, extra: Record<string, unknown> = {}) => {
   api.postMessage({ type, revision: state.revision, file: state.file?.path, ...extra });
 };
 const save = () => api.setState({ file: state.file?.path, line: state.file?.hunks[active]?.newLine, scroll: codeEditor?.scrollTop ?? 0 });
-function button(label: string, glyph: string, className: string, title: string, action: () => void) {
+function button(label: string, glyph: string, className: string, title: string, action: () => void, shortcut?: string) {
   const node = create('button', '', className); node.type = 'button'; node.title = title;
+  if (shortcut) node.dataset.shortcut = shortcut;
   node.setAttribute('aria-label', label);
   node.append(icon(glyph), create('span', label, 'action-label')); node.onclick = action; return node;
 }
@@ -68,11 +71,11 @@ function block(hunk: ReviewHunk, index: number) {
   const decisions = create('div', '', 'decision-actions');
   decisions.setAttribute('role', 'group'); decisions.setAttribute('aria-label', 'Review this change');
   decisions.append(
-    button('Revert', 'discard', 'reject', 'Restore the saved baseline for this block (Alt+N)', () => decide('reject', hunk.id, index, binding)),
-    button('Accept', 'check', 'accept', 'Keep this block and mark it reviewed (Alt+Y)', () => decide('accept', hunk.id, index, binding)));
+    button('Revert', 'discard', 'reject', 'Restore the saved baseline for this block', () => decide('reject', hunk.id, index, binding), shortcuts.reject),
+    button('Accept', 'check', 'accept', 'Keep this block and mark it reviewed', () => decide('accept', hunk.id, index, binding), shortcuts.accept));
   const navigation = create('div', '', 'block-navigation');
-  if (state.file!.hunks.length > 1 || state.files.length > 1) navigation.append(button('Next change', 'arrow-down', 'next-block', 'Continue to the next block or file (Alt+Down)', () => { if (state.revision === binding.revision && state.file?.path === binding.file) navigate(1, index); }));
-  if (state.files.length > 1) navigation.append(button('Next file', 'chevron-right', 'next-file-block', 'Skip to the next file (Alt+PageDown)', () => { if (state.revision === binding.revision && state.file?.path === binding.file) navigateFile(1); }));
+  if (state.file!.hunks.length > 1 || state.files.length > 1) navigation.append(button('Next change', 'arrow-down', 'next-block', 'Continue to the next block or file', () => { if (state.revision === binding.revision && state.file?.path === binding.file) navigate(1, index); }, shortcuts.next));
+  if (state.files.length > 1) navigation.append(button('Next file', 'chevron-right', 'next-file-block', 'Skip to the next file', () => { if (state.revision === binding.revision && state.file?.path === binding.file) navigateFile(1); }, shortcuts.nextFile));
   actions.append(decisions); if (navigation.childElementCount) actions.append(navigation);
   header.append(metadata, actions); section.append(header);
   section.addEventListener('focusin', () => focusBlock(index, false));
@@ -210,7 +213,9 @@ window.addEventListener('keydown', event => {
     event.preventDefault(); event.stopPropagation(); saveEdit(); return;
   }
   if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || (event.target instanceof Element && !event.target.closest('.monaco-editor .inputarea,.monaco-editor .native-edit-context') && event.target.closest('input,textarea,select,[contenteditable="true"],.tandem-dropdown'))) return;
-  const key = event.key.toLowerCase();
+  let key = event.key.toLowerCase();
+  // Option can produce a symbol or a dead key on macOS.
+  if (mac && !/^[a-z]$/.test(key) && ['KeyN', 'KeyY'].includes(event.code)) key = event.code.at(-1)!.toLowerCase();
   if (!['arrowdown', 'arrowup', 'pagedown', 'pageup', 'y', 'n'].includes(key)) return;
   event.preventDefault();
   event.stopPropagation();
@@ -221,6 +226,7 @@ window.addEventListener('keydown', event => {
 window.addEventListener('pagehide', () => codeEditor?.dispose());
 window.addEventListener('message', event => {
   if (event.data?.type === 'state') render(event.data.state as ReviewEditorState);
+  if (event.data?.type === 'chooseFile' && state.files.length) send('chooseFile');
   if (event.data?.type === 'editResult' && savingEdit) {
     savingEdit = false;
     if (event.data.saved) codeEditor?.markSaved();

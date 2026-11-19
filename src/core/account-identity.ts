@@ -1,4 +1,8 @@
 import type { AccountIdentity } from '../providers/account-status';
+import { isChatAccount, type AccountProvider } from './account-providers';
+import { usageAccount } from './usage-account';
+
+export const profileIdentityKey = (provider: AccountProvider, identity?: AccountIdentity) => isChatAccount(provider) ? usageAccount(provider, identity)?.id : identity?.signedIn && (identity.id || identity.email) ? `${provider}:${identity.id || identity.email!.trim().toLowerCase()}` : undefined;
 
 export class AccountIdentityMismatchError extends Error {
   constructor(message = 'Saved sign-in belongs to a different account. Sign in again or save it as a separate account.') { super(message); }

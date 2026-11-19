@@ -30,6 +30,20 @@ export async function verifyReviewWebview(runtime, port, edition) {
   const click = async selector => {
     await until(() => evaluate(`const b=d.querySelector(${JSON.stringify(selector)});if(!b||b.disabled)return; b.click();return true;`), `click ${selector}`);
   };
+  const key = async params => {
+    await call('Input.dispatchKeyEvent', { type: 'keyDown', ...params });
+    await call('Input.dispatchKeyEvent', { type: 'keyUp', ...params });
+  };
+  const primary = process.platform === 'darwin' ? 4 : 2;
+  const chord = async letter => {
+    await key({ key: 'k', code: 'KeyK', windowsVirtualKeyCode: 75, modifiers: primary });
+    await key({ key: letter, code: `Key${letter}`, windowsVirtualKeyCode: letter.charCodeAt(0), modifiers: primary | 8 });
+  };
+  const escape = () => key({ key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  const picker = title => until(async () => {
+    const { result } = await call('Runtime.evaluate', { expression: `document.querySelector('.quick-input-widget:not([style*="display: none"]) .quick-input-title')?.textContent.includes(${JSON.stringify(title)})`, returnByValue: true });
+    return result.value;
+  }, `${title} picker`);
   try {
     await stage('menu');
     target = await findTarget('#review-more');
@@ -44,21 +58,38 @@ export async function verifyReviewWebview(runtime, port, edition) {
       return result.value;
     }, 'VS Code review menu');
     assert.deepEqual(labels, ['Refresh', 'Native diff', 'separator', 'Open Workspace Changes', 'Open Conversation']);
-    await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-    await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await escape();
+    await evaluate(`const b=d.querySelector('#files-trigger');b.focus();b.dispatchEvent(new d.defaultView.MouseEvent('mouseover',{bubbles:true}));`);
+    const keys = await until(() => evaluate(`const keys=[...d.querySelectorAll('#tandem-hover-hint kbd')];return keys.length && keys.map(k=>k.textContent);`), 'Changed file shortcut keycaps');
+    assert.deepEqual(keys, process.platform === 'darwin' ? ['⌘', 'K', '⌘', '⇧', 'J'] : ['Ctrl', 'K', 'Ctrl', 'Shift', 'J']);
+    await chord('J'); await picker('AgentTandem · Changed files'); await escape();
+    await chord('A'); await picker('AgentTandem · Accounts'); await escape();
     await done('menu');
     await stage('agent-list');
     const changesReviewTarget = target; target = await findTarget('#screen-changes');
     await until(() => evaluate(`const p=d.querySelector('#screen-changes');return p&&!p.hidden&&p.getBoundingClientRect().height>0&&p.querySelectorAll('.review-file').length===${process.argv.includes('--readme') ? 9 : 8};`), 'Extension sidebar shows workspace changes');
     const agentList = await call('Page.captureScreenshot', { format: 'png' });
     await writeFile(path.join(process.cwd(), 'artifacts', `review-agent-changes-${edition}.png`), Buffer.from(agentList.data, 'base64'));
+    await evaluate(`d.querySelector('#focus-chat').focus();`);
+    await chord('N');
+    await until(() => evaluate(`return d.activeElement?.id==='chat-input' && !d.querySelector('#screen-conversations').hidden;`), 'New Chat shortcut');
+    await click('.header-actions [data-screen="changes"]');
+    await until(() => evaluate(`return !d.querySelector('#screen-changes').hidden;`), 'Return to workspace changes');
+    await click('[data-focus-key="workspace-review:previewRevert"]');
+    await until(() => evaluate(`return !!d.querySelector('#revert-preview:modal .revert-scope li');`), 'Revert opens a modal with the affected files');
+    await click('#revert-preview .modal-cancel');
+    await until(() => evaluate(`return !d.querySelector('#revert-preview:modal') && !!d.querySelector('#conversation-changes .review-file');`), 'Cancel closes Revert and leaves the pending files available');
     target = changesReviewTarget; await done('agent-list');
     await stage('conversation-link');
     const reviewTarget = target; target = await findTarget('.message-restore[data-checkpoint-available="true"]');
+    await chord('H');
+    await until(() => evaluate(`return d.activeElement?.id==='conversation-search' && !d.querySelector('#history-view').hidden;`), 'Conversation history shortcut');
+    await chord('T');
+    await until(() => evaluate(`return d.activeElement?.id==='chat-input' && d.querySelector('#history-view').hidden;`), 'Focus Chat shortcut');
     const restore = await until(() => evaluate(`const b=d.querySelector('.message-restore[data-checkpoint-available="true"]');if(!b||b.disabled)return;return {text:b.textContent,height:b.getBoundingClientRect().height,background:d.defaultView.getComputedStyle(b).backgroundColor};`), 'Visible Restore code action');
     assert.equal(restore.text, 'Restore code'); assert.ok(restore.height>=28); assert.notEqual(restore.background,'rgba(0, 0, 0, 0)');
     await click('.message-restore[data-checkpoint-available="true"]');
-    await until(() => evaluate(`return d.querySelector('#checkpoint-preview')?.textContent.includes('Restore checkpoint');`), 'Restore previews affected files');
+    await until(() => evaluate(`return d.querySelector('#checkpoint-preview:modal')?.textContent.includes('Restore checkpoint');`), 'Restore previews affected files in a modal');
     const conversationShot = await call('Page.captureScreenshot', { format: 'png' });
     await writeFile(path.join(process.cwd(), 'artifacts', `review-conversation-restore-${edition}.png`), Buffer.from(conversationShot.data, 'base64'));
     target = reviewTarget; await done('conversation-link');

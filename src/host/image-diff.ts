@@ -1,3 +1,4 @@
+import { shortcutAttributes, shortcuts } from '../ui/keyboard-shortcuts';
 import * as vscode from 'vscode';
 import { webviewResource } from './webview-resource';
 import { randomBytes } from 'node:crypto';
@@ -30,7 +31,7 @@ export class ImageDiff implements vscode.Disposable {
     panel.title = title;
     const resource = (folder: string, name: string) => escape(webviewResource(panel.webview, this.extensionUri, folder, name));
     const nonce = randomBytes(18).toString('base64');
-    panel.webview.html = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${resource('media', 'review-editor.css')}"></head><body><header class="review-header"><strong>${escape(file.file)}</strong><div class="header-actions"><button data-action="previous">Previous file</button><button data-action="choose">Choose file</button><button data-action="next">Next file</button></div></header><main id="images" aria-label="Image changes"></main><footer>Saved image snapshots · Before / After</footer><script id="image-data" type="application/json">${JSON.stringify({ images, file: file.file }).replace(/</g, '\\u003c')}</script><script nonce="${nonce}" src="${resource('dist', 'image-diff.js')}"></script></body></html>`;
+    panel.webview.html = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${resource('media', 'review-editor.css')}"></head><body><header class="review-header"><strong>${escape(file.file)}</strong><div class="header-actions"><button data-action="previous" title="Previous file" ${shortcutAttributes(shortcuts.previousFile)}>Previous file</button><button data-action="choose" title="Choose file" ${shortcutAttributes(shortcuts.chooseFile)}>Choose file</button><button data-action="next" title="Next file" ${shortcutAttributes(shortcuts.nextFile)}>Next file</button></div></header><main id="images" aria-label="Image changes"></main><footer>Saved image snapshots · Before / After</footer><script id="image-data" type="application/json">${JSON.stringify({ images, file: file.file }).replace(/</g, '\\u003c')}</script><script nonce="${nonce}" src="${resource('dist', 'image-diff.js')}"></script></body></html>`;
     return true;
   }
   dispose() { this.version++; this.panel?.dispose(); }

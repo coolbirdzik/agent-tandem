@@ -23,7 +23,8 @@ const hash = (value: string | Buffer) => createHash('sha256').update(value).dige
 interface StatEntry { size: number; mtimeMs: number; ctimeMs: number; ino: number; seen: number; id: string }
 /** A file modified within this window of being hashed can change without moving its timestamps (Git's "racy clean" rule). */
 const racyMs = 2000;
-const externalNotice = 'Already applied · Conversation groups use native edit history or manual links. Other saved edits remain unassigned.';
+const externalNotice = 'Changes are already applied.';
+const legacyExternalNotice = 'Already applied · Conversation groups use native edit history or manual links. Other saved edits remain unassigned.';
 const sameManifest =(left: Manifest, right: Manifest) => {
   const names = Object.keys(left);
   return names.length === Object.keys(right).length && names.every(name => left[name] === right[name]);
@@ -85,6 +86,9 @@ export class ReviewStore {
       value = { version: 1, project, revision: randomUUID(), files: [] };
     }
     if (value.version !== 1 || value.project !== project || typeof value.revision !== 'string' || !Array.isArray(value.files)) throw new Error('Invalid pending change review.');
+    if (typeof value.notice === 'string' && value.notice.startsWith(legacyExternalNotice)) {
+      value.notice = externalNotice + value.notice.slice(legacyExternalNotice.length);
+    }
     if (value.gitHead !== undefined && value.gitHead !== null && (typeof value.gitHead !== 'string' || !/^[a-f0-9]{40,64}$/.test(value.gitHead))) throw new Error('Invalid review Git commit.');
     if (value.external !== undefined && !/^[a-f0-9-]{36}$/i.test(value.external)) throw new Error('Invalid external review baseline.');
     if (value.externalPreference !== undefined && typeof value.externalPreference !== 'boolean') throw new Error('Invalid external tracking preference.');

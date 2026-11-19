@@ -47,7 +47,7 @@ macOS/Linux are prepared through abstractions but excluded from initial acceptan
 
 ### Chat and sessions
 
-The default workflow stays in one AgentTandem sidebar panel: conversations, history, changes and diagnostics. Sessions, tool output and steps/files do not automatically create editor tabs. Open in tab/Open diff in editor are separate actions. Provider icons and names identify sessions, headers, replies/tools, beyond color alone.
+The default workflow stays in one AgentTandem sidebar panel: conversations, history, changes and CLI management. Sessions, tool output and steps/files do not automatically create editor tabs. Open in tab/Open diff in editor are separate actions. Provider icons and names identify sessions, headers, replies/tools, beyond color alone.
 
 The initial screen uses current-project Codex/Claude conversations. Filter cwd within the root/subdirectories, excluding similarly prefixed siblings. Use the current root without a picker; multi-root workspaces follow the active file. History has its own button; the latest session opens unless a saved selection exists. Keys are `(provider, providerSessionId)`; reading history does not create AgentTandem sessions. One provider's list/read failure leaves the other available. Revision-based sync rejects stale reads after switching projects/sessions. History is readable without model execution permissions; transcripts without snapshots must not pretend to offer code diffs/reverts.
 

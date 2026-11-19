@@ -1,6 +1,6 @@
-import { profileIdentityKey, type AccountProfile } from './account-profiles';
+import type { AccountProfile } from './account-profiles';
 import type { ProviderAccountStatus } from '../providers/account-status';
-import { accountIdentityMatches } from './account-identity';
+import { accountIdentityMatches, profileIdentityKey } from './account-identity';
 
 /** Never attach another account's plan or quota to a saved profile label. */
 export function accountProfileStatus(profile: AccountProfile & { status?: ProviderAccountStatus }, status = profile.status): ProviderAccountStatus | undefined {

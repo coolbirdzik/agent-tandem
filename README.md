@@ -236,12 +236,20 @@ Install AgentTandem in the **WSL/SSH workspace** so it can access that environme
 
 ## Keyboard shortcuts
 
-| Shortcut | Action |
-| --- | --- |
-| `Enter` / `Shift+Enter` | Send a chat message or queue a follow-up / insert a newline |
-| `Alt+Y` / `Alt+N` | Accept / reject the current change in an active review editor |
-| `Alt+Up` / `Alt+Down` | Previous / next change |
-| `Alt+PageUp` / `Alt+PageDown` | Previous / next changed file |
+| Action | macOS | Windows and Linux |
+| --- | --- | --- |
+| Focus the current chat composer | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>T</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
+| Start a new chat | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>N</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> |
+| Open conversation history | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>H</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> |
+| Pick a file in the active review | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>J</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd> |
+| Open Quick Accounts | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> |
+| Send or queue a message / insert a newline | <kbd>↩</kbd> / <kbd>⇧</kbd><kbd>↩</kbd> | <kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd> |
+| Accept / reject the current change | <kbd>⌥</kbd><kbd>Y</kbd> / <kbd>⌥</kbd><kbd>N</kbd> | <kbd>Alt</kbd>+<kbd>Y</kbd> / <kbd>Alt</kbd>+<kbd>N</kbd> |
+| Previous / next change or chat message | <kbd>⌥</kbd><kbd>↑</kbd> / <kbd>⌥</kbd><kbd>↓</kbd> | <kbd>Alt</kbd>+<kbd>↑</kbd> / <kbd>Alt</kbd>+<kbd>↓</kbd> |
+| Previous / next changed file | <kbd>⌥</kbd><kbd>⇞</kbd> / <kbd>⌥</kbd><kbd>⇟</kbd> | <kbd>Alt</kbd>+<kbd>Page Up</kbd> / <kbd>Alt</kbd>+<kbd>Page Down</kbd> |
+| Save edits in the Review editor | <kbd>⌘</kbd><kbd>S</kbd> | <kbd>Ctrl</kbd>+<kbd>S</kbd> |
+
+For a two-step shortcut, press the first combination, release it, then press the second. The five two-step bindings can be changed in VS Code’s **Keyboard Shortcuts** editor. AgentTandem’s webview tooltips show the shipped defaults.
 
 *Screenshots capture the current interface with demonstration data. Account names, emails, token counts, quota values and switch logs are fictional.*
 

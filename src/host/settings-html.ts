@@ -1,9 +1,20 @@
+import { shortcutAttributes, shortcuts } from '../ui/keyboard-shortcuts';
+
 import type { PanelResources } from './panel-html';
 const attribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const statusBarColorOptions = `<option value="">Quota status (default)</option>
+  <option value="statusBar.foreground">Status bar text</option>
+  <option value="charts.blue">Blue</option>
+  <option value="charts.green">Green</option>
+  <option value="charts.orange">Orange</option>
+  <option value="charts.purple">Purple</option>
+  <option value="charts.red">Red</option>
+  <option value="charts.yellow">Yellow</option>
+  <option value="custom">Custom…</option>`;
 export function settingsHtml(resources: PanelResources) {
   const r = Object.fromEntries(Object.entries(resources).map(([key, value]) => [key, attribute(value)])) as unknown as PanelResources;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${r.cspSource}; font-src ${r.cspSource}; style-src ${r.cspSource}; script-src 'nonce-${r.nonce}';"><title>AgentTandem Dashboard</title><link rel="stylesheet" href="${r.icons}"><link rel="stylesheet" href="${r.style}"></head><body data-codex-icon="${r.codex}" data-claude-icon="${r.claude}">
-  <header class="settings-header"><div class="settings-brand"><span class="codicon codicon-root-folder" aria-hidden="true"></span><strong>AgentTandem</strong><span>Dashboard</span></div><nav aria-label="Dashboard pages"><button data-page="dashboard" aria-pressed="true"><span class="codicon codicon-dashboard" aria-hidden="true"></span>Dashboard</button><button data-page="accounts" aria-pressed="false"><span class="codicon codicon-account" aria-hidden="true"></span>Accounts</button><button data-page="preferences" aria-pressed="false"><span class="codicon codicon-settings-gear" aria-hidden="true"></span>Preferences</button><button data-page="storage" aria-pressed="false"><span class="codicon codicon-database" aria-hidden="true"></span>Storage</button></nav><button id="open-chat" class="quiet">Open chat <span class="codicon codicon-arrow-right" aria-hidden="true"></span></button></header>
+  <header class="settings-header"><div class="settings-brand"><span class="codicon codicon-root-folder" aria-hidden="true"></span><strong>AgentTandem</strong><span>Dashboard</span></div><nav aria-label="Dashboard pages"><button data-page="dashboard" aria-pressed="true"><span class="codicon codicon-dashboard" aria-hidden="true"></span>Dashboard</button><button data-page="accounts" aria-pressed="false"><span class="codicon codicon-account" aria-hidden="true"></span>Accounts</button><button data-page="preferences" aria-pressed="false"><span class="codicon codicon-settings-gear" aria-hidden="true"></span>Preferences</button><button data-page="storage" aria-pressed="false"><span class="codicon codicon-database" aria-hidden="true"></span>Storage</button></nav><button id="open-chat" class="quiet" title="Focus AgentTandem chat" ${shortcutAttributes(shortcuts.focusChat)}>Open chat <span class="codicon codicon-comment-discussion" aria-hidden="true"></span></button></header>
   <main><section id="dashboard"><div class="page-heading"><div><h1>Dashboard<span id="selection-caption" class="selection-caption"></span></h1><p class="description">Tokens, cost and quota across your accounts.</p></div><button id="refresh" class="dashboard-refresh" title="Refresh usage and quota"><span class="codicon codicon-refresh" aria-hidden="true"></span>Refresh</button></div>
   <div id="dashboard-status" class="dashboard-status" role="status" aria-live="polite"></div><div id="dashboard-error" class="dashboard-error" role="alert" hidden></div>
   <div class="filter-bar" role="group" aria-label="Usage filters"><div id="range-chips" class="range-chips" role="group" aria-label="Date range"></div><div class="filter-row"><label class="range-select" hidden>Date range<select id="filter-range" data-native-only><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="week">This week</option><option value="month">This month</option><option value="year">This year</option><option value="all">All time</option><option value="custom">Custom dates</option><option value="cycle-5h">5h cycle</option><option value="cycle-weekly">Weekly cycle</option></select></label><label>Provider<select id="filter-provider" aria-label="Provider"><option value="">All providers</option><option>Codex</option><option>Claude</option></select></label><label>Model<select id="filter-model" aria-label="Model"><option value="">All models</option></select></label><label>Group by<select id="filter-group" aria-label="Group by"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div class="filter-footer"><div id="custom-dates" class="custom-dates" hidden><label>From<input id="filter-from" type="date"></label><label>To<input id="filter-to" type="date"></label></div><button id="reset-filters" class="quiet">Reset</button></div></div>
@@ -16,7 +27,7 @@ export function settingsHtml(resources: PanelResources) {
   </div><div id="panel-quota" class="tab-panel" role="tabpanel" aria-labelledby="tab-quota" hidden>
   <section class="section quota-now"><div class="section-heading"><div><h2>Current quota <span class="source-label" data-source="API">API</span></h2><p class="muted">Live remaining quota and reset times</p></div></div><section id="accounts" class="dashboard-accounts" aria-label="Accounts and current quota"></section></section>
   <section class="section"><div class="section-heading"><div><h2>Quota burn-down <span class="source-label" data-source="API">API</span></h2><p class="muted">Remaining quota in the current reset cycle against an even burn to reset</p></div></div><div id="quota-pace" class="quota-pace-grid"></div></section>
-  <section class="section"><div class="section-heading"><div><h2>Tokens per 1% quota <span class="source-label">Estimate</span></h2></div><span class="muted">All cycles</span></div><div id="quota-estimates" class="quota-estimates"></div><details class="quota-estimate-note usage-details"><summary>How estimates work</summary><p class="muted">A cycle runs from the last observed 100% quota reading to the latest reading. A changed forecast reset does not create a new cycle. If no full reading was recorded, the start is partial and only subsequent usage is counted. Tokens per 1% = recorded tokens ÷ quota percentage points used. The average divides total tokens by total percentage points across captured cycles. Legacy forecast-based samples are excluded once captured cycles are available. Quota remaining shows the first and last measured levels. Full quota extrapolates the observed ratio to 100 percentage points; it is not measured usage. API uses paired account counters; Local uses account-matched history. Device includes native sessions without account identity and may include other sign-ins. Local history may be incomplete. Local and Device only see history on this device in the default config folders, while quota counts every device using the account: if it is also used on another device or by a CLI with a separate config folder, their tokens per 1% reads too low. Sources stay separate. Model mix and other-device usage affect estimates.</p></details></section>
+  <section class="section"><div class="section-heading"><div><h2>Tokens per 1% quota <span class="source-label">Estimate</span></h2></div><span class="muted">All cycles</span></div><div id="quota-estimates" class="quota-estimates"></div><details class="quota-estimate-note usage-details"><summary>How estimates work</summary><p class="muted">Tokens per 1% = recorded tokens ÷ quota percentage points used. Full-cycle capacity extrapolates that rate to 100%. API uses account counters. Local uses account-matched history, and Device can include other sign-ins. Usage on other devices or in separate CLI profiles can make Local and Device estimates too low.</p></details></section>
   </div><div id="panel-conversations" class="tab-panel" role="tabpanel" aria-labelledby="tab-conversations" hidden>
   <section class="section"><div class="section-heading"><h2>Conversations <span class="source-label" data-source="Local">Local</span></h2><label class="conversation-search">Search<input id="conversation-search" type="search" placeholder="Conversation or project"></label></div><div id="conversation-breakdown" class="table-wrap"></div><section id="conversation-detail" class="conversation-detail" hidden aria-label="Conversation usage details"><div class="section-heading"><div><h3 id="conversation-title"></h3><p id="conversation-meta" class="muted"></p></div><button id="conversation-close" class="quiet" aria-label="Close conversation details">Close</button></div><div id="conversation-totals" class="usage-totals"></div><div id="conversation-quota" class="conversation-quota"></div><div id="conversation-models" class="table-wrap"></div><div id="conversation-days" class="table-wrap"></div></section></section>
   </div><div id="panel-details" class="tab-panel" role="tabpanel" aria-labelledby="tab-details" hidden>
@@ -28,18 +39,120 @@ export function settingsHtml(resources: PanelResources) {
   <section id="usage-attribution" class="section attribution-entry" aria-labelledby="attribution-entry-title"><span class="codicon codicon-person-add" aria-hidden="true"></span><div><h2 id="attribution-entry-title">History assignments</h2><p id="attribution-entry-summary" class="muted"></p></div><button id="attribution-open" class="quiet">Assign history…</button></section>
   <footer id="usage-coverage" class="usage-coverage"></footer></div></section>
   <section id="managed-accounts" hidden>
-    <div class="page-heading"><div><h1>Accounts</h1><p class="description">One place for your CLI and editor sign-ins.</p></div><div class="actions"><button id="accounts-refresh" class="quiet" title="Refresh sign-ins and available quota"><span class="codicon codicon-refresh" aria-hidden="true"></span>Refresh</button><button id="account-connect" aria-expanded="false" aria-controls="account-connection"><span class="codicon codicon-add" aria-hidden="true"></span>Add account</button></div></div>
+    <div class="page-heading"><div><h1>Accounts</h1><p class="description">One place for your CLI and editor sign-ins.</p></div><div class="actions"><button id="accounts-quick" class="quiet" title="Open the account picker" ${shortcutAttributes(shortcuts.quickAccounts)}>Quick Accounts</button><button id="accounts-refresh" class="quiet" title="Refresh sign-ins and available quota"><span class="codicon codicon-refresh" aria-hidden="true"></span>Refresh</button><button id="account-connect" aria-expanded="false" aria-controls="account-connection"><span class="codicon codicon-add" aria-hidden="true"></span>Add account</button></div></div>
     <nav id="account-platforms" class="account-platforms" aria-label="Filter accounts by app"></nav>
     <section id="account-connection" class="account-connection" aria-labelledby="account-connection-title" hidden><div><h2 id="account-connection-title">Connect an account</h2><p id="account-connection-detail" class="muted"></p></div><div class="account-toolbar"><label>App<select id="account-provider" aria-label="App"><option>Codex</option><option value="Claude">Claude Code</option><option>Cursor</option><option>Antigravity</option></select></label><button id="account-add">Sign in</button><button id="account-save" class="quiet">Save current sign-in</button><button id="account-import" class="quiet">Import JSON</button><button id="account-connect-close" class="quiet" aria-label="Close connect account"><span class="codicon codicon-close" aria-hidden="true"></span></button></div></section>
     <div id="accounts-notice" role="status" aria-live="polite" class="dashboard-status"></div><div id="accounts-error" role="alert" class="dashboard-error" hidden></div><button id="account-switch-view" class="quiet" hidden>View switch log</button>
     <div class="account-list-tools"><h2>Saved accounts <span id="account-count" class="muted"></span></h2><label class="account-search"><span class="codicon codicon-search" aria-hidden="true"></span><input id="account-search" type="search" placeholder="Find an account" aria-label="Find an account"></label></div>
     <div id="managed-account-list" class="managed-account-list"></div><p class="account-footnote muted">CLI switches update the default sign-in. Close IDE windows before switching, then reopen the app.</p>
   </section>
-  <section id="preferences" hidden><div class="page-heading"><div><h1>Preferences</h1><p class="description">Adjust AgentTandem and manage your CLI installations.</p></div></div>
-  <div class="preference"><h2>Status bar</h2><label><input id="show-status-quota" type="checkbox"> Show agent quota in the VS Code status bar</label><p class="muted">Hover an agent for quota, reset and account details. Click to search saved accounts.</p>
-  <div class="status-bar-controls"><label>Agents<select id="status-bar-providers" aria-label="Agents"><option value="both">Codex and Claude Code</option><option value="active">Selected chat agent</option><option value="codex">Codex only</option><option value="claude">Claude Code only</option></select></label><label>Appearance<select id="status-bar-style" aria-label="Appearance"><option value="compact">Icon + quota (compact)</option><option value="progress">Progress bars</option><option value="rings">Quota rings</option><option value="minimal">Minimal columns (lowest %)</option><option value="icons">Icons only</option><option value="text">Full text</option></select></label><label>Quota windows<select id="status-bar-windows" aria-label="Quota windows"><option value="all">All reported windows</option><option value="main">First two windows</option></select></label><label>Position<select id="status-bar-alignment" aria-label="Position"><option value="right">Right</option><option value="left">Left</option></select></label><label>Codex text color<span class="status-bar-color"><select id="status-bar-codex-color" aria-label="Codex text color"><option value="">Quota status (default)</option><option value="statusBar.foreground">Status bar text</option><option value="charts.blue">Blue</option><option value="charts.green">Green</option><option value="charts.orange">Orange</option><option value="charts.purple">Purple</option><option value="charts.red">Red</option><option value="charts.yellow">Yellow</option><option value="custom">Custom…</option></select><input type="color" id="status-bar-codex-custom" aria-label="Custom Codex text color" value="#ffffff" hidden></span></label><label>Claude Code text color<span class="status-bar-color"><select id="status-bar-claude-color" aria-label="Claude Code text color"><option value="">Quota status (default)</option><option value="statusBar.foreground">Status bar text</option><option value="charts.blue">Blue</option><option value="charts.green">Green</option><option value="charts.orange">Orange</option><option value="charts.purple">Purple</option><option value="charts.red">Red</option><option value="charts.yellow">Yellow</option><option value="custom">Custom…</option></select><input type="color" id="status-bar-claude-custom" aria-label="Custom Claude Code text color" value="#ffffff" hidden></span></label></div>
-  <fieldset class="status-bar-fields"><legend>Visible details</legend><label><input type="checkbox" data-status-field="quota"> Remaining quota</label><label><input type="checkbox" data-status-field="reset"> Quota reset countdown</label><label><input type="checkbox" data-status-field="bankedResets"> Banked reset count</label><label><input type="checkbox" data-status-field="account"> Account</label><label><input type="checkbox" data-status-field="plan"> Plan</label></fieldset><p class="muted">Choose fewer details for a shorter status bar. Icons-only mode keeps these details in hover. Progress bars show remaining quota with a percentage beside each bar. In compact and progress modes, ↻ is the banked reset count. Theme colors follow your color theme; low quota keeps its warning colors.</p><div id="status-bar-preview" class="status-bar-preview" role="group" aria-label="Status bar preview"></div></div>
-  <div class="preference"><label>Default dashboard grouping <select id="default-grouping" aria-label="Default dashboard grouping"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label></div><div class="preference actions"><button id="manage-clis">Manage CLIs</button><button id="open-vscode-settings" class="quiet">All extension settings <span class="codicon codicon-link-external" aria-hidden="true"></span></button></div></section>
+  <section id="preferences" hidden>
+    <div class="page-heading"><div><h1>Preferences</h1><p class="description">Adjust AgentTandem and manage your CLI installations.</p></div></div>
+    <section class="section" aria-labelledby="preferences-status-bar">
+      <div class="section-heading"><h2 id="preferences-status-bar">Status bar</h2></div>
+      <div class="preference-cards">
+        <div class="preference-card">
+          <h3>Agent quota</h3>
+          <p class="muted" id="show-status-quota-description">Hover over an agent for quota, reset and account details. Click an agent to search saved accounts.</p>
+          <label class="preference-checkbox"><input id="show-status-quota" type="checkbox" aria-describedby="show-status-quota-description"> Show agent quota in the VS Code status bar</label>
+        </div>
+        <div class="preference-cards status-bar-controls">
+          <div class="preference-card">
+            <h3>Agents</h3>
+            <p class="muted" id="status-bar-providers-description">Choose which agents appear in the status bar. Each agent has its own quota and hover details.</p>
+            <select id="status-bar-providers" aria-label="Agents" aria-describedby="status-bar-providers-description">
+              <option value="both">Codex and Claude Code</option>
+              <option value="active">Selected chat agent</option>
+              <option value="codex">Codex only</option>
+              <option value="claude">Claude Code only</option>
+            </select>
+          </div>
+          <div class="preference-card">
+            <h3>Appearance</h3>
+            <p class="muted" id="status-bar-style-description">Choose how quota appears beside each agent icon. Progress bars include the remaining percentage, and ↻ shows banked resets in compact and progress modes.</p>
+            <select id="status-bar-style" aria-label="Appearance" aria-describedby="status-bar-style-description">
+              <option value="compact">Icon + quota (compact)</option>
+              <option value="progress">Progress bars</option>
+              <option value="rings">Quota rings</option>
+              <option value="minimal">Minimal columns (lowest %)</option>
+              <option value="icons">Icons only</option>
+              <option value="text">Full text</option>
+            </select>
+          </div>
+          <div class="preference-card">
+            <h3 id="status-bar-fields-heading">Visible details</h3>
+            <p class="muted" id="status-bar-fields-description">Choose which details appear beside each agent. Hover over the icon for full details, including in icons-only mode.</p>
+            <fieldset class="status-bar-fields" aria-labelledby="status-bar-fields-heading" aria-describedby="status-bar-fields-description">
+              <label class="preference-checkbox"><input type="checkbox" data-status-field="quota"> Remaining quota</label>
+              <label class="preference-checkbox"><input type="checkbox" data-status-field="reset"> Quota reset countdown</label>
+              <label class="preference-checkbox"><input type="checkbox" data-status-field="bankedResets"> Banked reset count</label>
+              <label class="preference-checkbox"><input type="checkbox" data-status-field="account"> Account</label>
+              <label class="preference-checkbox"><input type="checkbox" data-status-field="plan"> Plan</label>
+            </fieldset>
+          </div>
+          <div class="preference-card">
+            <h3>Quota windows</h3>
+            <p class="muted" id="status-bar-windows-description">Show all reported windows or just the first two. Hover over the agent to see every window.</p>
+            <select id="status-bar-windows" aria-label="Quota windows" aria-describedby="status-bar-windows-description">
+              <option value="all">All reported windows</option><option value="main">First two windows</option>
+            </select>
+          </div>
+          <div class="preference-card">
+            <h3>Position</h3>
+            <p class="muted" id="status-bar-alignment-description">Choose which side of the VS Code status bar shows agent quota.</p>
+            <select id="status-bar-alignment" aria-label="Position" aria-describedby="status-bar-alignment-description">
+              <option value="right">Right</option><option value="left">Left</option>
+            </select>
+          </div>
+          <div class="preference-card">
+            <h3>Codex text color</h3>
+            <p class="muted" id="status-bar-codex-color-description">Use quota status colors, a theme color, or a custom color. Low quota keeps its warning colors.</p>
+            <div class="status-bar-color">
+              <select id="status-bar-codex-color" aria-label="Codex text color" aria-describedby="status-bar-codex-color-description">${statusBarColorOptions}</select>
+              <input type="color" id="status-bar-codex-custom" aria-label="Custom Codex text color" value="#ffffff" hidden>
+            </div>
+          </div>
+          <div class="preference-card">
+            <h3>Claude Code text color</h3>
+            <p class="muted" id="status-bar-claude-color-description">Use quota status colors, a theme color, or a custom color. Low quota keeps its warning colors.</p>
+            <div class="status-bar-color">
+              <select id="status-bar-claude-color" aria-label="Claude Code text color" aria-describedby="status-bar-claude-color-description">${statusBarColorOptions}</select>
+              <input type="color" id="status-bar-claude-custom" aria-label="Custom Claude Code text color" value="#ffffff" hidden>
+            </div>
+          </div>
+        </div>
+        <div class="preference-card">
+          <h3 id="status-bar-preview-heading">Status bar preview</h3>
+          <div id="status-bar-preview" class="status-bar-preview" role="group" aria-labelledby="status-bar-preview-heading"></div>
+        </div>
+      </div>
+    </section>
+    <section class="section" aria-labelledby="preferences-dashboard">
+      <div class="section-heading"><h2 id="preferences-dashboard">Dashboard</h2></div>
+      <div class="preference-card">
+        <h3>Default dashboard grouping</h3>
+        <p class="muted" id="default-grouping-description">Choose the default calendar grouping for usage. Weeks start on Monday.</p>
+        <select id="default-grouping" aria-label="Default dashboard grouping" aria-describedby="default-grouping-description">
+          <option value="day">Day</option><option value="week">Week</option><option value="month">Month</option>
+        </select>
+      </div>
+    </section>
+    <section class="section" aria-labelledby="preferences-extension">
+      <div class="section-heading"><h2 id="preferences-extension">Extension tools</h2></div>
+      <div class="preference-cards">
+        <div class="preference-card">
+          <h3>CLI installations</h3>
+          <p class="muted">Manage Codex and Claude Code installations and choose which ones this project uses.</p>
+          <button id="manage-clis">Manage CLIs</button>
+        </div>
+        <div class="preference-card">
+          <h3>VS Code settings</h3>
+          <p class="muted">Open the full list of AgentTandem settings in VS Code.</p>
+          <button id="open-vscode-settings" class="quiet">All extension settings <span class="codicon codicon-link-external" aria-hidden="true"></span></button>
+        </div>
+      </div>
+    </section>
+  </section>
   <section id="storage" hidden><div class="page-heading"><div><h1>Storage</h1><p class="description">See what your agent history takes up and free space in one click.</p></div></div><div id="storage-overview" class="storage-overview" aria-live="polite"><div class="storage-overview-card"><span class="storage-overview-label">In use now</span><strong id="storage-in-use-total">—</strong><div id="storage-in-use-bar" class="storage-overview-bar" role="img" aria-label="Storage in use by source"></div><ul id="storage-in-use-legend" class="storage-overview-legend"></ul></div><div class="storage-overview-card storage-freed"><span class="storage-overview-label"><span class="codicon codicon-pass" aria-hidden="true"></span>Freed so far</span><strong id="storage-freed-total">0 B</strong><small id="storage-freed-detail">Nothing cleaned up yet. Deleted conversations and restore history add to this total.</small><small id="storage-freed-last" class="storage-freed-last" hidden></small></div></div>
   <div id="extension-storage-health" class="extension-storage-health" role="status" hidden></div>
   <details id="antivirus-tip" class="antivirus-tip" hidden><summary><span class="codicon codicon-shield" aria-hidden="true"></span>Antivirus can slow saving and review</summary><div class="antivirus-tip-body"><p>AgentTandem keeps many small snapshot files in its data folder. Real-time antivirus scanning, including Microsoft Defender, checks every write, which can make captures, saves and review feel slow.</p><p>If you notice lag, consider excluding only this folder, not your projects. It is where AgentTandem keeps review snapshots (copies of your project files as they were), restore history, chat attachments and usage data. An excluded folder is no longer scanned, so a malicious file saved there would go unnoticed. Weigh that before you decide.</p><code id="antivirus-tip-path"></code><div class="actions"><button id="antivirus-copy-path" class="quiet"><span class="codicon codicon-copy" aria-hidden="true"></span>Copy folder path</button><button id="antivirus-copy-command" class="quiet"><span class="codicon codicon-terminal-powershell" aria-hidden="true"></span>Copy PowerShell command</button><button id="antivirus-open" class="quiet"><span class="codicon codicon-link-external" aria-hidden="true"></span>Open Windows Security</button><button id="antivirus-dismiss" class="quiet">Got it</button></div><p class="muted">Windows Security → Virus &amp; threat protection → Manage settings → Exclusions → Add or remove exclusions → Add an exclusion → Folder. The PowerShell command must run in an administrator window. With another antivirus, add the same folder to its exclusion list.</p></div></details>
@@ -66,13 +179,13 @@ export function settingsHtml(resources: PanelResources) {
   <section id="storage-restore-page" class="section storage-history" aria-labelledby="storage-history-heading" hidden><div class="section-heading"><div><h2 id="storage-history-heading">Restore history</h2><p class="muted">Saved checkpoints by conversation and change tracking baselines by project, sorted by the space deleting each one frees. Snapshot data shared with other history or Review is kept until nothing uses it.</p></div><button id="storage-history-preview" class="quiet"><span class="codicon codicon-trash" aria-hidden="true"></span>Review deletion</button></div>
   <div class="storage-history-tools"><label>Project<select id="storage-project" aria-label="Project"><option value="">All projects</option></select></label><label>History type<select id="storage-kind" aria-label="History type"><option value="">All history</option><option value="checkpoints">Message checkpoints</option><option value="undo">Restore backups</option><option value="tracking">Change tracking</option></select></label><label>Quick select<select id="storage-quick-select" aria-label="Quick select"><option value="">Choose…</option><option value="space">Biggest space savers</option><option value="week">Not saved in 7+ days</option><option value="month">Not saved in 30+ days</option></select></label><button id="storage-select-visible" class="quiet">Select visible</button><button id="storage-clear-selection" class="quiet">Clear selection</button><span id="storage-selection" role="status" aria-live="polite"></span></div>
   <div id="storage-histories" class="storage-histories"></div>
-  <div id="storage-history-plan" class="storage-deletion-preview" role="region" aria-labelledby="storage-history-plan-heading" hidden><h3 id="storage-history-plan-heading">Delete selected restore history</h3><p id="storage-history-plan-summary"></p><p id="storage-history-impact" class="storage-deletion-impact"></p><ul id="storage-history-plan-groups"></ul><details><summary>Snapshot files to remove</summary><ul id="storage-history-plan-files" class="storage-files"></ul></details><div id="storage-history-progress" class="storage-progress" hidden><div class="storage-progress-label"><span id="storage-history-progress-phase" role="status" aria-live="polite"></span><span id="storage-history-progress-count"></span></div><progress id="storage-history-progress-bar" max="100" aria-labelledby="storage-history-progress-phase"></progress></div><div class="actions"><button id="storage-history-delete" class="danger"><span class="codicon codicon-trash" aria-hidden="true"></span><span id="storage-history-delete-label">Delete history</span></button><button id="storage-history-cancel" class="quiet">Cancel</button></div></div>
   <div id="storage-history-result" role="status" aria-live="polite"></div></section>
   <section id="storage-unused-page" class="section storage-cleanup" hidden><div class="section-heading"><div><h2>Preview unused files</h2><p class="muted">Automatic cleanup already removes these after an hour. Preview them here to clean up sooner: only unreferenced snapshots and file blobs older than 10 minutes are eligible.</p></div><button id="storage-preview"><span class="codicon codicon-search" aria-hidden="true"></span>Preview cleanup</button></div>
   <p class="description">Tracking baselines, pending review, active captures, message checkpoints, Undo and recorded demo history are protected. Project files, native Codex/Claude conversations, attachments, preferences and usage records are kept.</p>
   <div id="storage-plan" hidden><p id="storage-plan-summary"></p><details><summary>Files in this cleanup preview</summary><ul id="storage-plan-files" class="storage-files"></ul></details><div id="storage-cleanup-progress" class="storage-progress" hidden><div class="storage-progress-label"><span id="storage-cleanup-progress-phase" role="status" aria-live="polite"></span><span id="storage-cleanup-progress-count"></span></div><progress id="storage-cleanup-progress-bar" max="100" aria-labelledby="storage-cleanup-progress-phase"></progress></div><div class="actions"><button id="storage-clean"><span class="codicon codicon-trash" aria-hidden="true"></span>Clean unused snapshots</button><button id="storage-cancel" class="quiet">Cancel preview</button></div></div>
   <div id="storage-result" role="status" aria-live="polite"></div></section></section>
   </main>
+  <dialog id="storage-history-plan" class="account-switch-dialog storage-confirmation-dialog" aria-labelledby="storage-history-plan-heading" aria-describedby="storage-history-plan-summary storage-history-impact"><h2 id="storage-history-plan-heading">Delete selected restore history</h2><p id="storage-history-plan-summary"></p><p id="storage-history-impact" class="storage-deletion-impact"></p><ul id="storage-history-plan-groups"></ul><details><summary>Snapshot files to remove</summary><ul id="storage-history-plan-files" class="storage-files"></ul></details><div id="storage-history-progress" class="storage-progress" hidden><div class="storage-progress-label"><span id="storage-history-progress-phase" role="status" aria-live="polite"></span><span id="storage-history-progress-count"></span></div><progress id="storage-history-progress-bar" max="100" aria-labelledby="storage-history-progress-phase"></progress></div><div class="actions"><button id="storage-history-delete" class="danger"><span class="codicon codicon-trash" aria-hidden="true"></span><span id="storage-history-delete-label">Delete history</span></button><button id="storage-history-cancel" class="quiet" autofocus>Cancel</button></div></dialog>
   <dialog id="account-switch-dialog" class="account-switch-dialog" aria-labelledby="account-switch-title" aria-describedby="account-switch-result">
     <div class="account-switch-heading"><span id="account-switch-icon" class="codicon codicon-loading account-switch-spinner" aria-hidden="true"></span><div><p id="account-switch-target" class="muted"></p><h2 id="account-switch-title">Switching account</h2></div></div>
     <p id="account-switch-result" role="status" aria-live="polite"></p><p id="account-switch-error" class="dashboard-error" role="alert" hidden></p>
@@ -86,7 +199,7 @@ export function settingsHtml(resources: PanelResources) {
     <div class="account-switch-footer"><span id="native-cleanup-note" class="muted"></span><button id="native-cleanup-close">Done</button></div>
   </dialog>
   <dialog id="attribution-dialog" class="account-switch-dialog attribution-dialog" aria-labelledby="attribution-title" aria-describedby="attribution-description"><div class="attribution-dialog-body">
-    <div class="attribution-dialog-heading"><span class="codicon codicon-person-add" aria-hidden="true"></span><div><h2 id="attribution-title">Assign history to an account</h2><p id="attribution-description" class="muted">For usage without native per-turn account evidence. Native evidence always takes priority; dashboard filters don't limit this assignment.</p></div><button id="attribution-close" type="button" class="quiet attribution-close" aria-label="Close history assignment"><span class="codicon codicon-close" aria-hidden="true"></span></button></div>
+    <div class="attribution-dialog-heading"><span class="codicon codicon-person-add" aria-hidden="true"></span><div><h2 id="attribution-title">Assign history to an account</h2><p id="attribution-description" class="muted">Applies where native per-turn account evidence is missing. Dashboard filters do not apply.</p></div><button id="attribution-close" type="button" class="quiet attribution-close" aria-label="Close history assignment"><span class="codicon codicon-close" aria-hidden="true"></span></button></div>
     <form id="attribution-form"><div class="attribution-fields"><label>Provider<select id="attribution-provider" aria-label="Provider"><option>Codex</option><option>Claude</option></select></label><label>Account<select id="attribution-account" aria-label="Account"><option value="">Choose account</option><option value="unknown">Keep unknown · disable inference</option></select></label><label class="attribution-wide">Scope<select id="attribution-conversation" aria-label="Scope"><option value="">Date range · all conversations</option></select></label><label>From<input id="attribution-from" type="date"></label><label>To<input id="attribution-to" type="date"></label></div>
     <p id="attribution-preview" class="attribution-preview muted" aria-live="polite"></p><p id="attribution-status" class="attribution-status" role="status" aria-live="polite"></p><p id="attribution-error" role="alert" hidden></p>
     <div class="attribution-actions"><button id="attribution-cancel" type="button" class="quiet">Close</button><button id="attribution-save" type="submit">Save assignment</button></div></form>

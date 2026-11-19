@@ -16,6 +16,57 @@ async function fixture() {
   return { root, file };
 }
 describe('Project conversation sync', () => {
+  it('groups spawned Codex agents by their recorded parent while keeping them out of history', async () => {
+    const { root, file } = await fixture();
+    const cwd = 'L:\\Code\\agent-tandem';
+    const rollouts = [
+      { id: 'terminal', source: 'cli' },
+      { id: 'editor', source: 'vscode' },
+      { id: 'child', source: { subagent: { thread_spawn: { parent_thread_id: 'editor', agent_nickname: 'Scout' } } } },
+      { id: 'grandchild', source: { subagent: { thread_spawn: { parent_thread_id: 'child' } } } },
+      { id: 'guardian', source: { subagent: { other: 'guardian' } }, parent_thread_id: 'editor' },
+      { id: 'review', source: { subagent: 'review' } },
+      { id: 'headless', source: 'exec' },
+      { id: 'server', source: 'mcp' },
+      { id: 'internal', thread_source: 'guardian_review' },
+    ];
+    for (const rollout of rollouts) {
+      await writeFile(path.join(path.dirname(file), `${rollout.id}.jsonl`),
+        line('session_meta', { cwd, ...rollout }) + line('event_msg', { type: 'user_message', message: 'Saved prompt' }));
+    }
+    const reader = new ProjectConversations(async () => empty, root);
+    const { conversations } = await reader.list(cwd);
+    expect(conversations.filter(row => !row.hiddenFromHistory).map(row => row.id).sort()).toEqual(['editor', 'session-1', 'terminal']);
+    expect(conversations.filter(row => row.hiddenFromHistory).map(row => row.id).sort()).toEqual(['child', 'grandchild', 'guardian', 'headless', 'internal', 'review', 'server']);
+    const editor = conversations.find(row => row.id === 'editor')!;
+    const terminal = conversations.find(row => row.id === 'terminal')!;
+    const child = conversations.find(row => row.id === 'child')!;
+    expect(await reader.listSubagents(editor, cwd)).toEqual([{ id: 'child', label: 'Scout' }]);
+    expect(await reader.listSubagents(child, cwd)).toEqual([]);
+    expect((await reader.readSubagent(editor, child.id, cwd)).messages[0]?.text).toBe('Saved prompt');
+    await expect(reader.readSubagent(terminal, child.id, cwd)).rejects.toThrow('no longer available');
+    await expect(reader.readSubagent(editor, 'guardian', cwd)).rejects.toThrow('no longer available');
+    expect((await reader.read(child, cwd)).messages[0]?.text).toBe('Saved prompt');
+  });
+  it('loads Claude subagent transcripts using the parent session lookup directory', async () => {
+    const { root } = await fixture();
+    const calls: string[][] = [];
+    const sdk: ClaudeHistoryAPI = {
+      ...empty,
+      listSessions: async () => [{ sessionId: 'parent', summary: 'Parent', cwd: '/repo/nested', lastModified: 1 }],
+      listSubagents: async (id, { dir }) => { calls.push([id, dir]); return ['child']; },
+      getSubagentMessages: async (id, child, { dir }) => {
+        calls.push([id, child, dir]);
+        return [{ uuid: 'm1', type: 'assistant', message: { content: 'Saved result' } }];
+      },
+    };
+    const reader = new ProjectConversations(async () => sdk, root);
+    const { conversations: [parent] } = await reader.list('/repo');
+    expect(await reader.listSubagents(parent!, '/repo')).toEqual([{ id: 'child', label: 'Agent child' }]);
+    expect((await reader.readSubagent(parent!, 'child', '/repo')).messages[0]?.text).toBe('Saved result');
+    expect(calls).toEqual([['parent', '/repo'], ['parent', '/repo'], ['parent', 'child', '/repo']]);
+    await expect(reader.readSubagent(parent!, 'other', '/repo')).rejects.toThrow('no longer available');
+  });
   it('uses native Codex titles/current root, skips archived sessions and refreshes renames', async () => {
     const { root, file } = await fixture();
     const database = new DatabaseSync(path.join(root, 'state_5.sqlite'));

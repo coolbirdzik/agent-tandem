@@ -81,8 +81,11 @@ class Dropdown {
     select.before(this.wrapper); this.wrapper.append(select, this.trigger, this.menu);
     select.hidden = true; select.tabIndex = -1;
     this.trigger.type = 'button'; this.trigger.className = 'dropdown-trigger'; this.trigger.id = `${id}-trigger`;
+    if (select.dataset.shortcut) this.trigger.dataset.shortcut = select.dataset.shortcut;
     this.trigger.setAttribute('aria-haspopup', 'listbox'); this.trigger.setAttribute('aria-expanded', 'false');
     this.trigger.setAttribute('aria-controls', `${id}-options`);
+    const describedBy = select.getAttribute('aria-describedby');
+    if (describedBy) this.trigger.setAttribute('aria-describedby', describedBy);
     if (select.dataset.focusKey) this.trigger.dataset.focusKey = `${select.dataset.focusKey}:picker`;
     this.caption.className = 'dropdown-caption';
     const chevron = document.createElement('span'); chevron.className = 'codicon codicon-chevron-down'; chevron.setAttribute('aria-hidden', 'true');
@@ -147,10 +150,9 @@ class Dropdown {
         const copy = document.createElement('span'); copy.className = 'dropdown-copy';
         const name = document.createElement('span'); name.textContent = option.text; copy.append(name);
         if (option.title) { const description = document.createElement('span'); description.className = 'dropdown-description'; description.textContent = option.title; copy.append(description); }
-        row.append(check);
         const icon = optionIcon(option, 'dropdown-option-icon');
         if (icon) row.append(icon);
-        row.append(copy); row.onclick = () => this.choose(index);
+        row.append(copy, check); row.onclick = () => this.choose(index);
         row.onpointermove = () => { if (!option.disabled) this.highlight(index); };
         // Keep focus in the listbox while the pointer chooses a row.
         row.onmousedown = event => event.preventDefault(); this.menu.append(row);

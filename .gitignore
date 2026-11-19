@@ -4,3 +4,4 @@ media/codicons/
 .test-runtime/
 .vscode-test/
 *.vsix
+/.mycli*

@@ -34,19 +34,34 @@ export interface ProviderStatus {
   protocol?: string;
   detail: string;
 }
+export type SubagentTranscript =
+  ({ status: 'ready' } & import('../providers/conversations').SubagentContent) |
+  { status: 'error'; message: string };
+export interface SubagentSelection {
+  project: string;
+  parentKey: string;
+  agentId: string;
+  requestId: string;
+}
 export interface ViewState {
   sessions: Session[];
   running: boolean;
   providers: ProviderStatus[];
+  checkingProviders?: boolean;
   error?: string;
   project?: string;
   projectName?: string;
   conversations?: import('../providers/conversations').Conversation[];
   conversation?: import('../providers/conversations').ConversationContent;
+  subagents?: {
+    parentKey: string;
+    entries: import('../providers/conversations').ConversationSubagent[];
+  };
   syncing?: boolean;
   syncErrors?: string[];
   syncedAt?: number;
-  screen?: 'conversations' | 'changes' | 'tools' | 'cli';
+  screen?: 'conversations' | 'changes' | 'cli';
+  conversationOpenRevision?: number;
   cliManager?: import('../providers/cli-registry').CLIManagerState;
   changePreview?: import('./change-preview').ChangePreview;
   chat?: import('../providers/chat').ChatState;

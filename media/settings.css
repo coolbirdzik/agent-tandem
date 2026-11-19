@@ -501,9 +501,22 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .table-wrap > button { margin-top: 14px; }
 .empty { color: var(--muted); margin: auto; padding: 24px 12px; font-size: 12px; }
 .usage-coverage { color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); padding-top: 20px; line-height: 1.8; max-width: 90ch; }
-.preference { padding: 12px 0; border-bottom: 1px solid var(--line); }
-.preference label { display: flex; align-items: center; gap: 10px; }
-.preference p { margin: 6px 0 0; }
+.preference-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.preference-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: 6px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.preference-card h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.preference-card p { margin: 0; }
+.preference-card > .tandem-dropdown, .preference-card > select, .status-bar-color { width: min(100%, 320px); }
+.preference-checkbox { display: flex; align-items: baseline; gap: 8px; }
+.preference-checkbox input { flex: none; margin: 0; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .settings-header nav { flex-wrap: nowrap; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .settings-header nav::-webkit-scrollbar { display: none; }
@@ -567,6 +580,9 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .account-footnote { margin: 24px 0 0; font-size: 11px; max-width: 70ch; }
 .account-switch-dialog { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; padding: 24px; border: 1px solid var(--line); border-radius: 10px; background: var(--vscode-editor-background); color: var(--vscode-foreground); box-shadow: 0 12px 48px var(--vscode-widget-shadow, #0003); }
 .account-switch-dialog::backdrop { background: #0006; }
+.storage-confirmation-dialog { overflow-wrap: anywhere; overscroll-behavior: contain; }
+.storage-confirmation-dialog h2 { margin: 0 0 12px; font-size: 16px; }
+.storage-confirmation-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 .account-switch-heading { display: flex; align-items: center; gap: 14px; }
 .account-switch-heading > .codicon { font-size: 22px; color: var(--vscode-focusBorder); }
 .account-switch-dialog[data-status=success] .account-switch-heading > .codicon { color: var(--vscode-testing-iconPassed, #287844); }
@@ -721,7 +737,6 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
   .page-heading { align-items: start; }
   .provider-row-heading strong { margin-left: 0; width: 100%; }
 }
-.status-bar-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin:20px 0}
 .attribution-dialog{width:min(640px,calc(100vw - 32px));padding:0;overflow:hidden}
 .attribution-dialog-body{padding:24px;max-height:calc(100dvh - 48px);overflow:auto;box-sizing:border-box}
 .attribution-dialog-heading{display:flex;align-items:flex-start;gap:14px}
@@ -749,16 +764,29 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .attribution-assignment button{flex:none}
 #conversation-meta button{margin-left:12px}
 @media(max-width:600px){.attribution-assignment{align-items:flex-start;flex-direction:column}.attribution-fields{grid-template-columns:1fr}.attribution-dialog-body{padding:18px}.attribution-entry{flex-wrap:wrap}}
-.status-bar-controls label{display:grid;gap:8px}
 .status-bar-color{display:flex;gap:6px;align-items:center}
 .status-bar-color .tandem-dropdown{flex:1}
-.status-bar-color input[type=color]{width:32px;height:26px;padding:0 2px;border:1px solid var(--line);background:transparent;cursor:pointer}
-.status-bar-fields{border:0;padding:0;margin:16px 0;display:flex;flex-wrap:wrap;gap:12px 20px}
-.status-bar-fields legend{padding:0;margin-bottom:12px;font-weight:600}
-.status-bar-fields label{display:flex;align-items:center;gap:6px}
-.status-bar-preview{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--vscode-statusBar-background);color:var(--vscode-statusBar-foreground)}
+.status-bar-color input[type=color]{flex:none;width:32px;height:var(--settings-field-height);padding:0 2px;border:1px solid var(--line);background:transparent;cursor:pointer}
+.status-bar-fields{min-width:0;border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:8px 20px}
+.status-bar-preview{display:flex;flex-wrap:wrap;justify-self:stretch;gap:8px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--vscode-statusBar-background);color:var(--vscode-statusBar-foreground)}
 .status-bar-preview-item{display:inline-flex;align-items:center;gap:6px;overflow-wrap:anywhere;font-size:12px;padding:2px 8px}
+.status-bar-preview-item:focus-visible{outline:1px solid var(--vscode-focusBorder);border-radius:3px}
 .status-bar-glyph{font:normal 16px/1 'AgentTandem Providers'}
+.tandem-hover-hint:has(> .quota-account-hover){width:400px;max-width:calc(100vw - 16px);white-space:normal;border-radius:3px}
+.quota-account-hover table{font-size:inherit}
+.quota-account-hover td,.quota-account-hover td:first-child{padding:2px;border:0}
+.quota-account-hover svg{max-width:100%;vertical-align:middle}
+.quota-account-hover h5{margin:2px 0;font-size:11px}
+.quota-account-hover hr{margin:6px -9px 2px;border:0;border-top:1px solid var(--vscode-editorHoverWidget-border,var(--line))}
+.quota-account-hover .codicon,.quota-hover-provider-icon{font-size:12px;vertical-align:-1px}
+.quota-hover-provider-icon{font-family:'AgentTandem Providers'}
+.quota-hover-plan{color:var(--vscode-descriptionForeground);background:var(--vscode-editor-inactiveSelectionBackground);border-radius:4px}
+.quota-account-hover [data-tone=blue]{color:var(--vscode-charts-blue)}
+.quota-account-hover [data-tone=orange]{color:var(--vscode-charts-orange)}
+.quota-account-hover [data-tone=green]{color:var(--vscode-charts-green)}
+.quota-account-hover [data-tone=yellow]{color:var(--vscode-editorWarning-foreground)}
+.quota-account-hover [data-tone=red]{color:var(--vscode-errorForeground)}
+.quota-account-hover [data-tone=muted]{color:var(--vscode-descriptionForeground)}
 @media (prefers-reduced-motion: reduce) { button { transition: none; } button:active:not(:disabled) { transform: none; } }
 @media (max-width: 720px) {
   .settings-header { padding: 10px 20px; gap: 10px 16px; }

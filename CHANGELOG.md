@@ -9,6 +9,8 @@ Historical version dates and boundaries are reconstructed from package version c
 ## [Unreleased]
 
 ### Added
+- **Subagents** is expanded by default in Codex and Claude Code conversations that have subagents. Select an agent to read its saved transcript in the conversation view. The change list and composer are hidden until you return to the parent chat with **Back**.
+- Use keyboard shortcuts to focus chat, start a conversation, search conversation history, pick a changed file, or open Quick Accounts on macOS, Windows, and Linux.
 - Edit changed text directly in the Review editor and select **Save edits** to write it to the workspace. Saved edits stay available for Accept or Reject.
 
 - **Restore code** now works for messages sent from any chat while change tracking is on, including Claude Code and Codex in the terminal or their own extensions, not only messages sent from AgentTandem. It restores the workspace to its last tracked state before the message was sent. That state covers the whole workspace, so edits saved later by other chats or by you are reverted too; the preview lists every file first, and **Undo restore** brings them back. Messages sent before tracking started, or while it was paused, have no restore point. Only the states some message can restore to are kept, so the history adds almost nothing to storage. It appears as **Change tracking history** in Storage and follows the size limit like other restore points.
@@ -23,19 +25,37 @@ Historical version dates and boundaries are reconstructed from package version c
 
 ### Changed
 
+- The dashboard’s **Open chat** button uses a chat icon that works with any chat view placement.
+- The sidebar header shows the current chat or section title. **Back** appears when there is a previous view. To open AgentTandem in an editor tab, choose **Open in tab** from the sidebar’s **⋯** menu.
+- **New chat**, **Conversation history**, and **Review changes** sit beside **⋯** in the Agent Tandem sidebar title bar, with label-only tooltips.
+- Panel titles use regular weight, and Review, Conversations, and Manage CLIs start closer to their headers. The introductory text in Review and Manage CLIs has been removed.
+- The pending file count appears beside **Review** in the sidebar and editor tab. Hover over the count to see what it includes.
+- Review shows a shorter status caption using the same text style as Manage CLIs.
+- Conversation history uses compact, single-line rows with smaller provider icons. Hover over a title to read it in full, or hover over the row to reveal its timestamp and over the timestamp to see the exact time.
+- Conversation history places provider filters to the right of the workspace selector. In narrow panels, the filters move together to the next row.
+- Review reverts, checkpoint restores, agent approvals, and saved-history cleanup now open in VS Code-themed dialogs with the affected files or permission details.
+- Click a file row in chat or Review to open its diff, or hover over the row to reveal its action icons. Diff counts sit at the right edge, with the action icons aligned across files.
+- Hover over a conversation group header in Review to reveal the **Open conversation** icon beside its file count. The provider is shown by its icon beside the title.
+- Chat, review, and account picker hints show OS-specific keycaps using the active VS Code theme.
+- Consecutive tool calls and results sit inside a collapsed **Tools** accordion beneath the following agent message in the same turn. Expand it to inspect each call or result, including while the agent is still working.
 - The Review status bar hover puts the pending file count first and groups workspace and tracking details below it.
 - Codex and Claude Code status bar hovers show countdowns for quota resets and earned reset expiry.
+- Dashboard, Storage, and VS Code settings use shorter descriptions for quota estimates, history assignments, and cleanup.
 - Dashboard and Settings date fields match the dropdown height and use a themed calendar.
 - The Usage Dashboard, Accounts, Preferences, Storage, history assignment and the Review file selector now use the same dropdown picker as the chat panel.
+- Dropdown checkmarks appear at the end of the selected option and match the option text color in the active VS Code theme.
 - Codex **Fast mode** uses a switch in the model picker. When enabled, select the lightning chip beside the model name to turn it off.
+- Select the current reasoning level beside the model picker to open the reasoning slider.
 - The Review editor’s native menu groups **Refresh** and **Native diff** separately from **Open Workspace Changes** and **Open Conversation**. **Undo** is available in Workspace Changes. Review buttons match the sidebar’s **Revert** and **Accept** styles.
 - **Accept all** and **Revert all** use distinct bulk-action icons in the Review editor and sidebar.
 - The Review header and each change toolbar stay on one row. As the pane narrows, action buttons switch to icons, then the icon beside the file selector and the selector itself disappear.
 - Review leaves the Explorer selection alone by default. Enable `agentTandem.revealReviewFileInExplorer` to select each file as you review it.
 - The native diff’s inline review actions use plain text, matching the style of VS Code’s merge editor.
 - Manage CLIs cards show the CLI version and installation origin, with evenly padded extension and terminal icons to distinguish editor extensions from global installations.
-- In Manage CLIs, **Add** is the primary action beside **Scan** and **Check versions**. **Cancel** closes the add form. Editing replaces the entry’s details and actions with the form until you save or cancel. Executable paths fit on one line. Hover to see the full path or select it to copy.
+- Manage CLIs entries use the same rounded cards as Review conversation groups and start collapsed each time you open the screen. Select an installation to see its executable path and management actions.
+- In Manage CLIs, **Add** opens a two-step VS Code wizard. Enter an executable path or browse for the installation folder, then confirm or change the suggested name. Editing replaces the entry’s details and actions with the form until you save or cancel. Executable paths fit on one line. Hover to see the full path or select it to copy.
 - In Manage CLIs, **Default** offers **Automatic** for both Codex and Claude Code. **This project** offers **Use Default** and saved installations. An existing terminal PATH override appears as the current project selection and can be replaced from the dropdown.
+- Manage CLIs shows icons alongside **Scan**, **Check versions**, and **Add** for Codex and Claude Code.
 - Both CLI dropdowns show saved CLI names without the **Pinned:** prefix or **(disabled/unavailable)** suffix. Unavailable entries remain disabled. The selected-executable summary and idle reminder about enabled CLIs have been removed.
 - Restoring a checkpoint no longer asks you to stop change tracking first. Edits saved since the last scan are captured before the preview, and tracking continues after the restore.
 - **Tokens per 1% quota** is easier to read. The rate, estimated full cycle, tokens left and the current cycle's interval sit side by side, and the cycles are now part of the chart: the old cycle list is replaced by a table of figures (cycle start, quota remaining, recorded tokens, quota used, tokens / 1%, full quota, change) aligned under each chart column, with the chosen metric's row emphasized. Columns stretch to the panel, and **Show all** reveals up to 30 cycles instead of 12.
@@ -43,7 +63,9 @@ Historical version dates and boundaries are reconstructed from package version c
 - Change tracking no longer copies files that Git already stores unchanged, so it uses far less disk and starts faster. On one 41,000-file repository, the tracking baseline shrank from 1.4 GB to 200 MB and tracking started in 12 s instead of 66 s. Existing baselines are converted on the first scan after updating, which took about 20 s on that repository; automatic cleanup then removes the old copies. Restore points in a Git repository now read unchanged files back from Git, so they need those objects to still exist. Normal commits and branch switches keep them. If Git has lost a file's earlier content, that file is left out of review with a notice instead of stopping tracking.
 - The **Unused files** tab is now **App data** and appears on its own instead of beside Restore history; the unused-files preview moved below it.
 - Comparing a changed file for review (+/- counts, individual blocks and the inline patch) now calculates the diff on a background thread, so a slow comparison of a large or heavily rewritten file no longer blocks the extension host. If the background thread is unavailable the calculation runs as before. A pair of files that takes more than two seconds to count shows no +/- numbers instead of waiting.
-- The sidebar and editor-tab **⋯** actions now use VS Code's native overflow menu instead of a custom in-panel menu. **AgentTandem: Diagnostics** is a new command.
+- The sidebar and editor-tab **⋯** actions now use VS Code's native overflow menu instead of a custom in-panel menu.
+- **Getting started** has its own section in the sidebar and editor-tab **⋯** menus.
+- **Refresh** is the rightmost action in the Conversations, Review, and Manage CLIs headers.
 - Popovers and dropdown menus now have a blurred translucent background, falling back to opaque in high-contrast and reduced-transparency modes.
 - Five-hour and weekly quota labels are now flat filled **5h** and **7d** badges across the status bar, hover, account picker, chat, account cards and dashboard. Status-bar Text style keeps plain labels.
 - The Dashboard, Accounts and Storage tab bars share one style and stay pinned below the Settings header; dashboard tabs show icons, and the Accounts app filter uses the same underlined tabs.
@@ -52,12 +74,20 @@ Historical version dates and boundaries are reconstructed from package version c
 - Open the dashboard through **Open Dashboard** in the sidebar toolbar, command palette, quota hover and account picker. Its editor tab is named **AgentTandem Dashboard**.
 - Account picker shows each quota period's percentage left with its reset countdown, without exact reset times.
 - Settings page titles match their tab names and no longer show a small label above.
+- Dashboard Preferences gives each setting its own card with a title, description, and controls, grouped into **Status bar**, **Dashboard**, and **Extension tools**.
 - With several VS Code windows open, quota and sign-ins are read once per minute in total instead of once per window: a window reuses another's recent result, including for saved accounts every ten minutes. Account switches, sign-ins and CLI changes still read immediately.
 - Local and Device **Tokens per 1%** estimates now warn that they assume the account is used only on this device, since quota also counts other devices. Conversation quota equivalents from those estimates are marked **this device only**.
 - **Assign history** now opens a dialog over the current dashboard tab, from Unknown account cards, conversation details or the **History assignments** row in Details, instead of jumping to an expandable section. Saved assignments are listed and removable in the same dialog.
 
 ### Removed
 
+- Provider checks now run in **Manage CLIs**. Use **This project** to choose a Codex or Claude Code executable. The separate Diagnostics page and CLI picker have been removed.
+
+- Removed the Accept and Revert description from the pending review panel in chat.
+- Removed the **Read-only transcript** label from subagent conversations.
+- Removed the duplicate workspace path beneath the Conversations header.
+- Removed provider badges from chat tool calls and results.
+- Removed the duplicate Change tracking button from Review. Use **Change tracking…** in the **⋯** menu.
 - Removed the **Extension Storage** section from the Codex and Claude Code status bar hovers. Storage details are available in **Settings → Storage**.
 
 ### Fixed
@@ -65,8 +95,16 @@ Historical version dates and boundaries are reconstructed from package version c
 - Storage cleanup (**Clean now**, **Choose what to clean…**, automatic cleanup and the size limit) no longer stops with "Storage metadata exceeds the cleanup limit" once a tracked project has very many files. One project with about 180,000 files had a 28 MB snapshot list, which blocked every cleanup.
 - Cleanup no longer stops with "A referenced snapshot is missing" when a change tracking baseline lost part of its data to a pre-0.1.49 build. The damaged baseline is left as it is and everything else is cleaned. **Storage → Restore history** also lists it again, so you can delete it there.
 - **Clean now** and **Preview unused files…** wait while another storage task is running, instead of showing "Wait for storage management to finish" when clicked again.
+- The Preferences status bar preview shows the same quota hover as the live status bar, including quota bars, reset countdowns, earned resets, and saved accounts.
+- Opening the reasoning effort popup leaves focus on its button. Tab to the slider to adjust it with a rounded focus ring that matches the VS Code theme.
+- Chat uses consistent spacing between messages and the **Tools** and **Subagents** accordions, including when a message ends with a code block.
+- The pending review row stays above the chat input. Its accordion trigger and review actions are available when the current conversation has pending files. Review shows all pending workspace changes, including shared and unassigned files.
+- Pending review files and Review conversation groups keep a steady background when you press their headings, matching the chat Subagents accordion.
+- **Open conversation** in Review opens the chat directly, even if conversation history was open before Review.
+- Conversations shows main Codex chats and omits subagents and Guardian reviews from the list and its counts.
+- **Choose Codex CLI** and **Choose Claude Code CLI** now match the project choices in **Manage CLIs**, including disabled installations and any existing terminal PATH override.
+- Quick Accounts shows each email once per entry for Codex and Claude Code.
 - In narrow Manage CLIs panels, provider names stay on one line and the header actions move below them together, like the pending-review header.
-- Provider badges line up across tool calls and results in chat.
 - The chat composer’s **Model** and provider lists stay visible when expanded in narrow panels.
 - Accepting or rejecting a block in the custom review editor updates the same diff in place and keeps the viewport anchored while that file still has pending changes.
 - The Agent Tandem view now declares its icon, fixing the missing-icon manifest warning and retaining its icon when moved to another view container.
