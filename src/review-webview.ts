@@ -4,6 +4,7 @@ import { ReviewCodeEditor } from './review-monaco';
 import type { ReviewEditorState } from './core/review-webview';
 import type { ReviewHunk } from './core/review-hunks';
 import { renderImageComparison } from './image-comparison';
+import { Dropdowns } from './ui/dropdown';
 
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState(): { file?: string; line?: number; scroll?: number } | undefined; setState(value: unknown): void };
 autoHideScrollbars();
@@ -11,6 +12,8 @@ hoverHints();
 const api = acquireVsCodeApi();
 const saved = api.getState();
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const dropdowns = new Dropdowns(document.body);
+const filePicker = element<HTMLSelectElement>('files');
 const create = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = '') => {
   const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
 };
@@ -21,27 +24,17 @@ let state: ReviewEditorState = { files: [], busy: true }, signature = '', listSi
 let bound: { revision: string | undefined; file: string | undefined } = { revision: undefined, file: undefined };
 let sections: HTMLElement[] = [];
 let codeEditor: ReviewCodeEditor | undefined;
+let deferred: ReviewEditorState | undefined;
+let savingEdit = false;
 const send = (type: string, extra: Record<string, unknown> = {}) => {
-  if (state.busy) return;
+  if (state.busy || codeEditor?.dirty) return;
   api.postMessage({ type, revision: state.revision, file: state.file?.path, ...extra });
 };
 const save = () => api.setState({ file: state.file?.path, line: state.file?.hunks[active]?.newLine, scroll: codeEditor?.scrollTop ?? 0 });
-function renderContext() {
-  const context = state.context;
-  element('review-context').hidden = !context;
-  element('context-actions').hidden = !context;
-  if (!context) { element('files').title = ''; return; }
-  element('context-provider').textContent = context.conversation?.provider === 'Claude' ? 'Claude Code' : context.conversation?.provider ?? 'Workspace';
-  element('context-title').textContent = context.title;
-  element('context-title').title = context.title;
-  element('files').title = context.title;
-  element('agent-changes').title = 'Open workspace changes in the AgentTandem sidebar';
-  element('agent-changes-label').textContent = 'Open workspace changes in AgentTandem';
-  element('agent-changes-count').textContent = String(state.files.length);
-}
 function button(label: string, glyph: string, className: string, title: string, action: () => void) {
   const node = create('button', '', className); node.type = 'button'; node.title = title;
-  node.append(icon(glyph), create('span', label)); node.onclick = action; return node;
+  node.setAttribute('aria-label', label);
+  node.append(icon(glyph), create('span', label, 'action-label')); node.onclick = action; return node;
 }
 function focusBlock(index: number, scroll = true) {
   active = Math.max(0, Math.min(index, sections.length - 1));
@@ -51,7 +44,7 @@ function focusBlock(index: number, scroll = true) {
   save();
 }
 function navigate(direction: number, from = active) {
-  if (state.busy || !state.files.length) return;
+  if (state.busy || codeEditor?.dirty || !state.files.length) return;
   const next = from + direction;
   if (next >= 0 && next < sections.length) { focusBlock(next); return; }
   const index = state.files.findIndex(file => file.path === state.file?.path);
@@ -60,7 +53,7 @@ function navigate(direction: number, from = active) {
   if (file) send('selectFile', { file: file.path, navigation: direction < 0 ? 'last' : 'first' });
 }
 function navigateFile(direction: number) {
-  if (state.busy || state.files.length < 2) return;
+  if (state.busy || codeEditor?.dirty || state.files.length < 2) return;
   const index = state.files.findIndex(file => file.path === state.file?.path);
   const file = state.files[(index + direction + state.files.length) % state.files.length];
   if (file) send('selectFile', { file: file.path, navigation: 'first' });
@@ -75,8 +68,8 @@ function block(hunk: ReviewHunk, index: number) {
   const decisions = create('div', '', 'decision-actions');
   decisions.setAttribute('role', 'group'); decisions.setAttribute('aria-label', 'Review this change');
   decisions.append(
-    button('Accept', 'check', 'accept', 'Keep this block and mark it reviewed (Alt+Y)', () => decide('accept', hunk.id, index, binding)),
-    button('Reject', 'discard', 'reject', 'Restore the saved baseline for this block (Alt+N)', () => decide('reject', hunk.id, index, binding)));
+    button('Revert', 'discard', 'reject', 'Restore the saved baseline for this block (Alt+N)', () => decide('reject', hunk.id, index, binding)),
+    button('Accept', 'check', 'accept', 'Keep this block and mark it reviewed (Alt+Y)', () => decide('accept', hunk.id, index, binding)));
   const navigation = create('div', '', 'block-navigation');
   if (state.file!.hunks.length > 1 || state.files.length > 1) navigation.append(button('Next change', 'arrow-down', 'next-block', 'Continue to the next block or file (Alt+Down)', () => { if (state.revision === binding.revision && state.file?.path === binding.file) navigate(1, index); }));
   if (state.files.length > 1) navigation.append(button('Next file', 'chevron-right', 'next-file-block', 'Skip to the next file (Alt+PageDown)', () => { if (state.revision === binding.revision && state.file?.path === binding.file) navigateFile(1); }));
@@ -86,53 +79,89 @@ function block(hunk: ReviewHunk, index: number) {
   section.onclick = event => { if (!(event.target instanceof Element && event.target.closest('button'))) focusBlock(index, false); }; return section;
 }
 function decide(type: string, hunk?: string, index = active, binding = { revision: state.revision, file: state.file?.path }) {
+  if (state.busy || codeEditor?.dirty) return;
   focusBlock(index, false); send(type, { ...binding, ...(hunk ? { hunk } : {}) });
   // Disable immediately; the host independently rejects simultaneous actions.
   state = { ...state, busy: true }; controls();
 }
-function controls() {
-  document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>('.review-header button,.review-context button,.file-toolbar button,.file-toolbar select,.block-actions button').forEach(node => node.disabled = state.busy);
-  element<HTMLButtonElement>('agent-changes').disabled = state.busy || !state.files.length;
-  element<HTMLButtonElement>('open-conversation').disabled = state.busy || !state.context?.canOpenConversation;
-  element('open-conversation').title = state.context?.canOpenConversation ? 'Open this conversation in AgentTandem' : state.context?.conversation ? 'This recorded conversation is no longer available in AgentTandem.' : 'These changes do not belong to a single verified conversation.';
-  element<HTMLButtonElement>('native').disabled = state.busy || !state.file;
-  element<HTMLButtonElement>('next').disabled = state.busy || !state.files.length;
-  element<HTMLButtonElement>('previous').disabled = state.busy || !state.files.length;
-  element<HTMLSelectElement>('files').disabled = state.busy || !state.files.length;
-  for (const id of ['accept-all-file', 'reject-all-file']) { element<HTMLButtonElement>(id).disabled = state.busy || !state.file; element(id).hidden = !state.file; }
-  element<HTMLButtonElement>('next-file').disabled = state.busy || state.files.length < 2;
-  element<HTMLButtonElement>('previous-file').disabled = state.busy || state.files.length < 2;
-  element('undo').hidden = !state.undo;
-  element('error').hidden = !state.error; element('error').textContent = state.error ?? '';
-  element('status').textContent = state.busy ? 'Updating saved changes…' : state.notice ?? '';
+function draftCurrent() {
+  const latest = deferred ?? state;
+  return latest.project === state.project && latest.group === state.group && latest.file?.path === state.file?.path
+    && latest.file?.before === state.file?.before && latest.file?.after === state.file?.after && !!latest.file?.editable;
+}
+function finishDraft() {
+  if (codeEditor?.dirty) { controls(); return; }
+  const next = deferred;
+  deferred = undefined;
+  if (next) render(next);
+  else controls();
+}
+function saveEdit() {
+  if (!codeEditor?.dirty || savingEdit || (deferred ?? state).busy || !draftCurrent()) return;
+  savingEdit = true;
+  api.postMessage({ type: 'saveEdit', revision: (deferred ?? state).revision, file: state.file?.path, after: state.file?.after, text: codeEditor.text });
+  controls();
+}
+function controls(refreshPicker = false) {
+  const draft = !!codeEditor?.dirty, latest = deferred ?? state;
+  const busy = savingEdit || latest.busy, locked = busy || draft;
+  codeEditor?.setEditable(!!state.file?.editable && !busy);
+  document.querySelectorAll<HTMLButtonElement>('.file-toolbar button:not(.dropdown-trigger),.block-actions button').forEach(node => node.disabled = locked);
+  const more = element<HTMLButtonElement>('review-more');
+  more.disabled = locked || !state.project;
+  more.dataset.vscodeContext = JSON.stringify({
+    webviewSection: 'reviewActions', preventDefaultContextMenuItems: true,
+    reviewMenuEnabled: !more.disabled, reviewMenuHasFile: !!state.file, reviewMenuHasConversation: !!state.context?.canOpenConversation,
+    project: state.project, group: state.group, revision: state.revision, file: state.file?.path,
+  });
+  element<HTMLButtonElement>('next').disabled = locked || !state.files.length;
+  element<HTMLButtonElement>('previous').disabled = locked || !state.files.length;
+  const pickerDisabled = locked || !state.files.length;
+  if (refreshPicker || filePicker.disabled !== pickerDisabled) {
+    filePicker.disabled = pickerDisabled;
+    dropdowns.sync();
+  }
+  for (const id of ['accept-all-file', 'reject-all-file']) { element<HTMLButtonElement>(id).disabled = locked || !state.file; element(id).hidden = !state.file || draft; }
+  element<HTMLButtonElement>('next-file').disabled = locked || state.files.length < 2;
+  element<HTMLButtonElement>('previous-file').disabled = locked || state.files.length < 2;
+  element<HTMLButtonElement>('save-edit').disabled = busy || !draftCurrent();
+  element<HTMLButtonElement>('discard-edit').disabled = savingEdit;
+  for (const id of ['save-edit', 'discard-edit']) element(id).hidden = !draft;
+  const error = latest.error ?? (draft && !savingEdit && !draftCurrent() ? 'The saved diff changed. Copy any edits you want to keep, then discard the draft to load the latest diff.' : undefined);
+  element('error').hidden = !error; element('error').textContent = error ?? '';
+  element('status').textContent = savingEdit ? 'Saving review edits…' : busy ? 'Updating saved changes…' : draft ? '' : state.notice ?? '';
   element('status').hidden = !element('status').textContent;
-  element('diff').setAttribute('aria-busy', String(state.busy));
+  element('status').classList.toggle('updating', busy && !!state.file);
+  element('diff').setAttribute('aria-busy', String(busy));
 }
 function render(next: ReviewEditorState) {
+  if (codeEditor?.dirty || savingEdit) { deferred = next; controls(); return; }
   const oldFile = state.file?.path, anchor = state.file?.hunks[active]?.newLine;
-  const scroll = codeEditor?.scrollTop ?? 0;
+  const sameFile = state.project === next.project && oldFile === next.file?.path;
   state = next;
   const fileBinding = { revision: state.revision, file: state.file?.path };
   // The host asks before a whole-file reject, naming the file it restores.
   for (const [id, type] of [['accept-all-file', 'accept'], ['reject-all-file', 'reject']] as const) element(id).onclick = () => {
     if (!state.busy && fileBinding.file && state.revision === fileBinding.revision && state.file?.path === fileBinding.file) decide(type, undefined, active, fileBinding);
   };
-  renderContext();
-  const nextList = `${state.files.map(file => file.path).join('\0')}\n${state.file?.path}`;
+  filePicker.title = state.context?.title ?? '';
+  const nextList = state.files.map(file => file.path).join('\0');
   if (nextList !== listSignature) {
     listSignature = nextList;
-    const picker = element<HTMLSelectElement>('files'); picker.replaceChildren();
-    state.files.forEach(file => { const option = create('option', file.path); option.value = file.path; option.selected = file.path === state.file?.path; picker.append(option); });
-    element('file-count').textContent = state.files.length ? `File ${state.files.findIndex(file => file.path === state.file?.path) + 1}/${state.files.length}` : '0 files';
+    filePicker.replaceChildren(...state.files.map(file => new Option(file.path, file.path)));
   }
-  element('file-kind').textContent = state.file?.kind ?? '';
-  // Captures elsewhere in the workspace change the revision; only new snapshots
-  // of this file need a new diff editor.
+  filePicker.value = state.file?.path ?? state.files[0]?.path ?? '';
+  // A revision can change while the displayed snapshots stay the same.
   const nextSignature = JSON.stringify([state.project, state.file?.path, state.file?.before, state.file?.after, state.file?.beforeText?.length, state.file?.afterText?.length,
     state.file?.hunks.map(hunk => hunk.id), state.file?.notice, state.file ? undefined : state.notice, Math.min(state.files.length, 2)]);
-  if (nextSignature === signature) { bound.revision = state.revision; controls(); return; }
+  if (nextSignature === signature) { bound.revision = state.revision; controls(true); return; }
   signature = nextSignature; bound = { revision: state.revision, file: state.file?.path };
-  const diff = element('diff'); codeEditor?.dispose(); codeEditor = undefined; diff.classList.remove('monaco-review'); diff.replaceChildren(); sections = [];
+  const diff = element('diff');
+  const reuseEditor = sameFile && codeEditor && state.file && !state.file.notice;
+  if (!reuseEditor) {
+    codeEditor?.dispose(); codeEditor = undefined;
+    diff.classList.remove('monaco-review'); diff.replaceChildren(); sections = [];
+  }
   if (!state.file) diff.append(create('div', state.notice ?? 'No pending changes. Saved edits will appear in Review.', 'empty'));
   else if (state.file.notice) {
     const binding = bound;
@@ -142,33 +171,45 @@ function render(next: ReviewEditorState) {
     metadata.append(heading, create('p', state.file.notice), create('p', `Before: ${state.file.beforeSize.toLocaleString()} bytes · After: ${state.file.afterSize.toLocaleString()} bytes`, 'file-size'));
     const actions = create('div', '', 'block-actions');
     const decisions = create('div', '', 'decision-actions'); decisions.setAttribute('role', 'group'); decisions.setAttribute('aria-label', 'Review this file');
-    decisions.append(button('Accept file', 'check', 'accept', 'Keep all pending changes in this file', () => decide('accept', undefined, active, binding)), button('Reject file', 'discard', 'reject', 'Preview the scope before restoring this file', () => decide('reject', undefined, active, binding)));
+    decisions.append(button('Revert file', 'discard', 'reject', 'Preview the scope before restoring this file', () => decide('reject', undefined, active, binding)), button('Accept file', 'check', 'accept', 'Keep all pending changes in this file', () => decide('accept', undefined, active, binding)));
     const navigation = create('div', '', 'block-navigation'); navigation.append(button('Native diff', 'go-to-file', '', 'Open full saved snapshots', () => send('native', binding)));
     actions.append(decisions, navigation); empty.append(metadata, actions); diff.append(empty);
     if (state.file.images) diff.append(renderImageComparison(state.file.images, state.file.path));
   } else {
     sections = state.file.hunks.map((hunk, index) => block(hunk, index));
-    codeEditor = new ReviewCodeEditor(diff, state.file, sections, index => focusBlock(index, false), save);
+    if (codeEditor) codeEditor.update(state.file, sections);
+    else codeEditor = new ReviewCodeEditor(diff, state.file, sections, index => focusBlock(index, false), save, finishDraft);
   }
-  controls();
-  const targetLine = oldFile === state.file?.path ? anchor : saved?.file === state.file?.path ? saved?.line : undefined;
+  controls(true);
+  const targetLine = sameFile ? anchor : saved?.file === state.file?.path ? saved?.line : undefined;
   const target = targetLine === undefined ? 0 : state.file?.hunks.findIndex(hunk => hunk.newLine >= targetLine) ?? 0;
   focusBlock(state.navigation === 'last' ? sections.length - 1 : state.navigation === 'first' ? 0 : target < 0 ? sections.length - 1 : target, false);
-  if (state.navigation || oldFile !== state.file?.path) { if (sections.length) focusBlock(active); }
-  else if (codeEditor) codeEditor.scrollTop = scroll;
+  if (sections.length && (state.navigation || !sameFile)) focusBlock(active);
 }
-element<HTMLSelectElement>('files').onchange = event => send('selectFile', { file: (event.target as HTMLSelectElement).value, navigation: 'first' });
+filePicker.onchange = () => send('selectFile', { file: filePicker.value, navigation: 'first' });
+window.addEventListener('resize', () => {
+  const picker = filePicker.closest<HTMLElement>('.file-picker');
+  if (picker && !picker.getClientRects().length) dropdowns.closeWithin(picker);
+});
 element('next').onclick = () => navigate(1); element('previous').onclick = () => navigate(-1);
 element('next-file').onclick = () => navigateFile(1); element('previous-file').onclick = () => navigateFile(-1);
-element('native').onclick = () => send('native'); element('refresh').onclick = () => send('refresh'); element('undo').onclick = () => send('undo');
-element('agent-changes').onclick = () => send('workspaceChanges');
-element('open-conversation').onclick = () => send('conversation');
-const more = element<HTMLDetailsElement>('review-more');
-more.addEventListener('click', event => { if (event.target instanceof Element && event.target.closest('button')) more.open = false; });
-document.addEventListener('click', event => { if (more.open && event.target instanceof Node && !more.contains(event.target)) more.open = false; });
+element('save-edit').onclick = saveEdit;
+element('discard-edit').onclick = () => {
+  codeEditor?.discard();
+  finishDraft();
+};
+const more = element<HTMLButtonElement>('review-more');
+more.addEventListener('click', event => {
+  event.preventDefault();
+  event.stopPropagation();
+  const { left, bottom } = more.getBoundingClientRect();
+  more.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: left, clientY: bottom }));
+});
 window.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && more.open) { event.preventDefault(); more.open = false; more.querySelector<HTMLElement>('summary')?.focus(); return; }
-  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || (event.target instanceof Element && !event.target.closest('.monaco-editor .inputarea,.monaco-editor .native-edit-context') && event.target.closest('input,textarea,select,[contenteditable="true"]'))) return;
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 's' && codeEditor?.dirty) {
+    event.preventDefault(); event.stopPropagation(); saveEdit(); return;
+  }
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || (event.target instanceof Element && !event.target.closest('.monaco-editor .inputarea,.monaco-editor .native-edit-context') && event.target.closest('input,textarea,select,[contenteditable="true"],.tandem-dropdown'))) return;
   const key = event.key.toLowerCase();
   if (!['arrowdown', 'arrowup', 'pagedown', 'pageup', 'y', 'n'].includes(key)) return;
   event.preventDefault();
@@ -178,5 +219,13 @@ window.addEventListener('keydown', event => {
   else { const hunk = state.file?.hunks[active]; if (hunk && !state.busy) decide(key === 'y' ? 'accept' : 'reject', hunk.id); }
 }, { capture: true });
 window.addEventListener('pagehide', () => codeEditor?.dispose());
-window.addEventListener('message', event => { if (event.data?.type === 'state') render(event.data.state as ReviewEditorState); });
+window.addEventListener('message', event => {
+  if (event.data?.type === 'state') render(event.data.state as ReviewEditorState);
+  if (event.data?.type === 'editResult' && savingEdit) {
+    savingEdit = false;
+    if (event.data.saved) codeEditor?.markSaved();
+    finishDraft();
+  }
+});
+controls(true);
 api.postMessage({ type: 'ready' });

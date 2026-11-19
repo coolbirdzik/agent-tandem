@@ -1,7 +1,14 @@
 @import url("./hover-hints.css");
+@import url("./dropdown.css");
 @import url("./quota-window.css");
 :root {
   --line: var(--vscode-panel-border, var(--vscode-widget-border, #80808030));
+  --tandem-line: var(--line);
+  --tandem-muted: var(--muted);
+  --tandem-surface: var(--vscode-editor-background);
+  --tandem-control: var(--vscode-dropdown-background, var(--surface));
+  --tandem-hover: var(--vscode-list-hoverBackground, var(--surface));
+  --settings-field-height: 32px;
   --muted: color-mix(in srgb, var(--vscode-foreground) 72%, var(--vscode-editor-background));
   --surface: color-mix(in srgb, var(--vscode-foreground) 4%, var(--vscode-editor-background));
   --accent: var(--vscode-button-background, #0078d4);
@@ -21,7 +28,7 @@ body.vscode-dark, body.vscode-high-contrast:not(.vscode-high-contrast-light) {
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; padding: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); font-size: 14px; line-height: 1.5; }
-button, input, select { font: inherit; color: inherit; }
+button, input { font: inherit; color: inherit; }
 button { cursor: pointer; border: 1px solid transparent; border-radius: 5px; padding: 7px 12px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); transition: background 150ms, border-color 150ms; }
 button:hover { background: var(--vscode-button-hoverBackground); }
 button:active:not(:disabled) { transform: translateY(1px); }
@@ -92,8 +99,8 @@ button.quiet:hover { background: var(--vscode-list-hoverBackground); }
 @media (prefers-reduced-motion: reduce) { .storage-progress progress:not([value]) { animation: none; background-position: 50% 0, 0 0; } }
 @media (forced-colors: active) { .storage-progress progress { appearance: auto; border: 1px solid CanvasText; } }
 .storage-history-tools { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin: 20px 0 12px; }
-.storage-history-tools label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 11px; }
-.storage-history-tools select { max-width: 340px; }
+.storage-history-tools label { display: flex; flex-direction: column; min-width: 0; gap: 6px; color: var(--muted); font-size: 11px; }
+.storage-history-tools .tandem-dropdown { max-width: 340px; }
 #storage-selection { align-self: center; margin-left: auto; color: var(--muted); font-size: 12px; }
 #storage .usage-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .storage-histories { max-height: 520px; overflow: auto; border-block: 1px solid var(--line); }
@@ -158,7 +165,7 @@ button.danger:hover { filter: brightness(.9); }
 .native-search input { width: 100%; border: 0; background: transparent; padding: 8px 8px 8px 0; font-size: 12px; }
 .native-search:focus-within { outline: 1px solid var(--vscode-focusBorder); }
 .native-search input:focus-visible { outline: 0; }
-.native-provider select { font-size: 12px; padding: 8px 28px 8px 8px; width: 136px; }
+.native-provider .tandem-dropdown { width: 136px; }
 .native-custom-filters { margin-top: 12px; font-size: 12px; color: var(--muted); }
 .native-custom-filters summary { width: fit-content; cursor: pointer; padding-block: 4px; }
 .native-custom-filters .storage-history-tools { margin: 12px 0 16px; }
@@ -171,7 +178,7 @@ button.danger:hover { filter: brightness(.9); }
 .native-column-headings button.quiet { padding: 0; border: 0; justify-content: flex-end; color: inherit; font-size: inherit; white-space: nowrap; }
 .native-column-headings > span:last-child { text-align: right; }
 .native-date-filters { align-items: end; margin-bottom: 8px; }
-.native-date-filters input { max-width: 190px; }
+.native-date-filters .date-field, .custom-dates .date-field { width: 132px; max-width: 100%; }
 .native-delete-hint { font-size: 12px; margin: 0; }
 .native-conversation-row .storage-history-copy { position: relative; }
 .native-conversation-row strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }
@@ -218,7 +225,7 @@ body.vscode-dark .native-provider-icon, body.vscode-high-contrast:not(.vscode-hi
   .native-presets { flex: 1 1 auto; }
   .native-presets button { flex: 1; }
   .native-search { order: 1; flex-basis: 100%; }
-  .native-provider select { width: 120px; }
+  .native-provider .tandem-dropdown { width: 120px; }
   .native-conversation-row { grid-template-columns: 16px 20px minmax(90px, 1fr) 92px 56px; gap: 8px; padding-inline: 6px; }
   .native-column-headings { grid-template-columns: minmax(90px, 1fr) 92px 56px; gap: 8px; padding-inline: 58px 6px; }
   .native-row-date { font-size: 11px; }
@@ -227,26 +234,21 @@ body.vscode-dark .native-provider-icon, body.vscode-high-contrast:not(.vscode-hi
 }
 @media (max-width: 600px) {
   .storage-history-tools label { flex: 1 1 100%; }
-  .storage-history-tools select { width: 100%; max-width: none; }
+  .storage-history-tools .tandem-dropdown { width: 100%; max-width: none; }
   #storage-selection { flex-basis: 100%; margin-left: 0; }
   .storage-history-row { gap: 10px; padding-inline: 4px; }
   .storage-history-size { font-size: 13px; }
   .storage-history .section-heading { align-items: start; flex-wrap: wrap; }
 }
-input, select { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, var(--line)); border-radius: 4px; padding: 7px 9px; min-width: 0; }
+input { background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, var(--line)); border-radius: 4px; padding: 7px 9px; min-width: 0; }
 input[type=checkbox] { accent-color: var(--vscode-button-background); }
-body, input, select { color-scheme: light; }
-body.vscode-dark, body.vscode-dark input, body.vscode-dark select,
-body.vscode-high-contrast:not(.vscode-high-contrast-light), body.vscode-high-contrast:not(.vscode-high-contrast-light) input, body.vscode-high-contrast:not(.vscode-high-contrast-light) select { color-scheme: dark; }
-input[type=date] { accent-color: var(--vscode-button-background); }
-input:focus-visible, select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+body, input { color-scheme: light; }
+body.vscode-dark, body.vscode-dark input,
+body.vscode-high-contrast:not(.vscode-high-contrast-light), body.vscode-high-contrast:not(.vscode-high-contrast-light) input { color-scheme: dark; }
+input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 input::placeholder { color: var(--vscode-input-placeholderForeground, var(--muted)); }
 input[type=search] { appearance: none; }
 input[type=search]::-webkit-search-decoration, input[type=search]::-webkit-search-cancel-button { appearance: none; display: none; }
-input[type=date]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .7; border-radius: 3px; }
-input[type=date]::-webkit-calendar-picker-indicator:hover { opacity: 1; background: var(--vscode-list-hoverBackground); }
-select { appearance: none; cursor: pointer; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
-select:disabled { opacity: .6; cursor: default; }
 summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
 summary::-webkit-details-marker { display: none; }
 summary::before { content: ""; flex: none; width: 5px; height: 5px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 150ms; margin-right: 3px; }
@@ -263,18 +265,14 @@ main { max-width: 1440px; margin: 0 auto; padding: 24px clamp(16px, 3vw, 32px); 
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
 #dashboard { padding-bottom: 72px; }
 .account-picker { position: relative; flex: 0 0 40%; min-width: 140px; max-width: 340px; }
-.account-picker-trigger, .account-picker-trigger:hover { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 7px 10px; text-align: left; background: var(--vscode-dropdown-background, var(--vscode-input-background)); color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground)); border: 1px solid var(--vscode-dropdown-border, var(--line)); border-radius: 6px; box-shadow: 0 2px 10px var(--vscode-widget-shadow, #0003); }
-.account-picker-item { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
-.account-picker-item .provider-icon, .account-picker-mark { width: 22px; height: 22px; flex-shrink: 0; font-size: 20px; line-height: 22px; text-align: center; }
-.account-picker-text { min-width: 0; display: grid; gap: 1px; }
-.account-picker-text strong, .account-picker-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-picker-text strong { font-size: 13px; font-weight: 600; }
-.account-picker-text small { font-size: 11px; }
-.account-picker-menu { position: absolute; right: 0; top: calc(100% + 4px); width: min(340px, calc(100vw - 32px)); min-width: 100%; max-height: min(420px, 60vh); overflow: auto; padding: 4px; background: color-mix(in srgb, var(--vscode-dropdown-background, var(--vscode-editor-background)) var(--tandem-popover-opacity), transparent); backdrop-filter: var(--tandem-popover-filter); -webkit-backdrop-filter: var(--tandem-popover-filter); border: 1px solid var(--vscode-dropdown-border, var(--line)); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, #0004); }
-.account-picker-menu .account-picker-item { width: 100%; justify-content: flex-start; padding: 7px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-foreground); text-align: left; }
-.account-picker-menu .account-picker-item:hover, .account-picker-menu .account-picker-item:focus-visible { background: var(--vscode-list-hoverBackground); }
-.account-picker-menu .account-picker-item[aria-selected=true] { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
-.account-picker-menu .account-picker-item[aria-selected=true] small { color: inherit; opacity: .8; }
+.dropdown-trigger { min-height: var(--settings-field-height); border-color: var(--line); }
+.account-picker .dropdown-trigger { padding: 7px 10px; }
+.account-picker .dropdown-trigger .dropdown-caption { font-size: 13px; font-weight: 600; }
+.account-picker .dropdown-trigger .dropdown-description { display: block; white-space: nowrap; text-overflow: ellipsis; }
+.account-picker .dropdown-leading-icon, .account-picker .dropdown-option-icon { width: 20px; height: 20px; font-size: 18px; line-height: 20px; text-align: center; }
+.account-picker .dropdown-image[data-icon=codex] { filter: brightness(0); }
+body.vscode-dark .account-picker .dropdown-image[data-icon=codex],
+body.vscode-high-contrast:not(.vscode-high-contrast-light) .account-picker .dropdown-image[data-icon=codex] { filter: brightness(0) invert(1); }
 .dashboard-refresh { position: fixed; right: max(clamp(16px, 3vw, 32px), env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); z-index: 2; min-height: 44px; padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 16px var(--vscode-widget-shadow, #0003); }
 h1 { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 32px; letter-spacing: -.9px; line-height: 1.25; font-weight: 600; margin: 0; }
 h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
@@ -319,7 +317,6 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .dashboard-error { border-left: 2px solid var(--vscode-errorForeground); color: var(--vscode-errorForeground); background: var(--surface); padding: 10px 12px; margin-bottom: 16px; }
 .filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 1.6fr 1.3fr minmax(100px, 1fr) auto; align-items: end; gap: 12px; padding: 12px 16px; margin-bottom: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .filters label, .custom-dates label { display: flex; flex-direction: column; gap: 7px; min-width: 0; font-size: 12px; color: var(--muted); }
-.filters select { min-width: 0; width: 100%; max-width: 100%; height: 32px; color: var(--vscode-foreground); border-radius: 6px; }
 #filter-model { min-width: 0; }
 #reset-filters { color: var(--muted); height: 32px; }
 .custom-dates { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -379,8 +376,8 @@ h2 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.2px; }
 .quota-chart-axis { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 10px; margin-top: 5px; }
 .quota-cycle-charts .quota-history-chart { margin-top: 20px; }
 .quota-chart-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; color: var(--muted); }
-.quota-chart-control { display: flex; align-items: center; gap: 6px; font-size: 10px; }
-.quota-chart-control select { min-width: 0; max-width: 100%; padding: 3px 22px 3px 5px; background-position: calc(100% - 11px) 50%, calc(100% - 6px) 50%; font-size: 11px; }
+.quota-chart-control { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; font-size: 10px; }
+.quota-chart-control .tandem-dropdown { width: auto; }
 .quota-chart-viewport { overflow-x: auto; margin-top: 10px; padding-bottom: 5px; --quota-gutter: 108px; }
 .quota-cycle-plot { position: relative; padding-left: var(--quota-gutter); width: var(--quota-sheet-width, 100%); }
 .quota-cycle-plot svg { display: block; width: 100%; height: 170px; overflow: visible; }
@@ -602,7 +599,7 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .account-empty > .codicon { font-size: 28px; color: var(--muted); }
 .account-empty h3 { font-size: 17px; font-weight: 500; margin: 12px 0 6px; }
 .account-empty p { margin: 0 0 20px; }
-@media (max-width: 500px) { #managed-accounts .page-heading { flex-wrap: wrap; gap: 18px; } .account-platform { padding: 10px 0; } .account-search { width: 100%; } .account-search input { width: 100%; } .managed-account { padding: 16px; } .managed-account[data-active=true] { padding-top: 15px; } .account-connection { padding: 16px; } .account-connection .account-toolbar label { width: 100%; } .account-connection select { width: 100%; } }
+@media (max-width: 500px) { #managed-accounts .page-heading { flex-wrap: wrap; gap: 18px; } .account-platform { padding: 10px 0; } .account-search { width: 100%; } .account-search input { width: 100%; } .managed-account { padding: 16px; } .managed-account[data-active=true] { padding-top: 15px; } .account-connection { padding: 16px; } .account-connection .account-toolbar label { width: 100%; } }
 .quota-pace-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 24px; }
 .quota-pace-card > strong { display: block; font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; margin: 8px 0 4px; }
 .quota-pace-card p { font-size: 11px; margin: 0; }
@@ -703,7 +700,6 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
   .description { font-size: 12px; }
   .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 16px; }
   .filters label { flex: 1 1 40%; min-width: 0; }
-  .filters select { min-width: 0; width: 100%; max-width: 100%; }
   #filter-model { min-width: 0; }
   .usage-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .usage-total strong { font-size: 30px; }
@@ -737,7 +733,7 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .attribution-close:hover{color:var(--vscode-foreground)}
 .attribution-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;margin:20px 0 16px}
 .attribution-fields label{display:grid;gap:6px;min-width:0;font-size:12px;color:var(--muted)}
-.attribution-fields select,.attribution-fields input{width:100%;min-width:0;color:var(--vscode-input-foreground)}
+.attribution-fields input{width:100%;min-width:0;color:var(--vscode-input-foreground)}
 .attribution-fields .attribution-wide{grid-column:1/-1}
 .attribution-preview{margin:0;padding:10px 12px;border-radius:6px;background:var(--vscode-textBlockQuote-background,var(--vscode-list-hoverBackground));font-size:12px;line-height:1.5}
 .attribution-status:empty,#attribution-error[hidden]{display:none}
@@ -755,7 +751,7 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 @media(max-width:600px){.attribution-assignment{align-items:flex-start;flex-direction:column}.attribution-fields{grid-template-columns:1fr}.attribution-dialog-body{padding:18px}.attribution-entry{flex-wrap:wrap}}
 .status-bar-controls label{display:grid;gap:8px}
 .status-bar-color{display:flex;gap:6px;align-items:center}
-.status-bar-color select{flex:1;min-width:0}
+.status-bar-color .tandem-dropdown{flex:1}
 .status-bar-color input[type=color]{width:32px;height:26px;padding:0 2px;border:1px solid var(--line);background:transparent;cursor:pointer}
 .status-bar-fields{border:0;padding:0;margin:16px 0;display:flex;flex-wrap:wrap;gap:12px 20px}
 .status-bar-fields legend{padding:0;margin-bottom:12px;font-weight:600}
@@ -829,13 +825,11 @@ html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-w
 .range-chip[aria-pressed=true] { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
 .range-chip .codicon { font-size: 13px; }
 .range-divider { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--line); }
-.filter-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1.3fr) minmax(90px, .8fr); align-items: end; gap: 10px; }
+.filter-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(90px, .8fr); align-items: end; gap: 10px; }
 .filter-footer { display: flex; align-items: flex-end; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
 .filter-footer .custom-dates { margin: 0 auto 0 0; }
 .filter-footer .custom-dates[hidden] { display: none; }
 .filter-row label { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 12px; color: var(--muted); }
-.filter-row select { width: 100%; min-width: 0; height: 30px; border-radius: 6px; }
-.filter-row select:disabled { opacity: .6; }
 .cycle-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--surface); }
 .cycle-copy { flex: 1; min-width: 180px; display: flex; flex-direction: column; }
 .cycle-copy strong { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -870,4 +864,29 @@ html.overlay-scrollbars::-webkit-scrollbar-button, html.overlay-scrollbars *::-w
 
 /* Sub-tab bars stay pinned under the sticky settings header while the page scrolls. */
 .dashboard-toolbar, .account-platforms, .storage-navigation { position: sticky; top: calc(var(--settings-header-h, 57px) - 1px); z-index: 1; background: var(--vscode-editor-background); }
+.dashboard-toolbar:has(.dropdown-trigger[aria-expanded=true]) { z-index: 6; }
 @media (max-width: 600px) { .dashboard-toolbar { gap: 12px; } }
+
+.date-field { display: flex; align-items: stretch; position: relative; width: 100%; min-width: 0; height: var(--settings-field-height); border: 1px solid var(--line); border-radius: 6px; background: var(--tandem-control); }
+.date-field:has(input:disabled) { opacity: .5; }
+.date-field input[type=date] { flex: 1; width: 100%; min-width: 0; padding: 0 4px 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--vscode-foreground); font-size: 12px; }
+.date-field input::-webkit-calendar-picker-indicator { display: none; }
+.date-field-button { flex: none; width: 29px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--tandem-muted); }
+.date-field-button:enabled:hover, .date-field-button[aria-expanded=true] { background: var(--tandem-hover); color: var(--vscode-foreground); }
+.calendar-picker { padding: 8px; }
+.calendar-header, .calendar-footer { display: flex; align-items: center; gap: 4px; }
+.calendar-footer { justify-content: space-between; margin-top: 6px; }
+.calendar-title { flex: 1; min-width: 0; font-weight: 600; }
+.calendar-picker button { min-height: 28px; padding: 4px 6px; border-color: transparent; border-radius: 5px; background: transparent; color: var(--vscode-foreground); }
+.calendar-picker button:enabled:hover { background: var(--tandem-hover); }
+.calendar-picker button:focus-visible, .date-field-button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.calendar-days, .calendar-months { display: grid; gap: 2px; margin-top: 6px; }
+.calendar-months { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.calendar-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; text-align: center; }
+.calendar-row [role=columnheader] { padding: 4px 0; color: var(--tandem-muted); font-size: 10px; }
+.calendar-picker .calendar-cell { width: 100%; padding-inline: 0; font-variant-numeric: tabular-nums; }
+.calendar-picker .calendar-outside { color: var(--tandem-muted); }
+.calendar-picker .calendar-cell[aria-current] { border-color: var(--vscode-focusBorder); }
+.calendar-picker [aria-selected=true] .calendar-cell, .calendar-picker [aria-selected=true] .calendar-cell:hover { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.calendar-picker .calendar-action:enabled { color: var(--vscode-textLink-foreground); }
+@media (forced-colors: active) { .date-field { border-color: CanvasText; } .calendar-picker [aria-selected=true] .calendar-cell { forced-color-adjust: none; background: Highlight; color: HighlightText; } }

@@ -122,6 +122,12 @@ export class TandemView implements vscode.WebviewViewProvider, vscode.Disposable
         if (!message || typeof message !== 'object') throw new Error('Invalid request.');
         const data = message as Record<string, unknown>;
         if (data.type === 'ready') { this.update(); return; }
+        if (data.type === 'copyCLIPath') {
+          if (typeof data.selection !== 'string' || !data.selection) throw new Error('Choose an executable path to copy.');
+          await vscode.env.clipboard.writeText(data.selection);
+          vscode.window.setStatusBarMessage('Copied executable path', 2500);
+          return;
+        }
         const commands: Record<string, string> = { demo: 'agentTandem.runDemo', stop: 'agentTandem.stop', probe: 'agentTandem.checkProviders', step: 'agentTandem.openStep', cumulative: 'agentTandem.openCumulative', file: 'agentTandem.openFile', sync: 'agentTandem.syncConversations', conversation: 'agentTandem.openConversation', screen: 'agentTandem.showSection', previewFile: 'agentTandem.previewFile', tab: 'agentTandem.openInTab', 'editor-step': 'agentTandem.openStepInEditor', 'editor-file': 'agentTandem.openFileInEditor', 'editor-cumulative': 'agentTandem.openCumulativeInEditor' };
         const type = String(data.type);
         Object.assign(commands, { previewCheckpoint: 'agentTandem.previewCheckpoint', restoreCheckpoint: 'agentTandem.restoreCheckpoint', closeCheckpointPreview: 'agentTandem.closeCheckpointPreview' });

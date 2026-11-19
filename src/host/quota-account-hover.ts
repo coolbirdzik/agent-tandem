@@ -3,15 +3,12 @@ import type { UsageDashboardState } from '../core/usage-dashboard';
 import type { ConversationProvider } from '../providers/conversations';
 import { profileIdentityKey } from '../core/account-profiles';
 import { bankedResetCountdown } from '../core/banked-resets';
-import { compactCountdown, quotaWindowIconLabel, resetClock, resetSummary, quotaUsageTone } from '../core/quota-status';
-import { storageSize, storageUsageLevel } from '../core/storage-usage';
+import { quotaWindowIconLabel, resetSummary, quotaUsageTone } from '../core/quota-status';
 import { uniqueQuotaWindows } from '../core/quota-windows';
 import { uniqueAccountProfiles, accountProfileStatus } from '../core/account-display';
 
-const commands = ['agentTandem.quickAccounts', 'agentTandem.quickSwitchAccount', 'agentTandem.resetCodexUsage', 'agentTandem.openSettings', 'agentTandem.manageAccounts', 'agentTandem.refreshQuotaAccounts', 'agentTandem.openExtensionStorage', 'agentTandem.previewReviewCleanup'];
 /** The hover is raw HTML blocks, so user text is entity-encoded: no tags, no markdown links, no `$(icon)` syntax, no blank lines. */
 const escape = (value: string) => value.replace(/[&<>"'$\\`*_{}\[\]()#!|]/g, char => `&#${char.charCodeAt(0)};`).replace(/[\r\n]+/g, ' ');
-const link = (label: string, command: string, args: unknown[] = [], title = '') => `<a href="command:${command}?${encodeURIComponent(JSON.stringify(args))}"${title ? ` title="${title}"` : ''}>${label}</a>`;
 const colors = { blue: 'charts-blue', orange: 'charts-orange', green: 'charts-green', yellow: 'editorWarning-foreground', red: 'errorForeground', muted: 'descriptionForeground' };
 /** Only static theme color tokens enter HTML; all account/user text is escaped. */
 const color = (text: string, tone: keyof typeof colors) => `<span style="color:var(--vscode-${colors[tone]});">${text}</span>`;
@@ -33,10 +30,10 @@ const meter = (remaining: number, tone: keyof typeof meterFill) => {
   return `<img src="data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}" width="${width}" height="6" align="middle" alt="">`;
 };
 
-/** VS Code's native sticky hover supports keyboard-focusable command links. */
-export function quotaAccountHover(provider: ConversationProvider, state: Pick<UsageDashboardState, 'accounts' | 'managedAccounts' | 'accountsBusy' | 'accountsRefreshing' | 'accountsError' | 'accountsNotice' | 'accountSwitch' | 'accountSwitchBlocked' | 'extensionStorage'>): vscode.MarkdownString {
+export function quotaAccountHover(provider: ConversationProvider, state: Pick<UsageDashboardState, 'accounts' | 'managedAccounts' | 'accountsRefreshing' | 'accountsError' | 'accountsNotice' | 'accountSwitch'>): vscode.MarkdownString {
   const md = new vscode.MarkdownString('', true), status = state.accounts?.[provider], account = status?.account;
-  md.isTrusted = { enabledCommands: commands }; md.supportHtml = true;
+  const now = Date.now();
+  md.supportHtml = true;
   const providerIcon = color(`$(${provider === 'Codex' ? 'agent-tandem-codex' : 'agent-tandem-claude'})`, provider === 'Codex' ? 'blue' : 'orange');
   const signedIn = account ? account.signedIn ? color('$(pass-filled) Active', 'green') : color('$(circle-slash) Signed out', 'muted') : '';
   md.appendMarkdown(headerTable(
@@ -47,22 +44,19 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
     const remaining = remainingOf(window.usedPercent), tone = quotaTone(window.usedPercent);
     return row(`<td width="28"><strong>${quotaWindowIconLabel(window.label, escape)}</strong></td>`, `<td>${meter(remaining, tone)}</td>`,
       `<td align="right">${color(`<strong>${remaining}%</strong>`, tone)} ${color('left', 'muted')}</td>`,
-      `<td align="right">${window.resetsAt ? color(`$(clock) ${window.resetsAt > Date.now() ? `${resetClock(window.resetsAt)} · ${compactCountdown(window.resetsAt)}` : 'reset'}`, 'muted') : color('—', 'muted')}</td>`);
+      `<td align="right">${window.resetsAt ? color(`$(clock) ${escape(resetSummary(window.resetsAt, now))}`, 'muted') : color('—', 'muted')}</td>`);
   })));
   if (!status?.quota?.windows.length) md.appendMarkdown(block(`<div>${color(escape(status?.quota?.detail || status?.error || 'Quota unavailable'), 'muted')}</div>`));
   if (status?.quotaCached) md.appendMarkdown(block(`<div>${color(`$(history) Cached quota${status.updatedAt ? ` · ${escape(new Date(status.updatedAt).toLocaleString())}` : ''}${status.error ? ` · ${escape(status.error)}` : ''}`, 'muted')}</div>`));
-  const busy = !!state.accountsBusy || !!state.accountSwitchBlocked;
   if (provider === 'Codex' && account?.signedIn && account.method === 'ChatGPT') {
     const count = status?.quota?.bankedResets?.availableCount;
-    const expires = status?.quota?.bankedResets?.credits?.flatMap(credit => credit.expiresAt ? [credit.expiresAt] : []).sort((a, b) => a - b)[0];
-    const reset = count && !busy && status.status === 'ready' && !status.quotaCached
-      ? `${color('$(gift)', 'blue')} ${link('Reset usage', 'agentTandem.resetCodexUsage')} ${color(`· uses 1 of ${count} earned resets`, 'muted')}`
-      : color(`$(gift) Reset usage · ${count === undefined ? 'refresh to check earned resets' : count ? `${count} earned resets available` : 'no earned resets available'}`, 'muted');
-    md.appendMarkdown(table(row(`<td>${reset}</td>`, `<td align="right">${count && expires ? color(`expires ${compactCountdown(expires)}`, 'muted') : ''}</td>`)));
-    // One line per earned reset, soonest expiry first, so each expiry stays readable.
     const credits = (status?.quota?.bankedResets?.credits ?? []).slice().sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity));
+    const expires = credits[0]?.expiresAt;
+    const reset = color(`$(gift) ${count === undefined ? 'Earned resets unavailable' : count === 0 ? 'No earned resets available' : `${count} earned reset${count === 1 ? '' : 's'} available`}`, 'muted');
+    md.appendMarkdown(table(row(`<td>${reset}</td>`, `<td align="right">${count && expires ? color(escape(bankedResetCountdown(expires, now)), 'muted') : ''}</td>`)));
+    // One line per earned reset, soonest expiry first, so each expiry stays readable.
     if (count && credits.length) {
-      md.appendMarkdown(table(...credits.slice(0, 5).map(credit => row(`<td>${color(`${escape(credit.title || 'Banked reset')} · ${credit.expiresAt ? `Expires ${escape(new Date(credit.expiresAt).toLocaleString())} · ${escape(bankedResetCountdown(credit.expiresAt))}` : 'Expiry unavailable'}`, 'muted')}</td>`))));
+      md.appendMarkdown(table(...credits.slice(0, 5).map(credit => row(`<td>${color(`${escape(credit.title || 'Banked reset')} · ${credit.expiresAt ? escape(bankedResetCountdown(credit.expiresAt, now)) : 'Expiry unavailable'}`, 'muted')}</td>`))));
       if (credits.length > 5 || credits.length < count) md.appendMarkdown(block(`<div>${color(credits.length > 5 ? `+${credits.length - 5} more earned resets` : 'Expiry details shown for some resets', 'muted')}</div>`));
     }
   }
@@ -71,41 +65,23 @@ export function quotaAccountHover(provider: ConversationProvider, state: Pick<Us
     .filter(row => !row.active && (!currentId || currentId !== profileIdentityKey(provider, row.identity || row.status?.account))))
     .sort((a, b) => a.label.localeCompare(b.label));
   if (profiles.length) {
-    md.appendMarkdown(section('Switch account'));
+    md.appendMarkdown(section('Saved accounts'));
     md.appendMarkdown(table(...profiles.slice(0, 3).map(profile => {
       const saved = accountProfileStatus(profile), identity = saved?.account || profile.identity, quota = uniqueQuotaWindows(saved?.quota?.windows);
       const email = identity?.email && profile.label.trim().toLowerCase() !== identity.email.trim().toLowerCase() ? escape(identity.email) : '';
-      // One line per window so each reset time stays readable; the action keeps its own right-aligned column.
-      const quotaLines = quota.slice(0, 2).map(window => `${color(`${quotaWindowIconLabel(window.label, escape)} ${remainingOf(window.usedPercent)}% left`, quotaTone(window.usedPercent))}${window.resetsAt ? color(` · $(clock) ${resetSummary(window.resetsAt)}`, 'muted') : ''}`);
+      // One line per window keeps each countdown readable.
+      const quotaLines = quota.slice(0, 2).map(window => `${color(`${quotaWindowIconLabel(window.label, escape)} ${remainingOf(window.usedPercent)}% left`, quotaTone(window.usedPercent))}${window.resetsAt ? color(` · $(clock) ${escape(resetSummary(window.resetsAt, now))}`, 'muted') : ''}`);
       const detail = [email, saved?.quotaCached ? '$(history) cached' : '', saved?.error ? escape(saved.error) : ''].filter(Boolean).join(color(' · ', 'muted'));
       const lines = [...(quotaLines.length ? quotaLines : [color('Quota unavailable', 'muted')]), ...(detail ? [color(detail, 'muted')] : [])].join('<br>');
-      const action = busy ? color('$(lock) Unavailable', 'muted') : link('<span style="color:var(--vscode-button-foreground);background-color:var(--vscode-button-background);border-radius:4px;">&nbsp;&nbsp;Switch&nbsp;&nbsp;</span>', 'agentTandem.quickSwitchAccount', [profile.id]);
-      return row(`<td>$(account) <strong>${escape(profile.label)}</strong>${identity?.plan ? ` &nbsp;${chip(escape(identity.plan))}` : ''}<br>${lines}</td>`, `<td align="right">${action}</td>`);
+      return row(`<td>$(account) <strong>${escape(profile.label)}</strong>${identity?.plan ? ` &nbsp;${chip(escape(identity.plan))}` : ''}<br>${lines}</td>`);
     })));
-    if (profiles.length > 3) md.appendMarkdown(block(`<div>${link(`Show ${profiles.length - 3} more accounts…`, 'agentTandem.quickAccounts', [provider])}</div>`));
+    if (profiles.length > 3) md.appendMarkdown(block(`<div>${color(`+${profiles.length - 3} more`, 'muted')}</div>`));
   }
-  const usage = state.extensionStorage, level = storageUsageLevel(usage);
-  const storageSummary = usage?.total === undefined ? usage?.status === 'error' ? 'Unavailable' : 'Measuring…' : storageSize(usage.total);
-  const checked = usage?.checkedAt ? color(`checked ${Date.now() - usage.checkedAt < 60000 ? 'just now' : `${Math.floor((Date.now() - usage.checkedAt) / 60000)}m ago`}`, 'muted') : '';
-  md.appendMarkdown(section('Extension storage'));
-  const alert = usage?.status === 'error' ? color(`$(warning) ${escape(usage.error || 'Refresh to check storage.')}`, 'yellow')
-    : level === 'warning' || level === 'critical' ? color(`$(${level === 'critical' ? 'error' : 'warning'}) Above ${storageSize(usage!.warningBytes)} alert threshold`, level === 'critical' ? 'red' : 'yellow') : '';
-  const largest = usage?.categories?.slice().sort((a, b) => b.bytes - a.bytes).slice(0, 2) ?? [];
-  md.appendMarkdown(table(row(`<td><strong>${storageSummary}</strong> ${color('total', 'muted')}</td>`, `<td align="right">${checked}</td>`),
-    alert ? row(`<td colspan="2">${alert}</td>`) : '',
-    ...largest.map(category => row(`<td>${color(escape(category.label), 'muted')}</td>`, `<td align="right">${storageSize(category.bytes)}</td>`))));
-  const cleanup = usage?.categories?.some(row => row.label === 'Review snapshots & tracking' && row.files)
-    ? `$(clear-all) ${['accepted', 'all'].map(scope => link(`Clean ${scope}…`, 'agentTandem.previewReviewCleanup', [{ scope }], 'Review snapshots: preview before deleting')).join(color(' · ', 'muted'))}` : '';
-  md.appendMarkdown(table(row(`<td>${cleanup || link('$(folder-opened) Manage storage', 'agentTandem.openExtensionStorage')}</td>`, `<td align="right">${cleanup ? link('$(folder-opened) Manage storage', 'agentTandem.openExtensionStorage') : ''}</td>`)));
   const notes = [
-    state.accountSwitchBlocked ? color(`$(lock) ${escape(state.accountSwitchBlocked)}`, 'yellow') : '',
     state.accountSwitch?.status === 'running' ? `$(loading~spin) ${escape(state.accountSwitch.logs.at(-1)?.message || 'Switching account…')}` : '',
     state.accountsError ? color(`$(error) ${escape(state.accountsError)}`, 'red') : state.accountsNotice ? color(`$(check) ${escape(state.accountsNotice)}`, 'green') : '',
+    state.accountsRefreshing ? color('$(loading~spin) Refreshing…', 'muted') : '',
   ].filter(Boolean);
   if (notes.length) md.appendMarkdown(block(`<div>${notes.join('<br>')}</div>`));
-  md.appendMarkdown('<hr>\n\n');
-  md.appendMarkdown(table(row(`<td>${link('$(dashboard) <strong>Open Dashboard</strong>', 'agentTandem.openSettings')}</td>`, `<td align="right">${[
-    state.accountsRefreshing ? color('$(loading~spin) Refreshing…', 'muted') : link('$(refresh) Refresh', 'agentTandem.refreshQuotaAccounts', [], 'Refresh quota for every saved account'), link('$(settings-gear) Accounts', 'agentTandem.manageAccounts', [], 'Manage accounts'),
-    link('$(search) Search', 'agentTandem.quickAccounts', [provider], 'Search / switch accounts')].join(' &nbsp;&nbsp; ')}</td>`)).trimEnd());
   return md;
 }

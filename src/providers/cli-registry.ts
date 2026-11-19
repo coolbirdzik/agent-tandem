@@ -26,6 +26,6 @@ export function allowedCLI(registry: CLIRegistry, provider: ConversationProvider
 export function defaultCLI(registry: CLIRegistry, provider: ConversationProvider): CLIEntry | undefined {
   const id = registry.defaults[provider]; if (!id) return;
   const entry = registry.entries.find(entry => entry.id === id && entry.provider === provider);
-  if (!entry) throw new Error(`The default ${provider} CLI was removed. Choose another default in Manage CLIs.`);
+  if (!entry) throw new Error(`The ${provider} CLI selected under Default was removed. Update the Default setting in Manage CLIs.`);
   return allowedCLI(registry, provider, entry.executable);
 }

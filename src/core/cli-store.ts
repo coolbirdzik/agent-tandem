@@ -85,7 +85,7 @@ export class CLIStore {
     // Keep a removed default unresolved instead of switching to another binary.
   }); }
   setDefault(revision: string, provider: ConversationProvider, id: string) { return this.mutate(revision, value => {
-    if (id && !value.entries.some(row => row.id === id && row.provider === provider && row.enabled && !row.error)) throw new Error('Choose an enabled CLI as the default.');
+    if (id && !value.entries.some(row => row.id === id && row.provider === provider && row.enabled && !row.error)) throw new Error('Choose an enabled CLI under Default.');
     value.defaults[provider] = id;
   }); }
 }

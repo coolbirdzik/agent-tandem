@@ -466,25 +466,36 @@ describe('Single tandem webview', () => {
     const value: ViewState = { ...state, conversation: undefined, composeProvider: 'Codex', codexFastMode: false };
     render(value); postMessage.mockClear();
     const toggle = document.querySelector<HTMLButtonElement>('#chat-fast-mode')!;
+    const chip = document.querySelector<HTMLButtonElement>('#fast-mode-chip')!;
     expect(document.querySelector<HTMLElement>('#fast-mode-field')!.hidden).toBe(false);
+    expect(chip.hidden).toBe(true);
     toggle.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'setFastMode', selection: { project: '/project', provider: 'Codex', enabled: true } });
     render({ ...value, syncing: true });
     expect(toggle.getAttribute('aria-checked')).toBe('true');
-    expect(document.querySelector('#model-trigger-label')!.textContent).toContain('Fast');
+    expect(document.querySelector('#model-trigger-label')!.textContent).toBe('Codex default');
+    expect(chip.hidden).toBe(false);
+    expect(chip.textContent).toBe('');
     const input = document.querySelector<HTMLTextAreaElement>('#chat-input')!;
     input.value = 'hello'; input.dispatchEvent(new Event('input'));
     document.querySelector<HTMLFormElement>('#chat-form')!.dispatchEvent(new Event('submit', { cancelable: true }));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'sendChat', selection: expect.objectContaining({ provider: 'Codex', fastMode: true }) });
     expect(toggle.disabled).toBe(true);
+    expect(chip.disabled).toBe(true);
   });
   it('restores Off, hides Fast mode for Claude and clears stale choices on project/error changes', () => {
     const value: ViewState = { ...state, conversation: undefined, composeProvider: 'Codex', codexFastMode: true };
     render(value);
     const toggle = document.querySelector<HTMLButtonElement>('#chat-fast-mode')!;
-    toggle.click(); expect(toggle.getAttribute('aria-checked')).toBe('false');
+    const chip = document.querySelector<HTMLButtonElement>('#fast-mode-chip')!;
+    expect(chip.hidden).toBe(false);
+    chip.focus(); chip.click(); expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'setFastMode', selection: { project: '/project', provider: 'Codex', enabled: false } });
+    expect(chip.hidden).toBe(true);
+    expect(document.activeElement?.id).toBe('model-trigger');
+    expect(document.querySelector<HTMLElement>('#model-popover')!.hidden).toBe(true);
     render({ ...value, codexFastMode: false });
-    expect(document.querySelector('#model-trigger-label')!.textContent).not.toContain('Fast');
+    expect(chip.hidden).toBe(true);
     toggle.click();
     render({ ...value, codexFastMode: false, error: 'Could not save' });
     expect(toggle.getAttribute('aria-checked')).toBe('false');
@@ -493,6 +504,7 @@ describe('Single tandem webview', () => {
     expect(toggle.getAttribute('aria-checked')).toBe('false');
     render(state);
     expect(document.querySelector<HTMLElement>('#fast-mode-field')!.hidden).toBe(true);
+    expect(chip.hidden).toBe(true);
     expect(toggle.disabled).toBe(true);
     postMessage.mockClear();
     const input = document.querySelector<HTMLTextAreaElement>('#chat-input')!;
@@ -596,9 +608,16 @@ describe('Single tandem webview', () => {
     render(cliState); postMessage.mockClear();
     expect(document.getElementById('screen-cli')!.hidden).toBe(false); expect(document.getElementById('chat-composer')!.hidden).toBe(true);
     expect(document.querySelectorAll('.cli-entry')).toHaveLength(2);
+    expect([...document.querySelectorAll('select[id^="cli-default-"]')].map(select => select.getAttribute('aria-label'))).toEqual(['Default', 'Default']);
+    expect(document.querySelector('[data-cli-id="cx"] .cli-entry-heading > .meta')!.textContent).toBe('In use · Default · Enabled');
     const claude = document.querySelector<HTMLSelectElement>('#cli-project-Claude')!;
-    expect([...claude.options].find(option => option.value === 'cl')!.disabled).toBe(true);
+    for (const id of ['cli-default-Claude', 'cli-project-Claude']) {
+      expect(document.querySelector(`#${id} option[value="cl"]`)).toMatchObject({ textContent: 'My Claude', disabled: true });
+    }
+    expect(claude.selectedOptions[0]).toMatchObject({ value: 'path', textContent: 'Using terminal PATH', disabled: true });
+    expect(claude.options[0]).toMatchObject({ value: '', textContent: 'Use Default', disabled: false });
     const project = document.querySelector<HTMLSelectElement>('#cli-project-Codex')!;
+    expect(project.options[0]!.textContent).toBe('Use Default');
     project.value = ''; project.dispatchEvent(new Event('change'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ provider: 'Codex', action: 'use', id: '', revision: 'cli1', project: '/project' }) });
     render({ ...cliState, cliManager: { ...cliState.cliManager!, busy: true } }); render(cliState);
@@ -606,40 +625,115 @@ describe('Single tandem webview', () => {
     defaultSelect.value = ''; defaultSelect.dispatchEvent(new Event('change'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ action: 'default', id: '' }) });
   });
-  it('shows automatic Codex fallback distinctly from an explicit terminal selection', () => {
-    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { executable: '/editor/bin/codex', version: 'codex-cli 0.162.0', source: 'extension' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
-    const machine = document.querySelector<HTMLSelectElement>('#cli-default-Codex')!;
+  it.each([
+    ['/usr/local/bin/codex', 'Global installation', 'terminal-compact'],
+    ['/home/user/.vscode/extensions/openai.chatgpt-1.0/bin/codex', 'VS Code extension', 'extensions'],
+    ['/home/user/.cursor/extensions/openai.chatgpt-1.0/bin/codex', 'Cursor extension', 'extensions'],
+    ['/custom/bin/codex', 'Local executable', undefined],
+  ])('shows the installation origin for %s in the CLI row heading', (executable, label, icon) => {
+    const manager = cliState.cliManager!;
+    const registry = { ...manager.registry, entries: [{ ...manager.registry.entries[0]!, executable }] };
+    render({ ...cliState, cliManager: { ...manager, registry } });
+    const identity = document.querySelector('[data-cli-id="cx"] .cli-entry-identity')!;
+    expect(identity.querySelector('h4')!.textContent).toBe('1.0');
+    expect(identity.querySelector('p')!.textContent).toBe(label);
+    const glyph = identity.querySelector('.codicon');
+    if (icon) {
+      expect(glyph).toBe(identity.firstElementChild);
+      expect(glyph!.classList.contains(`codicon-${icon}`)).toBe(true);
+      expect(glyph!.getAttribute('aria-hidden')).toBe('true');
+    } else {
+      expect(glyph).toBeNull();
+    }
+  });
+  it.each([
+    { provider: 'Codex', executable: '/editor/bin/codex', version: 'codex-cli 0.162.0' },
+    { provider: 'Claude', executable: '/editor/bin/claude', version: '2.1.10 (Claude Code)' },
+  ])('keeps $provider on Automatic without repeating the selected extension below the dropdowns', ({ provider, executable, version }) => {
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { [provider]: { executable, version, source: 'extension' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
+    const machine = document.querySelector<HTMLSelectElement>(`#cli-default-${provider}`)!;
     expect(machine.value).toBe('');
-    expect(machine.selectedOptions[0]!.textContent).toBe('Automatic (PATH, then current Codex extension)');
-    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex')!.value).toBe('');
-    expect(document.querySelector('.cli-active')!.textContent).toContain('Automatic → Codex extension · codex-cli 0.162.0');
-    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex option[value="path"]')!.textContent).toBe('Terminal CLI (PATH)');
+    expect(machine.selectedOptions[0]!.textContent).toBe('Automatic');
+    expect(document.querySelector<HTMLSelectElement>(`#cli-project-${provider}`)!.value).toBe('');
+    expect(machine.closest('.cli-selections')!.nextElementSibling!.matches('.cli-entry')).toBe(true);
+    expect(document.querySelector(`#cli-project-${provider} option[value="path"]`)).toBeNull();
   });
-  it('shows the automatic PATH source, version and path without a managed entry', () => {
+  it('keeps an automatic PATH selection in the dropdowns', () => {
     render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { executable: '/terminal/codex', version: 'codex-cli 0.150.0', source: 'automatic-path' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
-    expect(document.querySelector('.cli-active')!.textContent).toBe('Automatic → Terminal PATH · codex-cli 0.150.0');
-    expect(document.querySelector('.cli-selections')!.parentElement!.textContent).toContain('/terminal/codex');
+    expect(document.querySelector('.cli-selections')!.nextElementSibling!.matches('.cli-entry')).toBe(true);
     expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex')!.value).toBe('');
-    expect(document.querySelector<HTMLSelectElement>('#cli-default-Codex option[value="cx"]')!.textContent).toBe('Pinned: My Codex');
+    expect(document.querySelector<HTMLSelectElement>('#cli-default-Codex option[value="cx"]')!.textContent).toBe('My Codex');
+    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex option[value="cx"]')!.textContent).toBe('My Codex');
   });
-  it('preserves CLI input drafts across sync, edits entries inline and restores fields on Cancel', () => {
+  it('keeps selection errors visible beneath the dropdowns', () => {
+    const error = 'Selected Codex executable is unavailable.';
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { id: 'cx', source: 'project', error } } } });
+    expect(document.querySelector('.cli-selections + .cli-entry-error')!.textContent).toBe(error);
+  });
+  it('exposes and copies the full executable path from a saved CLI row', () => {
+    const executable = 'C:/cli/codex.exe';
+    render(cliState);
+    postMessage.mockClear();
+    const button = document.querySelector<HTMLButtonElement>('[data-cli-id="cx"] button.cli-path')!;
+    expect(button.title).toBe(executable);
+    expect(button.textContent).toBe(executable);
+    expect(button.getAttribute('aria-label')).toBe(`Copy executable path: ${executable}`);
+    button.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'copyCLIPath', selection: executable });
+  });
+  it('opens Add only for the selected provider and closes it on Cancel or successful submission', () => {
     render(cliState); postMessage.mockClear();
-    const name = document.querySelector<HTMLInputElement>('[data-cli-draft="add:Codex:name"]')!; name.value = 'Portable'; name.focus();
-    render({ ...cliState, syncing: true }); expect(name.value).toBe('Portable'); expect(document.activeElement).toBe(name);
+    const codex = () => document.querySelector<HTMLElement>('[aria-label="Codex CLI installations"]')!;
+    const addButton = () => codex().querySelector<HTMLButtonElement>('.cli-group-heading button:last-child')!;
+    const form = () => codex().querySelector<HTMLFormElement>('.cli-add-form')!;
+    expect(document.querySelectorAll('.cli-add-form')).toHaveLength(0);
+    expect([...document.querySelectorAll('.cli-group-heading button.primary')].map(button => button.textContent)).toEqual(['Add', 'Add']);
+    expect([...codex().querySelectorAll('.cli-group-heading button')].map(button => button.textContent)).toEqual(['Scan', 'Check versions', 'Add']);
+    addButton().click();
+    expect(document.querySelectorAll('.cli-add-form')).toHaveLength(1);
+    const name = form().querySelector<HTMLInputElement>('input')!;
+    expect(document.activeElement).toBe(name);
+    name.value = 'Portable';
+    render({ ...cliState, syncing: true });
+    expect(name.value).toBe('Portable');
+    expect(document.activeElement).toBe(name);
+    [...form().querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Cancel')!.click();
+    expect(form()).toBeNull();
+    expect(document.activeElement).toBe(addButton());
+    expect(postMessage).not.toHaveBeenCalled();
+    addButton().click();
+    const inputs = form().querySelectorAll('input');
+    expect(inputs[0]!.value).toBe('');
+    inputs[1]!.value = 'C:/cli/portable.exe';
+    form().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ provider: 'Codex', action: 'add', executable: 'C:/cli/portable.exe' }) });
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, registry: { ...cliState.cliManager!.registry, revision: 'cli2' } } });
+    expect(form()).toBeNull();
+    addButton().click();
+    expect([...form().querySelectorAll('input')].map(input => input.value)).toEqual(['', '']);
+  });
+  it('replaces CLI entry details during editing and restores them on Cancel', () => {
+    render(cliState); postMessage.mockClear();
     const row = document.querySelector<HTMLElement>('[data-cli-id="cx"]')!;
     [...row.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Edit')!.click();
+    const editingRow = document.querySelector<HTMLElement>('[data-cli-id="cx"]')!;
+    expect(editingRow.querySelector('.cli-entry-heading, .cli-path, .meta')).toBeNull();
+    expect([...editingRow.querySelectorAll('button')].map(button => button.textContent)).toEqual(['Save', 'Cancel']);
     const editName = document.querySelector<HTMLInputElement>('[data-cli-draft="cx:name"]')!; expect(editName.value).toBe('My Codex'); editName.value = 'Changed';
     document.querySelector<HTMLFormElement>('.cli-edit-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ action: 'edit', id: 'cx', name: 'Changed', executable: 'C:/cli/codex.exe' }) });
     render({ ...cliState, error: 'Check failed' });
+    expect(document.querySelector<HTMLInputElement>('[data-cli-draft="cx:name"]')!.value).toBe('Changed');
     [...document.querySelectorAll<HTMLButtonElement>('.cli-edit-form button')].find(button => button.textContent === 'Cancel')!.click();
     expect(document.querySelector('.cli-edit-form')).toBeNull();
+    expect(document.querySelector('[data-cli-id="cx"] .cli-path')!.textContent).toBe('C:/cli/codex.exe');
     [...document.querySelectorAll<HTMLButtonElement>('[data-cli-id="cx"] button')].find(button => button.textContent === 'Edit')!.click();
     expect(document.querySelector<HTMLInputElement>('[data-cli-draft="cx:name"]')!.value).toBe('My Codex');
   });
   it('locks management during active runs and sends removal as a registry operation', () => {
     render({ ...cliState, chat: { requestId: 'r', provider: 'Codex', status: 'running', prompts: [] } });
-    expect([...document.querySelectorAll<HTMLButtonElement>('#cli-manager button')].every(button => button.disabled)).toBe(true);
+    expect([...document.querySelectorAll<HTMLButtonElement>('#cli-manager button:not(.cli-path)')].every(button => button.disabled)).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-cli-id="cx"] button.cli-path')!.disabled).toBe(false);
     render(cliState); postMessage.mockClear();
     [...document.querySelectorAll<HTMLButtonElement>('[data-cli-id="cl"] button')].find(button => button.textContent === 'Remove')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ action: 'remove', provider: 'Claude', id: 'cl' }) });

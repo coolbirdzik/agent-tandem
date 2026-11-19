@@ -151,7 +151,7 @@ export async function run() {
   const rendered = await codeLenses(lensEditor.document.uri);
   for (const [index, hunk] of lensHunks.entries()) {
     const row = rendered.filter(lens => lens.range.start.line === hunk.newLine).map(lens => lens.command?.title);
-    assert.deepEqual(row, ['$(check) Accept', '$(discard) Reject', '$(arrow-down) Next change', '$(chevron-right) Next file', `Block ${index + 1}/3`],
+    assert.deepEqual(row, ['Accept', 'Reject', 'Next change', 'Next file', `Block ${index + 1}/3`],
       `block ${index + 1} renders its own Accept/Reject/Next row at line ${hunk.newLine + 1}`);
   }
   const nextFileLens = rendered.find(lens => lens.command?.command === 'agentTandem.nextFile')!;

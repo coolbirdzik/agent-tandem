@@ -219,6 +219,26 @@
     },
     "commands": [
       {
+        "command": "agentTandem.reviewMenu.refresh",
+        "title": "Refresh",
+        "enablement": "reviewMenuEnabled"
+      },
+      {
+        "command": "agentTandem.reviewMenu.native",
+        "title": "Native diff",
+        "enablement": "reviewMenuEnabled && reviewMenuHasFile"
+      },
+      {
+        "command": "agentTandem.reviewMenu.workspaceChanges",
+        "title": "Open Workspace Changes",
+        "enablement": "reviewMenuEnabled"
+      },
+      {
+        "command": "agentTandem.reviewMenu.conversation",
+        "title": "Open Conversation",
+        "enablement": "reviewMenuEnabled && reviewMenuHasConversation"
+      },
+      {
         "command": "agentTandem.quickAccounts",
         "title": "AgentTandem: Quota and Quick Account Switch",
         "icon": "$(account)"
@@ -444,11 +464,34 @@
         {
           "id": "agentTandem.panel",
           "name": "Agent Tandem",
+          "icon": "media/tandem.svg",
           "type": "webview"
         }
       ]
     },
     "menus": {
+      "webview/context": [
+        {
+          "command": "agentTandem.reviewMenu.refresh",
+          "when": "webviewId == 'agentTandem.review' && webviewSection == 'reviewActions'",
+          "group": "1_review@1"
+        },
+        {
+          "command": "agentTandem.reviewMenu.native",
+          "when": "webviewId == 'agentTandem.review' && webviewSection == 'reviewActions'",
+          "group": "1_review@2"
+        },
+        {
+          "command": "agentTandem.reviewMenu.workspaceChanges",
+          "when": "webviewId == 'agentTandem.review' && webviewSection == 'reviewActions'",
+          "group": "2_open@1"
+        },
+        {
+          "command": "agentTandem.reviewMenu.conversation",
+          "when": "webviewId == 'agentTandem.review' && webviewSection == 'reviewActions'",
+          "group": "2_open@2"
+        }
+      ],
       "view/title": [
         {
           "command": "agentTandem.stop",
@@ -563,6 +606,22 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "agentTandem.reviewMenu.refresh",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.reviewMenu.native",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.reviewMenu.workspaceChanges",
+          "when": "false"
+        },
+        {
+          "command": "agentTandem.reviewMenu.conversation",
+          "when": "false"
+        },
         {
           "command": "agentTandem.previousFile",
           "when": "agentTandem.multipleChangedFiles"
@@ -793,7 +852,7 @@
           ],
           "default": "webview",
           "enumDescriptions": [
-            "Use the Monaco diff editor with syntax highlighting and colored inline Accept, Reject and navigation buttons in every edition.",
+            "Use the Monaco diff editor with syntax highlighting and inline Accept, Revert and navigation buttons in every edition.",
             "Use VS Code's native diff editor with the available in-editor review controls."
           ],
           "description": "Editor used to review pending changes. The Webview review editor works without experimental APIs."
@@ -811,7 +870,7 @@
             "No in-editor block actions; review files from the AgentTandem sidebar."
           ],
           "default": "lens",
-          "description": "Block actions in the native diff editor. Native mode uses CodeLens. The default Monaco Webview review uses colored inline buttons. Opening a native review enables diffEditor.codeLens."
+          "description": "Block actions in the native diff editor. Native mode uses CodeLens. The default Monaco Webview review uses inline buttons. Opening a native review enables diffEditor.codeLens."
         },
         "agentTandem.openGitImageDiffs": {
           "type": "boolean",
@@ -825,7 +884,7 @@
         },
         "agentTandem.revealReviewFileInExplorer": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Select the file being reviewed in the Explorer as you move between changed files. Keyboard focus stays in the editor."
         },
         "agentTandem.codexCLIId": {
@@ -981,7 +1040,7 @@
     "@types/semver": "7.8.0",
     "@types/vscode": "1.100.0",
     "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "^4.0.0",
+    "@vscode/vsce": "^4.1.1",
     "esbuild": "^0.28.2",
     "jsdom": "29.1.1",
     "jsonc-parser": "^3.3.1",

@@ -1,4 +1,4 @@
-/** A single themed, keyboard-accessible picker for every select in the panel.
+/** A themed, keyboard-accessible picker for webview selects.
  * The select remains the form/value source; the browser's native menu is hidden.
  */
 export class Dropdowns {
@@ -36,13 +36,40 @@ export class Dropdowns {
   focus(select: HTMLSelectElement) { this.controls.get(select)?.trigger.focus(); }
 }
 
+export function positionPicker(trigger: HTMLElement, panel: HTMLElement, minWidth = 200, maxHeight = 260) {
+  const anchor = trigger.getBoundingClientRect(), gap = 5, edge = 8;
+  const width = Math.min(Math.max(anchor.width, minWidth), window.innerWidth - edge * 2);
+  panel.style.width = `${width}px`;
+  const below = window.innerHeight - anchor.bottom - gap - edge, above = anchor.top - gap - edge;
+  const down = below >= Math.min(maxHeight - 20, panel.scrollHeight) || below >= above;
+  panel.style.maxHeight = `${Math.max(24, Math.min(maxHeight, down ? below : above))}px`;
+  panel.style.left = `${Math.max(edge, Math.min(anchor.left, window.innerWidth - width - edge))}px`;
+  panel.style.top = `${down ? anchor.bottom + gap : Math.max(edge, anchor.top - panel.getBoundingClientRect().height - gap)}px`;
+}
+
 let nextId = 0;
+function optionIcon(option: HTMLOptionElement | undefined, className: string) {
+  const icon = option?.dataset.icon, src = option?.dataset.iconSrc;
+  if (src) {
+    const image = document.createElement('img');
+    image.className = `${className} dropdown-image`; image.alt = ''; image.src = src;
+    if (icon) image.dataset.icon = icon;
+    return image;
+  }
+  if (icon) {
+    const span = document.createElement('span');
+    span.className = `${className} codicon codicon-${icon}`; span.setAttribute('aria-hidden', 'true');
+    return span;
+  }
+}
 class Dropdown {
   readonly trigger = document.createElement('button');
   private wrapper = document.createElement('span');
   private menu = document.createElement('div');
   private caption = document.createElement('span');
-  private leadingIcon = document.createElement('span');
+  private description?: HTMLElement;
+  private leadingIcon?: HTMLElement;
+  private iconSignature = '';
   private signature = '';
   private index = -1;
   private search = '';
@@ -59,9 +86,12 @@ class Dropdown {
     if (select.dataset.focusKey) this.trigger.dataset.focusKey = `${select.dataset.focusKey}:picker`;
     this.caption.className = 'dropdown-caption';
     const chevron = document.createElement('span'); chevron.className = 'codicon codicon-chevron-down'; chevron.setAttribute('aria-hidden', 'true');
-    this.leadingIcon.setAttribute('aria-hidden', 'true');
-    this.leadingIcon.hidden = true;
-    this.trigger.append(this.leadingIcon, this.caption, chevron); this.trigger.onclick = toggle;
+    if (select.hasAttribute('data-show-description')) {
+      const copy = document.createElement('span'); copy.className = 'dropdown-copy';
+      this.description = document.createElement('span'); this.description.className = 'dropdown-description';
+      copy.append(this.caption, this.description); this.trigger.append(copy);
+    } else this.trigger.append(this.caption);
+    this.trigger.append(chevron); this.trigger.onclick = toggle;
     this.menu.id = `${id}-options`; this.menu.className = 'dropdown-menu'; this.menu.hidden = true;
     this.menu.setAttribute('role', 'listbox'); this.menu.tabIndex = -1;
     this.trigger.onkeydown = event => {
@@ -96,24 +126,30 @@ class Dropdown {
     this.trigger.disabled = this.select.disabled; this.trigger.title = this.select.title;
     if (this.select.validity.valid) this.trigger.removeAttribute('aria-invalid');
     const label = this.select.getAttribute('aria-label') ?? 'Choose';
-    this.trigger.setAttribute('aria-label', `${label}: ${this.select.selectedOptions[0]?.text ?? 'Choose…'}`);
+    const selected = this.select.options[this.select.selectedIndex];
+    this.trigger.setAttribute('aria-label', `${label}: ${selected?.text ?? 'Choose…'}`);
     this.menu.setAttribute('aria-label', label);
-    this.caption.textContent = this.select.selectedOptions[0]?.text ?? 'Choose…';
-    const selectedIcon = this.select.selectedOptions[0]?.dataset.icon;
-    this.leadingIcon.hidden = !selectedIcon;
-    this.leadingIcon.className = `dropdown-leading-icon codicon codicon-${selectedIcon ?? 'circle-outline'}`;
-    const signature = JSON.stringify([...this.select.options].map(o => [o.value, o.text, o.title, o.disabled, o.dataset.icon]));
+    this.caption.textContent = selected?.text ?? 'Choose…';
+    if (this.description) { this.description.textContent = selected?.title ?? ''; this.description.hidden = !selected?.title; }
+    const iconSignature = JSON.stringify([selected?.dataset.icon, selected?.dataset.iconSrc]);
+    if (iconSignature !== this.iconSignature) {
+      this.iconSignature = iconSignature; this.leadingIcon?.remove();
+      this.leadingIcon = optionIcon(selected, 'dropdown-leading-icon');
+      if (this.leadingIcon) this.trigger.prepend(this.leadingIcon);
+    }
+    const signature = JSON.stringify([...this.select.options].map(o => [o.value, o.text, o.title, o.disabled, o.dataset.icon, o.dataset.iconSrc]));
     if (signature !== this.signature) {
       this.signature = signature; this.menu.replaceChildren();
       [...this.select.options].forEach((option, index) => {
         const row = document.createElement('div'); row.className = 'dropdown-option'; row.id = `${this.menu.id}-${index}`;
-        row.setAttribute('role', 'option'); row.setAttribute('aria-disabled', String(option.disabled));
+        row.setAttribute('role', 'option'); row.setAttribute('aria-disabled', String(option.disabled)); row.dataset.value = option.value;
         const check = document.createElement('span'); check.className = 'dropdown-check codicon codicon-check'; check.setAttribute('aria-hidden', 'true');
         const copy = document.createElement('span'); copy.className = 'dropdown-copy';
         const name = document.createElement('span'); name.textContent = option.text; copy.append(name);
         if (option.title) { const description = document.createElement('span'); description.className = 'dropdown-description'; description.textContent = option.title; copy.append(description); }
         row.append(check);
-        if (option.dataset.icon) { const icon = document.createElement('span'); icon.className = `dropdown-option-icon codicon codicon-${option.dataset.icon}`; icon.setAttribute('aria-hidden', 'true'); row.append(icon); }
+        const icon = optionIcon(option, 'dropdown-option-icon');
+        if (icon) row.append(icon);
         row.append(copy); row.onclick = () => this.choose(index);
         row.onpointermove = () => { if (!option.disabled) this.highlight(index); };
         // Keep focus in the listbox while the pointer chooses a row.
@@ -135,13 +171,7 @@ class Dropdown {
     if (restoreFocus && wasOpen && this.trigger.isConnected && !this.trigger.disabled) this.trigger.focus({ preventScroll: true });
   }
   position() {
-    const anchor = this.trigger.getBoundingClientRect(), gap = 5, edge = 8;
-    const width = Math.min(Math.max(anchor.width, 200), window.innerWidth - edge * 2);
-    const below = window.innerHeight - anchor.bottom - gap - edge, above = anchor.top - gap - edge;
-    const down = below >= Math.min(240, this.menu.scrollHeight) || below >= above;
-    this.menu.style.width = `${width}px`; this.menu.style.maxHeight = `${Math.max(24, Math.min(260, down ? below : above))}px`;
-    this.menu.style.left = `${Math.max(edge, Math.min(anchor.left, window.innerWidth - width - edge))}px`;
-    this.menu.style.top = `${down ? anchor.bottom + gap : Math.max(edge, anchor.top - this.menu.getBoundingClientRect().height - gap)}px`;
+    positionPicker(this.trigger, this.menu);
   }
   private highlight(index: number) {
     this.index = index;

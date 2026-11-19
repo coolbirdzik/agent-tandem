@@ -12,12 +12,14 @@ export function bankedResetCountdown(expiresAt: number, now = Date.now()): strin
 }
 
 /** Shared display text for quota surfaces and status-bar hover. */
-export function bankedResetDetails(resets: BankedResets | undefined, now = Date.now()): string[] {
+export function bankedResetDetails(resets: BankedResets | undefined, now = Date.now(), { showExpiryDate = true } = {}): string[] {
   if (!resets) return [];
   const lines = [`Banked resets: ${resets.availableCount} available`];
   if (!resets.availableCount) return lines;
   for (const credit of resets.credits ?? []) {
-    lines.push(`${credit.title || 'Banked reset'} · ${credit.expiresAt ? `Expires ${new Date(credit.expiresAt).toLocaleString()} · ${bankedResetCountdown(credit.expiresAt, now)}` : 'Expiry unavailable'}`);
+    const expiryDate = credit.expiresAt && showExpiryDate ? `Expires ${new Date(credit.expiresAt).toLocaleString()} · ` : '';
+    const countdown = credit.expiresAt ? bankedResetCountdown(credit.expiresAt, now) : 'Expiry unavailable';
+    lines.push(`${credit.title || 'Banked reset'} · ${expiryDate}${countdown}`);
   }
   if (!resets.credits?.length) lines.push('Expiry details unavailable');
   else if (resets.credits.length < resets.availableCount) lines.push('Expiry details shown for some resets');

@@ -1262,7 +1262,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (chatAbort || reviewing || cliManaging) throw new Error('Stop the active agent before changing its CLI.');
     const project = state.project, provider = value, registry = await ensureCLIRegistry();
     const selection = await vscode.window.showQuickPick([
-      { label: 'Use default CLI', description: 'Use the default from Manage CLIs', id: '' },
+      { label: 'Use Default', description: 'Follow the Default setting in Manage CLIs', id: '' },
       { label: 'Terminal CLI (PATH)', description: 'Use the terminal CLI if it is enabled', id: 'path' },
       ...registry.entries.filter(entry => entry.provider === provider && entry.enabled && !entry.error).map(entry => ({ label: entry.name, description: entry.version, detail: entry.executable, id: entry.id })),
       { label: 'Manage CLIs…', description: 'Add, edit, enable or remove CLI installations', id: 'manage' },
@@ -1750,8 +1750,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   reviewEditor = new ReviewWebview(context.extensionUri, reviews,
     () => ({ project: state.project, review: state.review, conversations: state.conversations, busy: !!chatAbort || reviewing || externalSwitching, capturing: externalJob }),
     async (command, value) => vscode.commands.executeCommand(command, value),
-    request => openReviewChanges(reviews, request, changeNavigation, () => !disposed && request.project === state.project && request.revision === state.review?.revision));
+    request => openReviewChanges(reviews, request, changeNavigation, () => !disposed && request.project === state.project && request.revision === state.review?.revision),
+    async (request, text) => {
+      if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before saving review edits.');
+      await settleExternalCapture();
+      if (chatAbort || reviewing || externalSwitching || state.review?.busy) throw new Error('Wait for the agent and change capture to finish.');
+      const uri = vscode.Uri.joinPath(vscode.Uri.file(request.project), request.file!);
+      const checkWritable = (target: string) => {
+        if (disposed || state.project !== request.project || state.review?.revision !== request.revision) throw new Error('The review changed. Your review draft was kept.');
+        const paths = [uri.fsPath.toLowerCase(), target.toLowerCase()];
+        if (vscode.workspace.textDocuments.some(document => document.isDirty && document.uri.scheme === 'file' && paths.includes(document.uri.fsPath.toLowerCase()))) {
+          throw new Error(`Cannot save ${request.file} while it has unsaved edits in VS Code. Your review draft was kept.`);
+        }
+      };
+      checkWritable(uri.fsPath);
+      reviewing = true; state.reviewBusy = true; update();
+      try {
+        const result = await reviews.edit(request, text, checkWritable);
+        if (disposed || state.project !== request.project) return;
+        state.review = result; state.reviewPreview = undefined; state.revertPreview = undefined;
+        await changeNavigation.refreshReview(request.project, result.files.map(file => ({ file: file.path, original: reviewSnapshotUri(file.before, file.path), modified: reviewSnapshotUri(file.after, file.path), review: { project: request.project, revision: result.revision, group: reviewGroup(file) } }))).catch(report);
+      } finally {
+        reviewing = false;
+        if (!disposed && state.project === request.project) { state.reviewBusy = false; update(); }
+      }
+    });
   context.subscriptions.push(reviewEditor);
+  register('agentTandem.reviewMenu.refresh', value => reviewEditor?.runMenuAction('refresh', value));
+  register('agentTandem.reviewMenu.native', value => reviewEditor?.runMenuAction('native', value));
+  register('agentTandem.reviewMenu.workspaceChanges', value => reviewEditor?.runMenuAction('workspaceChanges', value));
+  register('agentTandem.reviewMenu.conversation', value => reviewEditor?.runMenuAction('conversation', value));
   function checkpointRequest(value: unknown) {
     if (!value || typeof value !== 'object') throw new Error('Choose a message checkpoint.');
     const request = value as { project: string; id: string; token?: string };

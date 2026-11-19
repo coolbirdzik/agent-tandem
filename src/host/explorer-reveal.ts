@@ -4,7 +4,7 @@ let last: string | undefined;
 
 /** Review files open from virtual snapshots, so Explorer's own auto-reveal never follows them. */
 export async function revealInExplorer(uri: vscode.Uri): Promise<void> {
-  if (!vscode.workspace.getConfiguration('agentTandem').get<boolean>('revealReviewFileInExplorer', true)) return;
+  if (!vscode.workspace.getConfiguration('agentTandem').get<boolean>('revealReviewFileInExplorer', false)) return;
   const key = uri.toString();
   if (key === last) return;
   last = key;

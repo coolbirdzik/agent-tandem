@@ -6,10 +6,17 @@ import type { ReviewEditorState } from '../src/core/review-webview';
 
 // Monaco rendering is exercised in the real VS Code host suite; keep bridge tests
 // focused on revision-bound actions and complete model data at this boundary.
-const editors = vi.hoisted(() => [] as Array<{ file: ReviewEditorState['file']; focus: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn>; scrollTop: number }>);
+const editors = vi.hoisted(() => [] as Array<{ file: ReviewEditorState['file']; focus: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; scrollTop: number; dirty: boolean; text: string; setEditable: ReturnType<typeof vi.fn>; onEdit: () => void }>);
 vi.mock('../src/review-monaco', () => ({ ReviewCodeEditor: class {
   focus = vi.fn(); dispose = vi.fn(); scrollTop = 0;
-  constructor(container: HTMLElement, public file: ReviewEditorState['file'], sections: HTMLElement[]) {
+  dirty = false; text = ''; setEditable = vi.fn();
+  markSaved() { this.dirty = false; }
+  discard() { this.dirty = false; }
+  update = vi.fn((file: ReviewEditorState['file'], sections: HTMLElement[]) => {
+    this.file = file;
+    this.container.replaceChildren(...sections);
+  });
+  constructor(private container: HTMLElement, public file: ReviewEditorState['file'], sections: HTMLElement[], _select: unknown, _scroll: unknown, public onEdit: () => void) {
     container.append(...sections); editors.push(this);
   }
 } }));
@@ -32,6 +39,57 @@ beforeEach(async () => {
 });
 afterEach(() => { for (const [type, listener, options] of listeners.splice(0)) window.removeEventListener(type, listener, options); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 describe('Shared Webview review', () => {
+  it('selects a changed file from the shared picker and keeps review shortcuts out of the list', () => {
+    const trigger = document.querySelector<HTMLButtonElement>('#files-trigger')!, menu = document.getElementById('files-options')!;
+    expect(trigger.textContent).toBe('first.ts');
+    trigger.click(); expect(document.activeElement).toBe(menu);
+    postMessage.mockClear();
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }));
+    expect(postMessage).not.toHaveBeenCalled();
+    menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'selectFile', revision: 'r1', file: 'second.ts', navigation: 'first' });
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.textContent).toBe('second.ts');
+    render({ ...fixture(), revision: 'r2', busy: true });
+    expect(trigger.disabled).toBe(true);
+    expect(trigger.textContent).toBe('first.ts');
+  });
+  it('saves a draft against the latest matching revision and retains it when a save fails', () => {
+    const state = fixture();
+    state.file = { ...state.file!, editable: true, after: 'snapshot' };
+    render(state);
+    const editor = editors.at(-1)!;
+    expect(editor.setEditable).toHaveBeenLastCalledWith(true);
+    editor.dirty = true; editor.text = 'edited text'; editor.onEdit();
+    expect(document.querySelector<HTMLButtonElement>('#files-trigger')!.disabled).toBe(true);
+    render({ ...state, revision: 'r2' });
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'saveEdit', revision: 'r2', file: 'first.ts', after: 'snapshot', text: 'edited text' });
+    expect(editor.setEditable).toHaveBeenLastCalledWith(false);
+    render({ ...state, revision: 'r2', error: 'File has unsaved edits' });
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'editResult', saved: false } }));
+    expect(editor.dirty).toBe(true);
+    expect(document.getElementById('error')!.textContent).toBe('File has unsaved edits');
+    document.getElementById('save-edit')!.click();
+    render({ ...state, revision: 'r3', file: { ...state.file, after: 'edited', afterText: editor.text } });
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'editResult', saved: true } }));
+    expect(editor.dirty).toBe(false);
+    expect(editor.file?.afterText).toBe('edited text');
+    expect(document.getElementById('save-edit')!.hidden).toBe(true);
+  });
+  it('holds a draft when its snapshot changes and loads the newer diff after discarding', () => {
+    const state = fixture();
+    state.file = { ...state.file!, editable: true, after: 'snapshot' };
+    render(state);
+    const editor = editors.at(-1)!;
+    editor.dirty = true; editor.onEdit();
+    render({ ...state, revision: 'r2', file: { ...state.file, after: 'newer' } });
+    expect(editor.file?.after).toBe('snapshot');
+    expect(document.querySelector<HTMLButtonElement>('#save-edit')!.disabled).toBe(true);
+    document.getElementById('discard-edit')!.click();
+    expect(editor.file?.after).toBe('newer');
+    expect(document.getElementById('save-edit')!.hidden).toBe(true);
+  });
   it('accepts all blocks in only the displayed file and rejects a stale captured handler', () => {
     const button = document.querySelector<HTMLButtonElement>('#accept-all-file')!, oldHandler = button.onclick!;
     button.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', revision: 'r1', file: 'first.ts' });
@@ -51,24 +109,25 @@ describe('Shared Webview review', () => {
     button.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'reject', revision: 'r2', file: 'second.ts' });
     render({ files: [], busy: false }); expect(button.hidden).toBe(true);
   });
-  it('opens workspace changes in the extension sidebar and keeps the conversation shortcut', () => {
+  it('opens the native menu with the current file and conversation context', () => {
     render({ ...fixture(), context: { group: 'Codex:agent', title: 'Update artwork', conversation: { key: 'Codex:agent', id: 'agent', provider: 'Codex', title: 'Update artwork' }, canOpenConversation: true, files: [fixture().files[1]!] } });
-    document.getElementById('agent-changes')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'workspaceChanges', revision: 'r1', file: 'first.ts' });
-    expect(document.getElementById('agent-changes-panel')).toBeNull();
-    document.getElementById('open-conversation')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'conversation', revision: 'r1', file: 'first.ts' });
+    const more = document.querySelector<HTMLButtonElement>('#review-more')!;
+    const contextMenu = vi.fn();
+    more.addEventListener('contextmenu', contextMenu);
+    more.click();
+    expect(contextMenu).toHaveBeenCalledOnce();
+    expect(JSON.parse(more.dataset.vscodeContext!)).toMatchObject({
+      webviewSection: 'reviewActions', preventDefaultContextMenuItems: true, reviewMenuEnabled: true,
+      reviewMenuHasFile: true, reviewMenuHasConversation: true, project: '/project', revision: 'r1', file: 'first.ts',
+    });
   });
-  it('opens workspace changes for shared edits and disables navigation while review is busy', () => {
+  it('disables the conversation action for shared edits and the menu while review is busy', () => {
     const context = { group: 'shared', title: 'Shared workspace changes', files: fixture().files };
+    const more = document.querySelector<HTMLButtonElement>('#review-more')!;
     render({ ...fixture(), context });
-    expect(document.querySelector<HTMLButtonElement>('#open-conversation')!.disabled).toBe(true);
-    expect(document.getElementById('agent-changes-label')!.textContent).toBe('Open workspace changes in AgentTandem');
-    document.getElementById('agent-changes')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'workspaceChanges', revision: 'r1', file: 'first.ts' });
-    render({ ...fixture(), context, busy: true }); postMessage.mockClear();
-    expect(document.querySelector<HTMLButtonElement>('#agent-changes')!.disabled).toBe(true);
-    document.getElementById('agent-changes')!.click(); expect(postMessage).not.toHaveBeenCalled();
+    expect(JSON.parse(more.dataset.vscodeContext!)).toMatchObject({ reviewMenuEnabled: true, reviewMenuHasConversation: false });
+    render({ ...fixture(), context, busy: true });
+    expect(more.disabled).toBe(true);
   });
   it('shows before/after image snapshots and binds whole-file decisions to the revision', () => {
     render({ ...fixture(), revision: 'image', file: { ...fixture().file!, binary: true, hunks: [], notice: 'Image snapshots', images: { before: { size: 2, src: 'data:image/png;base64,AAE=' }, after: { size: 2, src: 'data:image/png;base64,AAI=' } } } });
@@ -126,10 +185,9 @@ describe('Shared Webview review', () => {
     document.getElementById('next')!.click(); render({ ...fixture(), busy: true });
     expect(document.getElementById('block-count')!.textContent).toBe('2 / 2');
     expect(document.querySelector<HTMLButtonElement>('.reject')!.disabled).toBe(true);
-    render({ ...fixture(), revision: 'r2', undo: { id: 'u1', createdAt: 1, files: ['first.ts'] } });
+    render({ ...fixture(), revision: 'r2' });
     window.dispatchEvent(new KeyboardEvent('keydown', { altKey: true, key: 'y', cancelable: true }));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', file: 'first.ts', revision: 'r2', hunk: fixture().file!.hunks[1]!.id });
-    expect(document.getElementById('undo')!.hidden).toBe(false);
   });
   it('keeps the diff editor when a new revision leaves the displayed file unchanged', () => {
     const editor = editors.at(-1)!, block = document.querySelector('.diff-block');
@@ -145,25 +203,39 @@ describe('Shared Webview review', () => {
     old.call(document.querySelector<HTMLButtonElement>('.reject')!, new PointerEvent('click'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'reject', revision: 'r1', file: 'first.ts', hunk: fixture().file!.hunks[0]!.id });
   });
-  it('passes the entire file and all changed lines to Monaco without truncating source', () => {
+  it('updates the entire file in the existing editor without truncating source', () => {
     const original = 'first\n' + 'surrounding source\n'.repeat(12000) + 'last\n';
     const modified = original.replace('first', 'updated first').replace('last', 'updated last');
     const previous = editors.at(-1)!;
     render({ ...fixture(), revision: 'full-context', file: { ...fixture().file!, beforeText: original, afterText: modified, hunks: reviewHunks(original, modified) } });
-    expect(previous.dispose).toHaveBeenCalledOnce();
+    expect(previous.dispose).not.toHaveBeenCalled();
+    expect(previous.update).toHaveBeenCalledOnce();
+    expect(editors.at(-1)).toBe(previous);
     expect(editors.at(-1)!.file!.beforeText).toBe(original);
     expect(editors.at(-1)!.file!.afterText).toBe(modified);
     document.getElementById('next')!.click();
     expect(editors.at(-1)!.focus).toHaveBeenLastCalledWith(1);
   });
-  it('shows explicit whole-file decisions for binary/large files and retains Undo after the review is empty', () => {
+  it('keeps the editor and selects a remaining block after a review decision', () => {
+    const editor = editors.at(-1)!;
+    document.querySelector<HTMLButtonElement>('.accept')!.click();
+    const baseline = before.replace('first', after.split('\n')[0]!);
+    const remaining = reviewHunks(baseline, after);
+    render({ ...fixture(), revision: 'accepted', file: { ...fixture().file!, beforeText: baseline, hunks: remaining } });
+    expect(editors.at(-1)).toBe(editor);
+    expect(editor.dispose).not.toHaveBeenCalled();
+    expect(document.getElementById('block-count')!.textContent).toBe('1 / 1');
+    expect(document.querySelector('.diff-block.current')?.getAttribute('data-hunk')).toBe(remaining[0]!.id);
+    document.querySelector<HTMLButtonElement>('.reject')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'reject', revision: 'accepted', file: 'first.ts', hunk: remaining[0]!.id });
+  });
+  it('shows whole-file decisions for binary files and keeps workspace changes available when review is empty', () => {
     render({ ...fixture(), revision: 'binary', file: { ...fixture().file!, hunks: [], beforeText: undefined, afterText: undefined, binary: true, notice: 'Binary file. Review the whole file.' } });
     expect(document.querySelectorAll('.diff-block')).toHaveLength(0);
     document.querySelector<HTMLButtonElement>('.accept')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'accept', revision: 'binary', file: 'first.ts' });
-    render({ project: '/project', revision: 'done', busy: false, files: [], undo: { id: 'undo', createdAt: 1, files: ['first.ts'] } });
-    document.getElementById('undo')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'undo', revision: 'done', file: undefined });
-    expect(document.querySelector<HTMLButtonElement>('#native')!.disabled).toBe(true);
+    render({ project: '/project', revision: 'done', busy: false, files: [] });
+    expect(JSON.parse(document.querySelector<HTMLButtonElement>('#review-more')!.dataset.vscodeContext!))
+      .toMatchObject({ reviewMenuEnabled: true, reviewMenuHasFile: false, reviewMenuHasConversation: false });
   });
 });

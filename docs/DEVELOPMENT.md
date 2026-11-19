@@ -77,7 +77,7 @@ Model discovery follows the terminal's PATH CLI, including npm installations, wi
 
 The compact composer row contains **model name · access mode · Send**. Clicking the model opens a provider/model/reasoning popover; Escape or an outside click closes it. Settings lock during execution. Supported reasoning levels come from the selected model/CLI and are forwarded for new chat, resume and edit/resend. Preferences persist per project/provider/model. **Auto** uses CLI configuration; an explicit model is required to set effort. If the CLI reports no support, reasoning remains Auto. Saved unsupported levels show unavailable. [Codex effort and model metadata](https://learn.chatgpt.com/docs/app-server#models), [Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort).
 
-The Codex popover has a **Fast mode** On/Off switch, persisted per project across reloads. When enabled, the model label shows **· Fast**, applying to new chat, resume and edit/resend. Off requests Standard on the next turn even if the conversation or CLI previously used Fast. The switch locks during agent/review/CLI operations and is hidden for Claude. Fast consumes more allowance and depends on model/account support. [OpenAI Fast mode docs](https://learn.chatgpt.com/docs/agent-configuration/speed). AgentTandem stores its own preference without editing global `config.toml`.
+The Codex popover has a **Fast mode** switch, persisted per project across reloads. When Fast mode is enabled, a lightning chip appears beside the model name. Select the chip to turn Fast mode off. The preference applies to new chat, resume and edit/resend. Off requests Standard on the next turn even if the conversation or CLI previously used Fast. The switch locks during agent/review/CLI operations and is hidden for Claude. Fast consumes more allowance and depends on model/account support. [OpenAI Fast mode docs](https://learn.chatgpt.com/docs/agent-configuration/speed). AgentTandem stores its own preference without editing global `config.toml`.
 
 Modes retain provider-managed deny/ask rules, hooks and policy; requests for user information can still appear. Review/Revert covers only files in the open project; Full access edits outside it do not automatically receive review snapshots.
 
@@ -129,7 +129,7 @@ The experimental **File 2/5** button sits in a small inset before the first code
 
 Pending-review previews give **each block its own action card above it**: `Block 2/3`, `+3 −1`, and `✓ Accept`, `✗ Reject`, `↓ Next change` with shortcut hints. Cards use theme button/widget colors, rounded corners and two editor lines through `editorInsets`.
 
-When insets are unavailable (released VS Code, ordinary VSIX installs), the stable API supplies a **CodeLens row**: `✓ Accept | ✗ Reject | ↓ Next change | Block 2/3`. Opening review enables `diffEditor.codeLens` at workspace/user scope. `agentTandem.blockActionsStyle` supports `auto` (cards, then lenses), `lens` (always compact lenses), and `off` (sidebar file decisions only). Cards and lenses never stack.
+When insets are unavailable, the stable API supplies a **CodeLens row** with plain-text actions such as `Accept | Reject | Next change | Next file | Block 2/3`. Opening review enables `diffEditor.codeLens` at workspace/user scope. `agentTandem.blockActionsStyle` supports `auto` (cards, then lenses), `lens` (always compact lenses), and `off` (sidebar file decisions only). Cards and lenses never stack.
 
 Block actions bind to their own hunk/revision even with the cursor elsewhere. Shortcuts: `Alt+Y` accepts, `Alt+N` rejects the cursor's block, and `Alt+Down`/`Alt+Up` navigates changes. Accept preserves workspace bytes and advances only that block's reviewed baseline; Reject restores only that block, retaining other pending/accepted blocks. Preview/counters refresh. Stale previews, active operations and unsaved/external edits cannot overwrite code; stale revision actions disappear. Added/deleted files are one complete block. Binary files, combined text snapshots over 4 MiB or timed-out diffs require sidebar file decisions.
 
@@ -151,7 +151,7 @@ The demo edits one file twice, adds a file, deletes a file and performs read/che
 
 Windows Codex scans include PATH, VS Code extensions, old Codex desktop paths, `AppData/Local/OpenAI/Codex/bin/<version>/codex.exe` and `CODEX_HOME/packages/app-server-daemon/releases/<version>/bin/codex.exe` (default `~/.codex`). Rescans update executable versions while retaining names and Enable/Disable choices.
 
-Choose **Default on this machine**, **This project** for the current root, or PATH. ID-based selections follow registry entries through path edits. Lists/defaults/project choices persist across reloads. Initial discovery imports existing CLIs; later scan discoveries must be enabled before use. Management locks during agent execution/review.
+Choose **Default** for the machine-wide CLI or use **This project** to select a CLI or PATH for the current root. ID-based selections follow registry entries through path edits. Lists/defaults/project choices persist across reloads. Initial discovery imports existing CLIs; later scan discoveries must be enabled before use. Management locks during agent execution/review.
 
 ```powershell
 npm run typecheck

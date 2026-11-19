@@ -96,6 +96,7 @@ reasoningSlider.oninput = () => {
   chatEffort.dispatchEvent(new Event('change'));
 };
 const chatFastMode = element<HTMLButtonElement>('chat-fast-mode');
+const fastModeChip = element<HTMLButtonElement>('fast-mode-chip');
 const modelTrigger = element<HTMLButtonElement>('model-trigger');
 const modelPopover = element('model-popover');
 const attachmentComposer = new ChatAttachments(element('chat-attachments'), chatInput, element('chat-form'), element<HTMLInputElement>('attachment-picker'), () => draftKey, composerControls);
@@ -120,11 +121,13 @@ modelTrigger.onclick = () => {
   positionModelPopover(); dropdowns.focus(chatModel);
 };
 element('model-popover-close').onclick = () => closeModelPopover(true);
-window.addEventListener('resize', positionModelPopover);
+// Place the parent before Dropdowns repositions an open child list.
+window.addEventListener('resize', positionModelPopover, true);
 window.addEventListener('focusin', event => {
   if (!modelPopover.hidden && !modelPopover.contains(event.target as Node) && !modelTrigger.contains(event.target as Node)) closeModelPopover();
 });
-const cliManagerView = new CLIManagerView(element('cli-manager'), element('cli-manager-status'), request => send('cliAction', request));
+const cliManagerView = new CLIManagerView(element('cli-manager'), element('cli-manager-status'), request => send('cliAction', request),
+  executable => send('copyCLIPath', executable));
 element('cli-refresh').onclick = () => send('refreshCLIs');
 function invalidModel() {
   const provider = chatProvider.value as ConversationProvider;
@@ -141,6 +144,7 @@ function composerControls() {
   const stale = !!edit && (edit.revision !== lastState?.conversation?.conversation.revision || !lastState.conversation.messages.some(message => message.id === edit.messageId && message.role === 'user'));
   const submit = element<HTMLButtonElement>('chat-send');
   chatFastMode.disabled = !lastState?.project || chatProvider.value !== 'Codex' || !!running || !!lastState?.review?.busy || !!lastState?.reviewBusy || !!submitted || !!lastState?.cliManager?.busy;
+  fastModeChip.disabled = chatFastMode.disabled;
   const queue = canQueue();
   submit.disabled = !lastState?.project || (running && !queue) || (!queue && lastState.review?.busy) || lastState.reviewBusy || !!submitted || lastState.cliManager?.busy || (!chatInput.value.trim() && !attachmentComposer.items.length) || attachmentComposer.busy || stale || (!queue && invalidModel());
   submit.title = queue ? 'Queue message (Enter)' : edit ? 'Send edited message in a new branch (Enter)' : 'Send message (Enter)'; submit.setAttribute('aria-label', queue ? 'Queue message' : edit ? 'Send edited message' : 'Send message');
@@ -208,11 +212,18 @@ chatEffort.onchange = () => {
   send('setReasoningEffort', pendingEffort);
   render({ ...lastState, error: undefined });
 };
-chatFastMode.onclick = () => {
+function setFastMode(enabled: boolean) {
   if (!lastState?.project || chatFastMode.disabled || submitted || chatProvider.value !== 'Codex') return;
-  pendingFastMode = { project: lastState.project, provider: 'Codex', enabled: chatFastMode.getAttribute('aria-checked') !== 'true' };
+  pendingFastMode = { project: lastState.project, provider: 'Codex', enabled };
   send('setFastMode', pendingFastMode);
   render({ ...lastState, error: undefined });
+}
+chatFastMode.onclick = () => setFastMode(chatFastMode.getAttribute('aria-checked') !== 'true');
+fastModeChip.onclick = () => {
+  if (fastModeChip.hidden) return;
+  const restoreFocus = document.activeElement === fastModeChip;
+  setFastMode(false);
+  if (restoreFocus && fastModeChip.hidden) modelTrigger.focus();
 };
 element('choose-codex-cli').onclick = () => send('chooseCLI', 'Codex');
 element('choose-claude-cli').onclick = () => send('chooseCLI', 'Claude');
@@ -401,8 +412,8 @@ function renderConversationChanges(state: ViewState, disabled: boolean) {
   const requestAll = (): ReviewRequest => ({ project: state.project!, revision: review!.revision });
   for (const [type, label, mark, description] of [
     ['previewReview', 'View all', 'diff', 'View all pending workspace changes in the editor'],
-    ['previewRevert', 'Revert all', 'discard', 'Preview reverting all pending workspace changes across conversation groups'],
-    ['acceptChanges', 'Accept all', 'check', 'Keep the code and mark all pending workspace changes reviewed across conversation groups'],
+    ['previewRevert', 'Revert all', 'discard-all', 'Preview reverting all pending workspace changes across conversation groups'],
+    ['acceptChanges', 'Accept all', 'check-all', 'Keep the code and mark all pending workspace changes reviewed across conversation groups'],
   ]) {
     const action = button(label!, () => send(type!, requestAll()), !state.project || !count || (type !== 'previewReview' && disabled));
     action.prepend(icon(mark!)); action.title = description!; action.setAttribute('aria-label', description!);
@@ -572,9 +583,8 @@ function render(state: ViewState) {
   if (pendingFastMode && (pendingFastMode.project !== state.project || provider !== 'Codex' || state.codexFastMode === pendingFastMode.enabled || state.error)) pendingFastMode = undefined;
   const fast = provider === 'Codex' && (chatRunning ? state.chat?.fastMode ?? false : pendingFastMode?.enabled ?? state.codexFastMode ?? false);
   element('fast-mode-field').hidden = provider !== 'Codex';
-  chatFastMode.disabled = chatAccess.disabled || provider !== 'Codex';
   chatFastMode.setAttribute('aria-checked', String(fast));
-  element('fast-mode-value').textContent = fast ? 'On' : 'Off';
+  fastModeChip.hidden = !fast;
   if (pendingModel && (pendingModel.project !== state.project || pendingModel.provider !== provider || state.selectedModels?.[provider] === pendingModel.model || state.error)) pendingModel = undefined;
   const selectedModel = chatRunning && state.chat?.provider === provider ? state.chat.model ?? '' : pendingModel?.model ?? state.selectedModels?.[provider] ?? '';
   const catalog = state.modelCatalogs?.[provider];
@@ -613,7 +623,7 @@ function render(state: ViewState) {
   const modelStatus = element('model-status');
   modelStatus.textContent = catalog?.status === 'loading' ? 'Loading models…' : catalog?.error ?? (missing ? 'Selected model unavailable. Refresh or choose Provider default.' : effortMissing ? 'Reasoning effort unavailable. Choose Auto or refresh models.' : '');
   modelStatus.hidden = !modelStatus.textContent; modelStatus.dataset.error = String(catalog?.status === 'error' || ((missing || effortMissing) && catalog?.status === 'ready'));
-  element('model-trigger-label').textContent = (selectedChoice?.label ?? (selectedModel || `${provider === 'Claude' ? 'Claude' : 'Codex'} default`)) + (fast ? ' · Fast' : '');
+  element('model-trigger-label').textContent = selectedChoice?.label ?? (selectedModel || `${provider === 'Claude' ? 'Claude' : 'Codex'} default`);
   modelTrigger.title = [chatModel.title, `Reasoning: ${selectedEffort ? effortLabel(selectedEffort) : 'Auto'}`].filter(Boolean).join('\n');
   modelTrigger.disabled = chatModel.disabled;
   modelTrigger.setAttribute('aria-label', `Choose model: ${element('model-trigger-label').textContent}, ${selectedEffort ? effortLabel(selectedEffort) : 'Auto'}`);
@@ -685,8 +695,10 @@ function render(state: ViewState) {
       const view = button('View changes', () => reviewFiles.length ? send('previewReview', request()) : send('screen', 'changes'), !review.files.length);
       view.title = 'View all changes in the VS Code editor'; view.setAttribute('aria-label', view.title);
       const revert = button('Revert all', () => send('previewRevert', request()), reviewDisabled || !reviewFiles.length);
+      revert.prepend(icon('discard-all'));
       revert.title = 'Revert all pending changes'; revert.setAttribute('aria-label', revert.title);
       const accept = button('Accept all', () => send('acceptChanges', request()), reviewDisabled || !reviewFiles.length);
+      accept.prepend(icon('check-all'));
       accept.title = 'Accept all pending changes'; accept.setAttribute('aria-label', accept.title); accept.classList.add('review-accept');
       actions.append(view, revert, accept); heading.append(actions); pending.append(heading);
       const body = create('div', undefined, 'review-body'); body.id = 'review-body';

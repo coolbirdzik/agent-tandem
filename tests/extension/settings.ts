@@ -96,7 +96,7 @@ export async function run() {
   assert.equal(measuredStorage.status, 'ready', 'Background extension storage measurement runs without opening cleanup');
   assert.equal(typeof measuredStorage.total, 'number'); assert.ok(measuredStorage.checkedAt);
   assert.equal(measuredStorage.warningBytes, 1024 ** 3, 'Default storage alert starts at 1 GB');
-  assert.ok(commands.includes('agentTandem.openExtensionStorage'), 'Quota hover can open extension storage directly');
+  assert.ok(commands.includes('agentTandem.openExtensionStorage'), 'The storage notification can open extension storage directly');
   const profiles = new AccountProfiles(path.join(storage.root, 'accounts'));
   const firstProfile = await profiles.create('Codex'), secondProfile = await profiles.create('Codex');
   const firstIdentity = { signedIn: true, email: 'creator@test.invalid', id: 'fixture-account', method: 'ChatGPT' };

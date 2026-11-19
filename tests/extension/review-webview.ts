@@ -22,6 +22,7 @@ export async function run() {
   assert.ok(source); assert.ok(other);
   assert.equal(vscode.workspace.getConfiguration('agentTandem').get('reviewEditor'), 'webview');
   assert.equal(vscode.workspace.getConfiguration('agentTandem').inspect('reviewEditor')?.defaultValue, 'webview');
+  assert.equal(vscode.workspace.getConfiguration('agentTandem').inspect('revealReviewFileInExplorer')?.defaultValue, false);
   await vscode.commands.executeCommand('workbench.action.closePanel');
   await vscode.commands.executeCommand('workbench.action.closeSidebar');
   if ((await vscode.commands.getCommands(true)).includes('workbench.action.closeAuxiliaryBar')) await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
@@ -45,7 +46,9 @@ export function previewMode(file: string): ReviewMode {
 }
 
 ` : 'export const context = true;\n'.repeat(10);
-  const before = 'export const first = 1;\n' + context + 'export const last = 2;\n';
+  const unchanged = '// unchanged context below the last block\n';
+  const tail = readme ? '' : unchanged.repeat(5) + '// review viewport anchor\n' + unchanged.repeat(75);
+  const before = 'export const first = 1;\n' + context + 'export const last = 2;\n' + tail;
   const after = before.replace('first = 1', 'first = 100').replace('last = 2', 'last = 200');
   const store = new ReviewStore(path.join(api.history.directory, 'reviews'));
   await writeFile(path.join(project, first), before); await writeFile(path.join(project, deleted), 'deleted contents\n');
@@ -73,20 +76,34 @@ export function previewMode(file: string): ReviewMode {
     await writeFile(path.join(runtime, 'stage.json'), JSON.stringify({ stage: name }));
     await until(async () => readFile(path.join(runtime, `${name}.done`), 'utf8').then(() => true, () => false), `${name} UI clicks`);
   };
+  const runMenu = (command: 'refresh' | 'native' | 'workspaceChanges' | 'conversation') => {
+    const { project, group, revision, file } = api.reviewWebviewState()!;
+    return vscode.commands.executeCommand(`agentTandem.reviewMenu.${command}`, {
+      webview: 'agentTandem.review', webviewSection: 'reviewActions', reviewMenuEnabled: true, project, group, revision, file: file?.path,
+    });
+  };
+  await stage('menu');
+  await runMenu('refresh');
+  await runMenu('native');
+  assert.ok(vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputTextDiff, 'Native diff opens the selected text file');
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  await vscode.commands.executeCommand('agentTandem.previewReview', request());
   const initialRevision = api.viewState().review!.revision;
-  await stage('dark');
   assert.equal(api.reviewWebviewState()!.context!.conversation!.key, source.key);
   assert.equal(api.reviewWebviewState()!.context!.canOpenConversation, true);
+  await runMenu('workspaceChanges');
   await stage('agent-list');
   await until(() => api.viewState().screen === 'changes', 'Change list shortcut switches to workspace changes in the extension sidebar');
   assert.equal(api.reviewWebviewState()?.file?.path, first, 'Opening the sidebar preserves the reviewed file');
   await api.openConversation(other.key);
+  await runMenu('conversation');
   await stage('conversation-link');
   await until(() => api.conversation()?.conversation.key === source.key && api.viewState().screen === 'conversations' && !!api.viewState().checkpointPreview, 'Conversation link opens the correct extension chat and Restore previews its checkpoint');
   assert.equal(await readFile(path.join(project, first), 'utf8'), after, 'Restore preview preserves workspace bytes');
   await vscode.commands.executeCommand('agentTandem.closeCheckpointPreview');
   await vscode.commands.executeCommand('workbench.action.closeSidebar');
   await vscode.commands.executeCommand('agentTandem.previewReview', request());
+  await stage('dark');
   await vscode.workspace.getConfiguration('workbench').update('colorTheme', 'Default Light Modern', vscode.ConfigurationTarget.Global);
   await stage('light');
   await stage('narrow');
@@ -101,9 +118,11 @@ export function previewMode(file: string): ReviewMode {
   await stage('reject');
   await until(() => api.viewState().review?.revision !== acceptedRevision && !api.viewState().review!.files.some(file => file.path === first), 'Reject resolves the remaining block');
   assert.equal(await readFile(path.join(project, first), 'utf8'), after.replace('last = 200', 'last = 2'), 'Reject keeps the accepted block');
+  await runMenu('workspaceChanges');
   await stage('undo');
   await until(() => api.viewState().review!.files.some(file => file.path === first) && !api.reviewWebviewState()?.busy, 'Undo restores the rejected block');
   assert.equal(await readFile(path.join(project, first), 'utf8'), after);
+  await vscode.commands.executeCommand('workbench.action.closeSidebar');
   await vscode.commands.executeCommand('agentTandem.previewReview', request());
   await writeFile(path.join(project, first), '// newer saved edit\n' + after);
   await stage('external');
@@ -130,6 +149,8 @@ export function previewMode(file: string): ReviewMode {
   await stage('image-narrow');
   await stage('added-image'); await stage('deleted-image'); await stage('broken-image');
   if (readme) await stage('readme-image');
+  await vscode.commands.executeCommand('agentTandem.previewReview', { project, revision: api.viewState().review!.revision, file: image });
+  await runMenu('native');
   await stage('native-image');
   await until(() => vscode.window.tabGroups.activeTabGroup.activeTab?.input instanceof vscode.TabInputWebview && api.changeNavigationState()?.file === image, 'Editor image diff keeps its file navigation scope');
   await stage('image-to-code');
@@ -155,14 +176,19 @@ export function previewMode(file: string): ReviewMode {
   assert.equal(await readFile(path.join(recorded, 'asset.png'), 'utf8'), 'newer workspace contents');
   const remainingBefore = api.viewState().review!.files.map(file => file.path);
   await vscode.commands.executeCommand('agentTandem.previewReview', { project, revision: api.viewState().review!.revision, file: first });
+  await stage('edit-file');
+  await until(() => api.reviewWebviewState()?.file?.afterText?.includes('saved review draft') ?? false, 'The saved edit is included in the refreshed diff');
+  const edited = await readFile(path.join(project, first), 'utf8');
+  assert.equal(edited.replace('/* saved review draft */', ''), after, 'Saving in Review writes the draft to the workspace');
   await stage('accept-file-all');
   await until(() => !api.viewState().review!.files.some(file => file.path === first), 'Accept all clears only the displayed file');
-  assert.equal(await readFile(path.join(project, first), 'utf8'), after, 'Accept all preserves applied file bytes');
+  assert.equal(await readFile(path.join(project, first), 'utf8'), edited, 'Accept all preserves the edited file bytes');
   assert.deepEqual(api.viewState().review!.files.map(file => file.path), remainingBefore.filter(file => file !== first), 'Accept all leaves other files pending');
-  const report = { success: true, edition, vscode: vscode.version, checks: ['Monaco Webview default in both editions', 'Full-file context with inline colored buttons', 'One compact review toolbar with More actions', 'Monaco worker diff and syntax tokens', 'Ctrl+F reaches line 802 without truncation', 'Source HTML stays inert', 'Dark/light/narrow layouts', 'Accept preserves bytes', 'Stale block actions are rejected', 'Reject restores only its block', 'Undo restores rejected bytes', 'Newer saved edits block rejection', 'Dirty buffers block rejection', 'Navigation crosses files', 'Binary file fallback', 'Native diff'] };
+  const report = { success: true, edition, vscode: vscode.version, checks: ['Monaco Webview default in both editions', 'Full-file context with inline review buttons', 'One compact review toolbar with a grouped native menu', 'Monaco worker diff and syntax tokens', 'Ctrl+F reaches line 802 without truncation', 'Source HTML stays inert', 'Dark/light/narrow layouts', 'Accept preserves bytes', 'Stale block actions are rejected', 'Reject restores only its block', 'Undo restores rejected bytes', 'Newer saved edits block rejection', 'Dirty buffers block rejection', 'Navigation crosses files', 'Binary file fallback', 'Native diff'] };
   report.checks.push('Old/new PNG snapshots decode', 'Added/deleted SVG previews', 'Broken image retains the other side', 'Narrow image layout', 'Image editor navigation to/from code', 'Saved step/cumulative image comparisons preserve workspace bytes');
   report.checks.push('Change list shortcut opens workspace changes in the extension sidebar', 'Conversation shortcut opens the correct extension chat', 'Visible Restore code opens a checkpoint preview without writing files');
   report.checks.push('Accept all keeps file bytes and leaves every other pending file untouched');
+  report.checks.push('Editing in Monaco saves to the workspace and refreshes the review');
   await writeFile(path.resolve(runtime, '..', '..', 'artifacts', `review-webview-${edition}.json`), JSON.stringify(report, null, 2));
   await writeFile(path.join(runtime, 'stage.json'), JSON.stringify({ stage: 'complete' }));
   console.log(`REVIEW_WEBVIEW_TEST ${JSON.stringify(report)}`);

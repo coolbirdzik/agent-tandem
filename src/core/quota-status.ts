@@ -47,9 +47,9 @@ export function resetClock(at: number, now = Date.now()) {
   const date = new Date(at), today = date.toDateString() === new Date(now).toDateString();
   return date.toLocaleString(undefined, { ...(today ? {} : at - now < 6 * 86_400_000 ? { weekday: 'short' } : { month: 'short', day: 'numeric' }), hour: '2-digit', minute: '2-digit' });
 }
-/** "resets 14:30 · in 2h10m"; a passed reset means the shown meter is stale until the next refresh. */
+/** A passed reset means the shown meter is stale until the next refresh. */
 export function resetSummary(at: number, now = Date.now()) {
-  return at <= now ? `reset since ${resetClock(at, now)}` : `resets ${resetClock(at, now)} · in ${compactCountdown(at, now)}`;
+  return at <= now ? 'reset' : `resets in ${compactCountdown(at, now)}`;
 }
 /** Shared severity for a quota window so the status bar and its hover agree: exhausted (red), 25% or less left (warning), otherwise healthy. */
 export function quotaUsageTone(usedPercent: number) {
@@ -86,8 +86,9 @@ export function quotaStatus(state: QuotaState, options: Partial<StatusBarPrefere
   const icon = provider === 'Codex' ? 'agent-tandem-codex' : 'agent-tandem-claude';
   const label = preferences.style === 'icons' ? '' : parts.join(' · ');
   const text = `$(${icon})${label ? ` ${label}` : ''}`;
-  const details = windows.map(window => `${window.label}: ${Math.round(Math.max(0, 100 - window.usedPercent) * 10) / 10}% remaining${window.resetsAt ? ` · resets ${new Date(window.resetsAt).toLocaleString()}` : ''}`).join('\n');
-  return { provider, tone, icon, label, text, tooltip: [`${name}${account?.email ? ` · ${account.email}` : ''}${account?.plan ? ` · ${account.plan}` : ''}`, details || status?.quota?.detail || status?.error || 'Quota has not been reported by the selected CLI.', status?.quotaCached && status.updatedAt ? `Cached quota · ${new Date(status.updatedAt).toLocaleString()}` : undefined, status?.quotaCached ? status.error : undefined, status?.quota?.credits, ...bankedResetDetails(resets), 'Open quota & quick account switch · Open usage dashboard from menu'].filter(Boolean).join('\n') };
+  const now = Date.now();
+  const details = windows.map(window => `${window.label}: ${Math.round(Math.max(0, 100 - window.usedPercent) * 10) / 10}% remaining${window.resetsAt ? ` · ${resetSummary(window.resetsAt, now)}` : ''}`).join('\n');
+  return { provider, tone, icon, label, text, tooltip: [`${name}${account?.email ? ` · ${account.email}` : ''}${account?.plan ? ` · ${account.plan}` : ''}`, details || status?.quota?.detail || status?.error || 'Quota has not been reported by the selected CLI.', status?.quotaCached && status.updatedAt ? `Cached quota · ${new Date(status.updatedAt).toLocaleString()}` : undefined, status?.quotaCached ? status.error : undefined, status?.quota?.credits, ...bankedResetDetails(resets, now, { showExpiryDate: false }), 'Open quota & quick account switch · Open usage dashboard from menu'].filter(Boolean).join('\n') };
 }
 
 export function quotaStatuses(state: QuotaState, preferences: StatusBarPreferences) {
