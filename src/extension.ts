@@ -1493,7 +1493,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       delete content.conversation.hiddenFromHistory;
       content.notice = 'Edited message · new conversation branch. Current project changes remain applied.';
     }
-    content.messages.push({ id: request.requestId, role: 'user', text: request.text, ...(request.attachments?.length ? { attachments: request.attachments } : {}) });
+    content.messages.push({ id: request.requestId, role: 'user', text: request.text, timestamp: new Date().toISOString(), ...(request.attachments?.length ? { attachments: request.attachments } : {}) });
     const draftCheckpointKey = content.conversation.key;
     let checkpointRecorded = false, checkpointBinding: Promise<void> = Promise.resolve();
     state.checkpoints = []; state.checkpointPreview = undefined; checkpointPlan = undefined;
@@ -1540,7 +1540,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
       message: (message, append) => {
         if (!current() || abort.signal.aborted) return;
         const previous = content.messages.find(item => item.id === message.id);
-        if (previous) Object.assign(previous, message, { text: append ? previous.text + message.text : message.text }); else content.messages.push(message);
+        if (previous) Object.assign(previous, message, { timestamp: previous.timestamp ?? message.timestamp, text: append ? previous.text + message.text : message.text });
+        else content.messages.push({ ...message, timestamp: message.timestamp ?? new Date().toISOString() });
         content.conversation.revision = `live:${Date.now()}:${randomUUID()}`; content.conversation.updatedAt = Date.now(); update();
       },
       prompt: (prompt, signal) => new Promise(resolve => {

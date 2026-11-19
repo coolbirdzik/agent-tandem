@@ -94,6 +94,80 @@ describe('Single tandem webview', () => {
     expect(toolMessage!.isConnected).toBe(false);
   });
 
+  it('groups chat by local day, keeps tools within their day, and exposes recorded message times', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 20, 12));
+      const beforeMidnight = new Date(2026, 10, 19, 23, 59);
+      const afterMidnight = new Date(2026, 10, 20, 0, 1);
+      const content: NonNullable<ViewState['conversation']> = { conversation, messages: [
+        { id: 'u1', role: 'user', text: 'Fix login', timestamp: beforeMidnight.toISOString() },
+        { id: 't1', role: 'tool', text: 'Started', timestamp: beforeMidnight.toISOString() },
+        { id: 't2', role: 'tool', text: 'Finished', timestamp: afterMidnight.toISOString() },
+        { id: 'a1', role: 'assistant', text: 'Fixed', timestamp: afterMidnight.toISOString() },
+        { id: 'legacy', role: 'assistant', text: 'Legacy message', timestamp: 'invalid' },
+      ] };
+      const value = { ...state, conversation: content };
+      render(value);
+      const rows = () => [...document.querySelectorAll<HTMLElement>('#conversation > *')];
+      expect(rows().map(row => row.dataset.messageId ?? row.dataset.firstToolId ?? row.textContent)).toEqual([
+        'Yesterday', 'u1', 't1', 'Today', 'a1', 't2', 'legacy',
+      ]);
+      const [divider, user] = rows();
+      const format = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+      const userTime = user?.querySelector<HTMLTimeElement>('.message-actions > time');
+      expect(userTime?.textContent).toBe(format.format(beforeMidnight));
+      expect(userTime?.dateTime).toBe(beforeMidnight.toISOString());
+      expect(userTime?.nextElementSibling?.classList.contains('message-restore')).toBe(true);
+      expect(document.querySelector('[data-message-id="a1"] .message-author > time')?.textContent).toBe(format.format(afterMidnight));
+      expect(document.querySelector('[data-message-id="t2"] summary > time')?.textContent).toBe(format.format(afterMidnight));
+      expect(document.querySelector('[data-message-id="legacy"] time')).toBeNull();
+      expect(document.querySelector('#conversation .message[title]')).toBeNull();
+
+      vi.setSystemTime(new Date(2026, 10, 21, 0, 1));
+      render(value);
+      expect(rows()[0]).toBe(divider);
+      expect(rows()[0]?.textContent).toBe('2 days ago');
+      expect(rows()[1]).toBe(user);
+      expect(rows()[3]?.textContent).toBe('Yesterday');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('groups history by local day and restores section expansion after searching', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 20, 12));
+      const today = { ...conversation, updatedAt: new Date(2026, 10, 20, 0, 1).getTime() };
+      const recent = { ...state.conversations![1]!, title: 'Fix lint', updatedAt: new Date(2026, 10, 20, 9).getTime() };
+      const yesterday = { ...conversation, key: 'Claude:older', title: 'Review history', updatedAt: new Date(2026, 10, 19, 23, 59).getTime() };
+      const value = { ...state, conversations: [recent, today, yesterday] };
+      render(value);
+      headerAction('history');
+      const sections = () => [...document.querySelectorAll<HTMLDetailsElement>('#conversations > details')];
+      const [first, second] = sections();
+      expect(sections().map(section => section.querySelector('summary')!.getAttribute('aria-label'))).toEqual(['Today, 2 conversations', 'Yesterday, 1 conversation']);
+      expect(first!.open).toBe(true);
+      expect(second!.open).toBe(false);
+      expect([...first!.querySelectorAll('.conversation-title')].map(title => title.textContent)).toEqual(['Fix lint', 'Fix login']);
+
+      first!.open = false;
+      render(structuredClone(value));
+      expect(sections()[0]).toBe(first);
+      expect(first!.open).toBe(false);
+
+      const search = document.querySelector<HTMLInputElement>('#conversation-search')!;
+      search.value = 'Review history';
+      search.dispatchEvent(new Event('input'));
+      expect(sections()).toEqual([second]);
+      expect(second!.open).toBe(true);
+      search.value = '';
+      search.dispatchEvent(new Event('input'));
+      expect(sections().map(section => section.open)).toEqual([false, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('routes native title actions through the existing chat, history and review behavior', () => {
     const selector = '#new-chat, #history-open, button[data-screen="changes"]';
     expect(document.querySelectorAll(selector)).toHaveLength(0);
@@ -1708,10 +1782,25 @@ describe('Single tandem webview', () => {
     vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
       return this.id === 'message-content-long' ? height : 80;
     });
-    const messages = [{ id: 'long', role: 'user' as const, text: 'Long message' }, { id: 'short', role: 'user' as const, text: 'Short message' }, { id: 'reply', role: 'assistant' as const, text: 'Reply' }];
+    const messages = [
+      { id: 'long', role: 'user' as const, text: 'Long message', attachments: [{ name: 'screen.png', mimeType: 'image/png', data: 'AQID' }] },
+      { id: 'short', role: 'user' as const, text: 'Short message' },
+      { id: 'reply', role: 'assistant' as const, text: 'Reply' },
+    ];
     const show = (revision: string, key = conversation.key) => render({ ...state, conversation: { conversation: { ...conversation, key, revision }, messages } });
     const toggle = () => document.querySelector<HTMLButtonElement>('[data-message-id="long"] .message-toggle')!;
     show('fold-1');
+    const bubble = document.querySelector('[data-message-id="long"] > .message-bubble')!;
+    const author = bubble.parentElement!.querySelector(':scope > .message-author');
+    expect(author?.textContent).toBe('You');
+    expect(bubble.previousElementSibling).toBe(author);
+    const actions = bubble.nextElementSibling!;
+    expect([...bubble.querySelectorAll('button')]).toEqual([toggle()]);
+    expect(bubble.querySelector('.message-text')!.nextElementSibling).toBe(toggle());
+    expect(toggle().nextElementSibling).toBe(bubble.querySelector('.message-attachments'));
+    expect(bubble.querySelector('.message-attachments img')?.getAttribute('alt')).toBe('screen.png');
+    expect(actions).toBe(bubble.parentElement!.lastElementChild);
+    expect([...actions.querySelectorAll('button')]).toEqual([actions.querySelector('.message-restore'), actions.querySelector('.message-edit')]);
     expect(toggle().hidden).toBe(false);
     expect(toggle().textContent).toBe('Show more');
     expect(toggle().getAttribute('aria-expanded')).toBe('false');

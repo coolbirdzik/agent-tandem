@@ -16,7 +16,7 @@ export function renderMessageText(text: string) {
   return content;
 }
 
-export function renderToolMessage(message: ConversationMessage, open = false) {
+export function renderToolMessage(message: ConversationMessage, open = false, time?: HTMLTimeElement) {
   const details = document.createElement('details');
   details.id = `tool-${message.id}`;
   details.open = open;
@@ -33,6 +33,7 @@ export function renderToolMessage(message: ConversationMessage, open = false) {
   const output = document.createElement('pre');
   output.textContent = message.text;
   summary.append(icon, name, chevron);
+  if (time) chevron.before(time);
   details.append(summary, output);
   return details;
 }

@@ -67,6 +67,7 @@ let activeSubagent: { selection: SubagentSelection; label: string } | undefined;
 let parentChatScroll = 0;
 let chatFocus: 'composer' | 'history' | undefined;
 let providerFilter = 'all';
+const historyDayExpansion = new Map<number, boolean>();
 let pendingConversation: string | undefined;
 let pendingAccess: AccessSelection | undefined;
 let pendingModel: ModelSelection | undefined;
@@ -418,11 +419,8 @@ function currentMessage(anchors: HTMLElement[]) {
   anchors.forEach((anchor, position) => { if (anchor.getBoundingClientRect().top <= top) index = position; });
   return index;
 }
-function updateMessageNav() {
-  const anchors = messageAnchors();
-  const visible = currentScreen === 'conversations' && !historyVisible && !activeSubagent && anchors.length > 1;
-  messageNav.hidden = !visible;
-  if (!visible) return;
+function updateMessageNav(anchors = messageAnchors()) {
+  if (messageNav.hidden) return;
   const index = currentMessage(anchors), label = `${index + 1}/${anchors.length}`;
   if (element('message-position').textContent !== label) element('message-position').textContent = label;
   element<HTMLButtonElement>('message-previous').disabled = index === 0;
@@ -475,6 +473,31 @@ function relativeTime(timestamp: number) {
   if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m ago`;
   if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h ago`;
   return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+const dayFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+const messageTimeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+const relativeDayFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+function localDay(timestamp: number) {
+  return new Date(timestamp).setHours(0, 0, 0, 0);
+}
+function dayLabel(day: number, today: number) {
+  if (day === today) return 'Today';
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  return day === localDay(yesterday.getTime()) ? 'Yesterday' : dayFormat.format(day);
+}
+function calendarDayNumber(timestamp: number) {
+  const offset = new Date(timestamp).getTimezoneOffset() * 60_000;
+  return Math.floor((timestamp - offset) / 86_400_000);
+}
+function messageTime(node: HTMLElement, timestamp?: string) {
+  if (!timestamp) return;
+  const date = Date.parse(timestamp);
+  if (!Number.isFinite(date)) return;
+  node.dataset.day = String(localDay(date));
+  const time = create('time', messageTimeFormat.format(date), 'message-time');
+  time.dateTime = new Date(date).toISOString();
+  return time;
 }
 function emptyState(title: string, text: string, name: string, action?: () => void) {
   const node = create('div', undefined, 'empty-state');
@@ -639,24 +662,32 @@ function reconcileChildren(root: HTMLElement, children: HTMLElement[]) {
     if (root.children[index] !== child) root.insertBefore(child, root.children[index] ?? null);
   });
 }
-function groupToolRows(chat: HTMLElement, messages: HTMLElement[]) {
+function conversationAccordion(className: string, label: string, bodyClass: string, iconName?: string) {
+  const group = create('details', undefined, `conversation-accordion ${className}`);
+  const summary = create('summary', undefined, 'conversation-accordion-heading');
+  const identity = create('span', undefined, 'conversation-accordion-identity');
+  if (iconName) identity.append(icon(iconName));
+  identity.append(create('span', label, 'conversation-accordion-title'));
+  const chevron = icon('chevron-down');
+  chevron.classList.add('conversation-accordion-chevron');
+  summary.append(identity, create('span', undefined, 'meta'), chevron);
+  group.append(summary, create('div', undefined, bodyClass));
+  return group;
+}
+function transcriptRows(chat: HTMLElement, messages: HTMLElement[], today: number) {
   const existing = new Map([...chat.querySelectorAll<HTMLDetailsElement>(':scope > .conversation-tools')].map(group => [group.dataset.firstToolId, group]));
+  const dividers = new Map([...chat.querySelectorAll<HTMLElement>(':scope > .message-day')].map(divider => [divider.dataset.firstMessageId, divider]));
   const rows: HTMLElement[] = [];
+  const todayNumber = calendarDayNumber(today);
+  let day: string | undefined;
   let tools: HTMLElement[] = [];
   const appendGroup = () => {
     if (!tools.length) return;
     const firstToolId = tools[0]!.dataset.messageId;
     let group = existing.get(firstToolId);
     if (!group) {
-      group = create('details', undefined, 'conversation-accordion conversation-tools');
+      group = conversationAccordion('conversation-tools', 'Tools', 'tool-list', 'tools');
       group.dataset.firstToolId = firstToolId;
-      const summary = create('summary', undefined, 'conversation-accordion-heading');
-      const identity = create('span', undefined, 'conversation-accordion-identity');
-      identity.append(icon('tools'), create('span', 'Tools', 'conversation-accordion-title'));
-      const chevron = icon('chevron-down');
-      chevron.classList.add('conversation-accordion-chevron');
-      summary.append(identity, create('span', undefined, 'meta'), chevron);
-      group.append(summary, create('div', undefined, 'tool-list'));
     }
     const count = group.querySelector('.meta')!;
     if (count.textContent !== String(tools.length)) count.textContent = String(tools.length);
@@ -665,6 +696,25 @@ function groupToolRows(chat: HTMLElement, messages: HTMLElement[]) {
     tools = [];
   };
   for (const message of messages) {
+    const messageDay = message.dataset.day;
+    if (messageDay !== undefined && messageDay !== day) {
+      appendGroup();
+      day = messageDay;
+      const relative = relativeDayFormat.format(calendarDayNumber(Number(day)) - todayNumber, 'day');
+      const label = relative.charAt(0).toLocaleUpperCase() + relative.slice(1);
+      const divider = dividers.get(message.dataset.messageId) ?? create('div', undefined, 'message-day');
+      divider.dataset.firstMessageId = message.dataset.messageId;
+      if (divider.dataset.day !== day) {
+        divider.dataset.day = day;
+        divider.setAttribute('role', 'separator');
+        divider.title = dayFormat.format(Number(day));
+      }
+      if (divider.getAttribute('aria-label') !== label) {
+        divider.textContent = label;
+        divider.setAttribute('aria-label', label);
+      }
+      rows.push(divider);
+    }
     if (message.classList.contains('tool')) {
       tools.push(message);
       continue;
@@ -732,23 +782,26 @@ function renderSubagentTranscript(transcript?: SubagentTranscript) {
   const messages = transcript.messages.map(message => {
     const node = create('article', undefined, `message ${message.role}`);
     node.dataset.messageId = message.id;
+    const time = messageTime(node, message.timestamp);
     if (message.role === 'tool') {
-      const tool = renderToolMessage(message);
+      const tool = renderToolMessage(message, false, time);
       tool.id = `subagent-${tool.id}`;
       node.append(tool);
     } else {
+      const body = message.role === 'user' ? node.appendChild(create('div', undefined, 'message-bubble')) : node;
       const author = create('div', undefined, 'message-author');
       author.append(create('span', message.role === 'user' ? 'Input' : activeSubagent?.label));
-      node.append(author, renderMessageText(message.text));
+      if (time) author.append(time);
+      body.append(author, renderMessageText(message.text));
       if (message.attachments?.length) {
         const cards = create('div', undefined, 'message-attachments chat-attachments');
         attachmentCards(cards, message.attachments);
-        node.append(cards);
+        body.append(cards);
       }
     }
     return node;
   });
-  chat.append(...groupToolRows(chat, messages));
+  chat.append(...transcriptRows(chat, messages, localDay(Date.now())));
 }
 function render(state: ViewState) {
   const conversationKey = state.conversation?.conversation.key;
@@ -1137,14 +1190,20 @@ function render(state: ViewState) {
   element('conversation-count').textContent = String(conversations.length);
   const list = element('conversations');
   const rows = new Map([...list.querySelectorAll<HTMLButtonElement>('.conversation-link')].map(row => [row.dataset.focusKey!, row]));
-  const nextRows: HTMLElement[] = [];
+  const existingDays = new Map([...list.querySelectorAll<HTMLDetailsElement>('.history-day')].map(group => [Number(group.dataset.day), group]));
+  const previousQuery = list.dataset.query;
+  // Search opens matching days temporarily. Remember the browsing state before filtering.
+  if (!previousQuery) for (const [day, group] of existingDays) historyDayExpansion.set(day, group.open);
+  if (query !== previousQuery) list.dataset.query = query;
+  const nextSections: HTMLElement[] = [];
   if (!conversations.length) {
     const title = !state.syncedAt && state.syncing ? 'Reading history…' : query ? 'No matches' : 'No conversations yet';
     const signature = JSON.stringify([title, query, state.project]);
     const existing = list.firstElementChild as HTMLElement | null;
     const empty = existing?.dataset.emptySignature === signature ? existing : emptyState(title, query ? 'Try another search or provider.' : 'Saved Claude Code and Codex sessions for this workspace appear here.', 'history');
-    empty.dataset.emptySignature = signature; nextRows.push(empty);
+    empty.dataset.emptySignature = signature; nextSections.push(empty);
   }
+  const days = new Map<number, HTMLButtonElement[]>();
   for (const conversation of conversations) {
     let link = rows.get(conversation.key);
     if (!link) {
@@ -1164,11 +1223,36 @@ function render(state: ViewState) {
       time.dataset.updatedAt = String(conversation.updatedAt);
       time.title = new Date(conversation.updatedAt).toLocaleString();
     }
-    nextRows.push(link);
+    const midnight = localDay(conversation.updatedAt);
+    const day = Number.isNaN(midnight) ? -Infinity : midnight;
+    const dayRows = days.get(day);
+    if (dayRows) dayRows.push(link);
+    else days.set(day, [link]);
   }
-  reconcileChildren(list, nextRows);
+  const today = localDay(Date.now());
+  if (days.size) {
+    const orderedDays = [...days].sort(([a], [b]) => b - a);
+    const newestDay = orderedDays[0]?.[0];
+    for (const [day, dayRows] of orderedDays) {
+      const label = day === -Infinity ? 'Unknown date' : dayLabel(day, today);
+      const existing = existingDays.get(day);
+      const group = existing ?? conversationAccordion('history-day', label, 'history-day-rows');
+      if (!existing) group.dataset.day = String(day);
+      const title = group.querySelector('.conversation-accordion-title')!;
+      if (title.textContent !== label) title.textContent = label;
+      const count = group.querySelector('.meta')!;
+      if (count.textContent !== String(dayRows.length)) count.textContent = String(dayRows.length);
+      const summary = group.querySelector('summary')!;
+      const accessibleLabel = `${label}, ${dayRows.length} ${dayRows.length === 1 ? 'conversation' : 'conversations'}`;
+      if (summary.getAttribute('aria-label') !== accessibleLabel) summary.setAttribute('aria-label', accessibleLabel);
+      if (!existing || previousQuery !== query) group.open = !!query || (historyDayExpansion.get(day) ?? day === newestDay);
+      reconcileChildren(group.querySelector<HTMLElement>('.history-day-rows')!, dayRows);
+      nextSections.push(group);
+    }
+  }
+  reconcileChildren(list, nextSections);
 
-  const revision = JSON.stringify([state.project, state.conversation?.conversation.key, state.conversation?.conversation.revision, state.conversation?.notice, state.conversation?.messages, state.conversation ? '' : !state.syncedAt && state.syncing, reviewDisabled, state.checkpoints, state.checkpointUndo]);
+  const revision = JSON.stringify([today, state.project, state.conversation?.conversation.key, state.conversation?.conversation.revision, state.conversation?.notice, state.conversation?.messages, state.conversation ? '' : !state.syncedAt && state.syncing, reviewDisabled, state.checkpoints, state.checkpointUndo]);
   const chatChanged = revision !== conversationRevision;
   const sameConversation = !projectChanged && !!state.conversation && element('conversation').dataset.key === state.conversation.conversation.key;
   if (chatChanged) {
@@ -1209,30 +1293,27 @@ function render(state: ViewState) {
         if (existing && messageSignatures.get(existing) === signature) { nextMessages.push(existing); continue; }
         const node = create('article', undefined, `message ${message.role}`);
         node.dataset.messageId = message.id; messageSignatures.set(node, signature);
+        const time = messageTime(node, message.timestamp);
         if (message.role === 'user') {
           node.tabIndex = -1; node.dataset.focusKey = `message:${chat.dataset.key}:${message.id}`;
           node.setAttribute('aria-label', `Your message: ${message.text.slice(0, 100)}`);
           if (selectedMessage?.id === message.id) node.classList.add('message-focused');
         }
         if (message.role === 'tool') {
-          node.append(renderToolMessage(message, sameConversation && opened.has(`tool-${message.id}`)));
+          node.append(renderToolMessage(message, sameConversation && opened.has(`tool-${message.id}`), time));
         } else {
-          const author = create('div', undefined, 'message-author'); author.append(message.role === 'user' ? create('span', 'You') : providerBadge(provider)); node.append(author);
-          if (message.role === 'user') {
-            const actions = create('div', undefined, 'message-actions');
-            const checkpoint = state.checkpoints?.find(entry => entry.messageId === message.id);
-            const preparing = state.chat?.requestId === message.id && state.chat.phase === 'preparing';
-            const restore = button('Restore code', () => { if (checkpoint) send('previewCheckpoint', { project: state.project!, id: checkpoint.id }); }, reviewDisabled || !checkpoint);
-            restore.className = 'message-restore'; restore.prepend(icon('history'));
-            restore.title = checkpoint ? `Restore code to before this message · ${new Date(checkpoint.createdAt).toLocaleString()}` : preparing ? 'Preparing checkpoint before the agent runs…' : 'No saved checkpoint for this message. Checkpoints exist for messages sent from AgentTandem and for messages sent from any chat while change tracking is on.';
-            restore.setAttribute('aria-label', checkpoint ? 'Preview checkpoint before this message' : preparing ? 'Restore unavailable: preparing checkpoint' : 'Restore unavailable: no saved checkpoint for this message');
-            restore.dataset.focusKey = `checkpoint:${message.id}`; restore.dataset.checkpointAvailable = String(!!checkpoint);
-            actions.append(restore);
-            const edit = button('', () => editMessage(message.id), reviewDisabled || !state.conversation.conversation.id);
-            edit.className = 'icon-button message-edit'; edit.append(icon('edit')); edit.title = 'Edit and resend'; edit.setAttribute('aria-label', 'Edit and resend message'); edit.dataset.focusKey = `edit:${message.id}`; actions.append(edit); author.append(actions);
-          }
+          const author = create('div', undefined, 'message-author');
+          author.append(message.role === 'user' ? create('span', 'You') : providerBadge(provider));
+          if (time && message.role !== 'user') author.append(time);
+          node.append(author);
+          const body = message.role === 'user' ? node.appendChild(create('div', undefined, 'message-bubble')) : node;
           const content = renderMessageText(message.text);
-          node.append(content);
+          body.append(content);
+          if (message.attachments?.length) {
+            const cards = create('div', undefined, 'message-attachments chat-attachments');
+            attachmentCards(cards, message.attachments);
+            body.append(cards);
+          }
           if (message.role === 'user') {
             const key = JSON.stringify([state.project, chat.dataset.key, message.id]);
             content.id = `message-content-${message.id}`;
@@ -1254,14 +1335,26 @@ function render(state: ViewState) {
               if (toggle.textContent !== label) toggle.replaceChildren(create('span', label), icon(expanded ? 'chevron-up' : 'chevron-down'));
             };
             content.classList.toggle('message-collapsed', !expandedMessages.has(key));
-            node.append(toggle);
+            content.after(toggle);
             messageFolds.set(content, update); messageResize?.observe(content);
+
+            const preparing = state.chat?.requestId === message.id && state.chat.phase === 'preparing';
+            const restore = button('Restore code', () => { if (checkpoint) send('previewCheckpoint', { project: state.project!, id: checkpoint.id }); }, reviewDisabled || !checkpoint);
+            restore.className = 'message-restore'; restore.prepend(icon('history'));
+            restore.title = checkpoint ? `Restore code to before this message · ${new Date(checkpoint.createdAt).toLocaleString()}` : preparing ? 'Preparing checkpoint before the agent runs…' : 'No saved checkpoint for this message. Checkpoints exist for messages sent from AgentTandem and for messages sent from any chat while change tracking is on.';
+            restore.setAttribute('aria-label', checkpoint ? 'Preview checkpoint before this message' : preparing ? 'Restore unavailable: preparing checkpoint' : 'Restore unavailable: no saved checkpoint for this message');
+            restore.dataset.focusKey = `checkpoint:${message.id}`; restore.dataset.checkpointAvailable = String(!!checkpoint);
+            const edit = button('', () => editMessage(message.id), reviewDisabled || !state.conversation.conversation.id);
+            edit.className = 'icon-button message-edit'; edit.append(icon('edit')); edit.title = 'Edit and resend'; edit.setAttribute('aria-label', 'Edit and resend message'); edit.dataset.focusKey = `edit:${message.id}`;
+            const actions = create('div', undefined, 'message-actions');
+            if (time) actions.append(time);
+            actions.append(restore, edit);
+            node.append(actions);
           }
-          if (message.attachments?.length) { const cards = create('div', undefined, 'message-attachments chat-attachments'); attachmentCards(cards, message.attachments); node.append(cards); }
         }
         nextMessages.push(node);
       }
-      reconcileChildren(chat, groupToolRows(chat, nextMessages));
+      reconcileChildren(chat, transcriptRows(chat, nextMessages, today));
       for (const update of messageFolds.values()) update();
     }
     for (const content of messageFolds.keys()) if (!chat.contains(content)) { messageResize?.unobserve(content); messageFolds.delete(content); }
@@ -1308,6 +1401,9 @@ function render(state: ViewState) {
   dropdowns.sync();
   element<HTMLButtonElement>('cli-refresh').disabled = !!state.cliManager?.busy;
   if (focusKey) [...document.querySelectorAll<HTMLElement>('[data-focus-key]')].find(node => node.dataset.focusKey === focusKey)?.focus({ preventScroll: true });
+  const anchors = messageAnchors();
+  // Apply the navigator's extra thread padding before restoring the scroll position.
+  messageNav.hidden = viewKey !== 'conversations' || transcriptVisible || anchors.length < 2;
   if (transcriptVisible) scroller.scrollTop = transcriptWasVisible ? previousScroll : 0;
   else if (transcriptWasVisible && !screenChanged && !conversationChanged && !projectChanged) scroller.scrollTop = previousScroll;
   else if (reviewPreviewChanged && state.reviewPreview && nextScreen === 'conversations' && !historyVisible) scroller.scrollTop = scroller.scrollHeight;
@@ -1316,7 +1412,7 @@ function render(state: ViewState) {
   else if (changeChanged && nextScreen === 'changes') scroller.scrollTop = 0;
   else if ((chatChanged || subagentsAppeared) && sameConversation && atBottom && !selectedMessage && nextScreen === 'conversations' && !historyVisible) scroller.scrollTop = scroller.scrollHeight;
   else scroller.scrollTop = previousScroll;
-  updateMessageNav();
+  updateMessageNav(anchors);
   if (chatFocus && nextScreen === 'conversations' && !transcriptVisible) {
     const target = chatFocus === 'history' ? element('conversation-search') : chatInput;
     target.focus({ preventScroll: true });

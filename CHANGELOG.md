@@ -31,13 +31,17 @@ Historical version dates and boundaries are reconstructed from package version c
 - Panel titles use regular weight, and Review, Conversations, and Manage CLIs start closer to their headers. The introductory text in Review and Manage CLIs has been removed.
 - The pending file count appears beside **Review** in the sidebar and editor tab. Hover over the count to see what it includes.
 - Review shows a shorter status caption using the same text style as Manage CLIs.
-- Conversation history uses compact, single-line rows with smaller provider icons. Hover over a title to read it in full, or hover over the row to reveal its timestamp and over the timestamp to see the exact time.
-- Conversation history places provider filters to the right of the workspace selector. In narrow panels, the filters move together to the next row.
+- Conversation history uses compact, single-line rows with semibold titles and smaller provider icons. Hover over a title to read it in full, or hover over the row to reveal its timestamp and over the timestamp to see the exact time.
+- Conversation history groups chats by the local day they were last updated, using the same accordion styling as Review. Select a day to expand or collapse it, or search to expand the days with matches.
+- Conversation history shows the selected workspace beside the provider filters in a picker that matches the other dropdowns. In narrow panels, the filters move together to the next row.
 - Review reverts, checkpoint restores, agent approvals, and saved-history cleanup now open in VS Code-themed dialogs with the affected files or permission details.
 - Click a file row in chat or Review to open its diff, or hover over the row to reveal its action icons. Diff counts sit at the right edge, with the action icons aligned across files.
 - Hover over a conversation group header in Review to reveal the **Open conversation** icon beside its file count. The provider is shown by its icon beside the title.
 - Chat, review, and account picker hints show OS-specific keycaps using the active VS Code theme.
+- Chat messages are grouped by local day with centered dividers. Hover over a message to see its time inline, beside **Restore code** and **Edit and resend** on your messages.
 - Consecutive tool calls and results sit inside a collapsed **Tools** accordion beneath the following agent message in the same turn. Expand it to inspect each call or result, including while the agent is still working.
+- **You** appears above each user message bubble, right-aligned in the same text style as the provider name. **Restore code** and **Edit and resend** appear below the bubble.
+- Chat image previews fill their attachment cards without a filename label.
 - The Review status bar hover puts the pending file count first and groups workspace and tracking details below it.
 - Codex and Claude Code status bar hovers show countdowns for quota resets and earned reset expiry.
 - Dashboard, Storage, and VS Code settings use shorter descriptions for quota estimates, history assignments, and cleanup.
@@ -56,6 +60,7 @@ Historical version dates and boundaries are reconstructed from package version c
 - In Manage CLIs, **Add** opens a two-step VS Code wizard. Enter an executable path or browse for the installation folder, then confirm or change the suggested name. Editing replaces the entry’s details and actions with the form until you save or cancel. Executable paths fit on one line. Hover to see the full path or select it to copy.
 - In Manage CLIs, **Default** offers **Automatic** for both Codex and Claude Code. **This project** offers **Use Default** and saved installations. An existing terminal PATH override appears as the current project selection and can be replaced from the dropdown.
 - Manage CLIs shows icons alongside **Scan**, **Check versions**, and **Add** for Codex and Claude Code.
+- The **Provider checks** section in Manage CLIs is now called **Diagnostics**.
 - Both CLI dropdowns show saved CLI names without the **Pinned:** prefix or **(disabled/unavailable)** suffix. Unavailable entries remain disabled. The selected-executable summary and idle reminder about enabled CLIs have been removed.
 - Restoring a checkpoint no longer asks you to stop change tracking first. Edits saved since the last scan are captured before the preview, and tracking continues after the restore.
 - **Tokens per 1% quota** is easier to read. The rate, estimated full cycle, tokens left and the current cycle's interval sit side by side, and the cycles are now part of the chart: the old cycle list is replaced by a table of figures (cycle start, quota remaining, recorded tokens, quota used, tokens / 1%, full quota, change) aligned under each chart column, with the chosen metric's row emphasized. Columns stretch to the panel, and **Show all** reveals up to 30 cycles instead of 12.
@@ -83,7 +88,7 @@ Historical version dates and boundaries are reconstructed from package version c
 
 - Provider checks now run in **Manage CLIs**. Use **This project** to choose a Codex or Claude Code executable. The separate Diagnostics page and CLI picker have been removed.
 
-- Removed the Accept and Revert description from the pending review panel in chat.
+- Removed the Accept and Revert description and the accordion’s diff icon from the pending review panel in chat.
 - Removed the **Read-only transcript** label from subagent conversations.
 - Removed the duplicate workspace path beneath the Conversations header.
 - Removed provider badges from chat tool calls and results.
@@ -98,10 +103,12 @@ Historical version dates and boundaries are reconstructed from package version c
 - The Preferences status bar preview shows the same quota hover as the live status bar, including quota bars, reset countdowns, earned resets, and saved accounts.
 - Opening the reasoning effort popup leaves focus on its button. Tab to the slider to adjust it with a rounded focus ring that matches the VS Code theme.
 - Chat uses consistent spacing between messages and the **Tools** and **Subagents** accordions, including when a message ends with a code block.
+- The bottom of a chat scrolls clear of the floating message navigator.
 - The pending review row stays above the chat input. Its accordion trigger and review actions are available when the current conversation has pending files. Review shows all pending workspace changes, including shared and unassigned files.
 - Pending review files and Review conversation groups keep a steady background when you press their headings, matching the chat Subagents accordion.
 - **Open conversation** in Review opens the chat directly, even if conversation history was open before Review.
 - Conversations shows main Codex chats and omits subagents and Guardian reviews from the list and its counts.
+- Conversation history date groups align with the workspace filter and search field.
 - **Choose Codex CLI** and **Choose Claude Code CLI** now match the project choices in **Manage CLIs**, including disabled installations and any existing terminal PATH override.
 - Quick Accounts shows each email once per entry for Codex and Claude Code.
 - In narrow Manage CLIs panels, provider names stay on one line and the header actions move below them together, like the pending-review header.

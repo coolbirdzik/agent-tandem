@@ -23,7 +23,7 @@ export interface ConversationContent { conversation: Conversation; messages: Con
 export interface ConversationIndex { conversations: Conversation[]; errors: string[] }
 export interface ConversationSubagent { id: string; label: string }
 export type SubagentContent = Pick<ConversationContent, 'messages' | 'notice'>;
-type ClaudeRecord = { uuid: string; type: string; message: unknown };
+type ClaudeRecord = { uuid: string; type: string; message: unknown; timestamp?: string };
 export interface ClaudeHistoryAPI {
   deleteSession?(id: string): Promise<void>;
   listSessions(options: { dir?: string; includeWorktrees: boolean }): Promise<Array<{ sessionId: string; summary: string; cwd?: string; lastModified: number; fileSize?: number }>>;
@@ -98,6 +98,7 @@ export function claudeMessages(records: ClaudeRecord[]): ConversationMessage[] {
       if (block.type === 'tool_use') result.push({ id: `${record.uuid}:${index}`, role: 'tool', toolName: String(block.name ?? 'Tool'), toolCallId: block.id, text: printable(block.input) });
       if (block.type === 'tool_result') result.push({ id: `${record.uuid}:${index}`, role: 'tool', toolName: 'Result', toolCallId: block.tool_use_id, text: contentText(block.content) || printable(block.content) });
     });
+    if (typeof record.timestamp === 'string') for (const message of result) message.timestamp = record.timestamp;
     return result;
   });
 }
@@ -286,13 +287,11 @@ export class ProjectConversations {
     const result: NativeRecords = { revision: conversation.revision, edits: conversationEdits(data.records, conversation, conversation.cwd, project), times: new Map(), prompts: [] };
     if (conversation.provider === 'Claude') {
       // Subagent and meta records are not prompts the user sent.
-      const main = data.records.filter(value => { const r = object(value); return typeof r.uuid === 'string' && r.isSidechain !== true && r.isMeta !== true; }) as Array<{ uuid: string; type: string; message: unknown; timestamp?: unknown }>;
-      const stamps = new Map(main.flatMap(r => typeof r.timestamp === 'string' ? [[r.uuid, r.timestamp] as const] : []));
+      const main = data.records.filter(value => { const r = object(value); return typeof r.uuid === 'string' && r.isSidechain !== true && r.isMeta !== true; }) as ClaudeRecord[];
       for (const message of claudeMessages(main)) {
-        const stamp = stamps.get(message.id);
-        if (!stamp) continue;
-        result.times.set(message.id, stamp);
-        if (message.role === 'user') result.prompts.push(Date.parse(stamp));
+        if (!message.timestamp) continue;
+        result.times.set(message.id, message.timestamp);
+        if (message.role === 'user') result.prompts.push(Date.parse(message.timestamp));
       }
     } else {
       for (const message of codexMessages(data.records)) if (message.role === 'user' && message.timestamp) result.prompts.push(Date.parse(message.timestamp));
@@ -435,7 +434,7 @@ export class ProjectConversations {
       const sdk = await this.claude();
       const records = await sdk.getSessionMessages(conversation.id, { dir });
       const messages = claudeMessages(records);
-      // The SDK omits timestamps; per-message restore needs when each prompt was sent.
+      // The SDK omits timestamps used by the transcript and per-message restore.
       const times = (await this.native(conversation, project).catch(() => undefined))?.times;
       if (times) for (const message of messages) message.timestamp ??= times.get(message.id);
       return { conversation, messages, usage: claudeHistoryUsage(records) };

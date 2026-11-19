@@ -109,7 +109,9 @@ button.secondary:hover{background:var(--tandem-hover)}
 .message-nav .icon-button{width:22px;height:22px}
 .message-nav .icon-button .codicon{font-size:13px}
 .message-position{min-width:28px;text-align:center;font-size:10px;color:var(--tandem-muted);font-variant-numeric:tabular-nums}
-.message.message-focused{outline:1px solid var(--vscode-focusBorder);outline-offset:3px;border-radius:9px}
+/* The thread already ends with at least 16px of spacing. Allow 48px total for the navigator and gap. */
+.scroll-area:has(>.message-nav:not([hidden])) #thread-view{padding-block-end:32px}
+.message-focused>.message-bubble{outline:1px solid var(--vscode-focusBorder);outline-offset:3px}
 [hidden]{display:none!important}
 .composer-status{display:flex;align-items:center;gap:6px;padding:6px 3px 0;min-width:0}
 .provider-accounts{flex:0 1 auto;margin-left:auto;min-width:0;max-width:60%}
@@ -150,7 +152,8 @@ h2{font-size:14px;font-weight:600;line-height:1.5}
 h3{font-size:12px;font-weight:500}
 .meta{font-size:11px;color:var(--tandem-muted);line-height:1.6}
 .provider-icon{width:18px;height:18px;display:block;flex:none}
-.provider-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:500}
+.provider-badge{display:inline-flex;align-items:center;gap:6px}
+.provider-badge,.message.user>.message-author{font-size:11px;font-weight:500}
 .provider-badge img{width:15px;height:15px}
 .thread-heading{padding:12px 16px 16px}
 .thread-heading .provider-badge{color:var(--tandem-muted)}
@@ -161,6 +164,8 @@ h3{font-size:12px;font-weight:500}
 .conversation-subagents{margin:0 16px var(--tandem-space-lg)}
 .conversation-tools{min-width:0}
 :is(.message,.conversation-tools)+:is(.message,.conversation-tools){margin-block-start:var(--tandem-space-md)}
+.message-day{display:flex;align-items:center;gap:8px;margin-block:var(--tandem-space-md);color:var(--tandem-muted);font-size:11px}
+.message-day::before,.message-day::after{content:"";flex:1;border-block-start:1px solid var(--tandem-line)}
 .message.tool+.message.tool{margin-block-start:2px}
 .conversation-tools:not([open])>.tool-list{display:none}
 .tool-list{margin-top:8px}
@@ -170,16 +175,21 @@ h3{font-size:12px;font-weight:500}
 .subagent-notice{margin-bottom:12px}
 .message{min-width:0}
 .message-author{display:flex;align-items:center;gap:7px;margin-bottom:6px;font-size:12px;color:var(--tandem-muted)}
-.message.user{max-width:85%;margin-left:auto;padding:8px 10px 10px;background:color-mix(in srgb,var(--vscode-foreground) 6%,var(--vscode-sideBar-background));border:1px solid color-mix(in srgb,var(--vscode-foreground) 9%,transparent);border-radius:9px}
-.message.user .message-author{margin-bottom:6px;min-height:24px;font-size:11px;color:var(--vscode-foreground)}
-.message.user .message-author>span{font-weight:600}
+.message.user{max-width:85%;margin-left:auto}
+.message-bubble{padding:8px 10px 10px;background:color-mix(in srgb,var(--vscode-foreground) 6%,var(--vscode-sideBar-background));border:1px solid color-mix(in srgb,var(--vscode-foreground) 9%,transparent);border-radius:9px}
+.message.user>.message-author{justify-content:flex-end}
+.message.user .message-bubble>.message-author{font-size:11px;font-weight:600;color:var(--vscode-foreground)}
 .message.user .message-text{line-height:1.6;color:var(--vscode-foreground)}
 .message.user .message-collapsed{max-height:320px;overflow:hidden}
 .message-toggle{display:flex;align-items:center;gap:6px;margin-top:8px;padding:2px 0;background:transparent;border:0;color:var(--tandem-muted);font-size:12px}
 .message-toggle:hover{color:var(--vscode-foreground)}
 .message-toggle:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}
 .message-toggle .codicon{font-size:14px}
-.message-actions{display:flex;align-items:center;gap:4px;margin-left:auto;flex-shrink:0}
+.message-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:4px;margin-block-start:var(--tandem-space-xs)}
+.message-time{flex:none;font-size:11px;color:var(--tandem-muted);white-space:nowrap;visibility:hidden}
+.message:is(:hover,:focus-within) .message-time{visibility:visible}
+.message-author>.message-time{margin-inline-start:auto}
+.message-actions>.message-time{margin-inline-end:4px}
 .message-restore{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:4px 9px;font-size:11px;font-weight:600;color:var(--tandem-muted);background:var(--tandem-control);border:1px solid var(--tandem-line);border-radius:5px;white-space:nowrap}
 .message-restore .codicon{font-size:14px}
 .message-restore[data-checkpoint-available=true]{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border-color:transparent}
@@ -215,6 +225,7 @@ h3{font-size:12px;font-weight:500}
 pre{font:12px/1.65 var(--vscode-editor-font-family,monospace);margin:8px 0 0;padding:11px;background:var(--vscode-textCodeBlock-background,var(--tandem-surface));white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto}
 .message.tool{border:0;border-radius:0;overflow:hidden}
 .message.tool details>summary{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;padding:5px 7px 8px;border-radius:6px;list-style:none;font-size:11px;color:var(--tandem-muted);cursor:pointer}
+.message.tool details>summary:has(>.message-time){grid-template-columns:auto minmax(0,1fr) auto auto}
 .message.tool details>summary::-webkit-details-marker{display:none}
 .message.tool .tool-chevron{font-size:12px;transition:transform 120ms}
 .message.tool details[open] .tool-chevron{transform:rotate(90deg)}
@@ -237,12 +248,14 @@ summary{cursor:pointer;font-size:12px;color:var(--tandem-muted);padding:8px 0}
 .history-search:focus-within{border-color:var(--vscode-focusBorder)}
 .history-search input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--vscode-input-foreground,var(--vscode-foreground));font-size:12px}
 .history-search input::placeholder{color:var(--vscode-input-placeholderForeground,var(--tandem-muted))}
-#conversations{padding:0 10px 20px}
+#conversations{padding:0 14px 20px}
+.history-day+.history-day{margin-block-start:var(--tandem-space-sm)}
+.history-day[open]>.history-day-rows{margin-block-start:var(--tandem-space-xs)}
 .conversation-link{width:100%;display:flex;gap:8px;align-items:center;padding:5px 10px;background:transparent;color:var(--vscode-foreground);text-align:left;border-radius:var(--tandem-radius)}
 .conversation-link:hover{background:var(--tandem-hover)}
 .conversation-link[aria-pressed=true]{background:var(--tandem-hover)}
 .conversation-link>.provider-icon{width:16px;height:16px}
-.conversation-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:1.55}
+.conversation-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;line-height:1.55}
 .conversation-time{visibility:hidden;color:var(--tandem-muted);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .conversation-link:is(:hover,:focus-visible) .conversation-time{visibility:visible}
 .empty-state{padding:36px 20px;text-align:left;color:var(--tandem-muted)}
@@ -414,7 +427,7 @@ textarea:focus-visible{outline-color:var(--vscode-focusBorder)}
 .message.tool details>summary:hover{background:var(--tandem-hover)}
 .footer-caption{display:none}
 @media(forced-colors:active){#chat-form{border:1px solid CanvasText}
-.message.user{border:1px solid CanvasText;background:Canvas;color:CanvasText}.message.tool{border-bottom:1px solid CanvasText}
+.message-bubble{border:1px solid CanvasText;background:Canvas;color:CanvasText}.message.tool{border-bottom:1px solid CanvasText}
 .message-restore:hover,.message-restore:focus-visible{background:Highlight;color:HighlightText}
 }
 
@@ -482,12 +495,16 @@ select:disabled{cursor:default}
 .chat-attachments { display:flex; flex-wrap:wrap; gap:8px; padding:8px 12px 0; max-height:160px; overflow:auto; }
 .chat-attachments[hidden] { display:none; }
 .attachment-card { display:flex; align-items:center; gap:7px; padding:5px 7px; border:1px solid var(--tandem-line); border-radius:6px; min-width:0; max-width:100%; background:var(--vscode-input-background); }
-.attachment-card img { width:48px; height:40px; object-fit:contain; border-radius:3px; }
+.attachment-image { position:relative; display:block; align-self:flex-start; max-width:min(100%,72px); padding:0; }
+.attachment-image img { display:block; max-width:100%; max-height:56px; border-radius:inherit; }
+.attachment-image>.icon-button { position:absolute; inset-block-start:3px; inset-inline-end:3px; width:22px; height:22px; color:var(--vscode-foreground); background:var(--vscode-editor-background); border:1px solid var(--tandem-line); }
+.attachment-image>.icon-button:hover { background:var(--vscode-toolbar-hoverBackground,var(--vscode-input-background)); }
 .attachment-name { max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
 .attachment-status { padding:7px 12px; font-size:11px; color:var(--vscode-errorForeground); }
 .attachment-drop { outline:2px dashed var(--vscode-focusBorder); outline-offset:-2px; }
 .message-attachments { padding:10px 0 0; max-height:240px; }
-.message-attachments .attachment-card img { width:100px; height:80px; }
+.message-attachments .attachment-image { max-width:min(100%,160px); }
+.message-attachments .attachment-image img { max-height:120px; }
 .queue-attachments { flex-basis:100%; padding:4px 0; }
 .queue-item:has(.queue-attachments) { flex-wrap:wrap; }
 
@@ -507,9 +524,8 @@ select:disabled{cursor:default}
 
 .compact-access .dropdown-trigger:hover,.compact-access .dropdown-trigger[aria-expanded=true]{background:transparent;color:var(--vscode-textLink-foreground)}
 
-.history-workspace{display:flex;flex:1 1 18rem;align-items:center;gap:8px;min-width:0;color:var(--tandem-muted);font-size:11px}
+.history-workspace{display:flex;flex:1 1 18rem;align-items:center;min-width:0;color:var(--tandem-muted);font-size:11px}
 .history-workspace>.tandem-dropdown{flex:1;min-width:0}
-.history-workspace .dropdown-trigger{background:transparent;border:0;padding:4px 0;font-size:11px}
 
 .review-toggle-label{font-size:12px;font-weight:500;color:var(--vscode-foreground)}
 #reasoning-heading{flex:1;font-size:12px}
