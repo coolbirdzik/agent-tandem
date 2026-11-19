@@ -4,132 +4,146 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/).
 
-Historical version dates and boundaries are reconstructed from package version commits. Comparison links use those commits because release tags are unavailable in this checkout.
+Historical release dates and boundaries are reconstructed from package version commits. Comparison links use release tags where available and version bump commits otherwise.
 
 ## [Unreleased]
 
 ### Added
-- **Subagents** is expanded by default in Codex and Claude Code conversations that have subagents. Select an agent to read its saved transcript in the conversation view. The change list and composer are hidden until you return to the parent chat with **Back**.
-- Use keyboard shortcuts to focus chat, start a conversation, search conversation history, pick a changed file, or open Quick Accounts on macOS, Windows, and Linux.
-- Edit changed text directly in the Review editor and select **Save edits** to write it to the workspace. Saved edits stay available for Accept or Reject.
 
-- **Restore code** now works for messages sent from any chat while change tracking is on, including Claude Code and Codex in the terminal or their own extensions, not only messages sent from AgentTandem. It restores the workspace to its last tracked state before the message was sent. That state covers the whole workspace, so edits saved later by other chats or by you are reverted too; the preview lists every file first, and **Undo restore** brings them back. Messages sent before tracking started, or while it was paused, have no restore point. Only the states some message can restore to are kept, so the history adds almost nothing to storage. It appears as **Change tracking history** in Storage and follows the size limit like other restore points.
-
-- Earned Codex resets appear below the quota in the status bar hover. Settings and dashboard account cards show a **Banked resets: N available** line that opens the list on hover, focus or click.
-- **Storage → App data** lists each kind of saved data with its size, a policy label and its main action, instead of a table: review snapshots are cleaned automatically, restore points follow the size limit below, and token usage history, chat attachments and accounts are never deleted automatically.
-- AgentTandem's data folder now has a rolling size limit, 5 GB by default. Above it, unused review snapshots and then the oldest message restore points are removed automatically, oldest first, until the data is back to about 90% of the limit. Pending changes, tracking baselines, the last restore backup (Undo), token usage history, accounts and chat attachments are never removed to meet it; if only those are left above the limit, a warning says so instead. Set the limit with **Size limit** under **Storage → App data → Restore points** or `agentTandem.storageLimitGB` (0 turns it off). The first time restore points are removed, a notification says how many and how much space was freed. Codex and Claude Code chats are not counted or touched.
-- Saved review snapshots that nothing needs any more, such as those left after you accept changes, are now cleaned up automatically once an hour old, instead of piling up (on one machine they were most of a 7 GB data folder). Tracking baselines of tracked projects stay. Pending changes, tracking baselines, Undo, restore points, token usage, accounts and attachments are never touched. It runs after VS Code starts, every few hours and after you accept or revert, never during an agent turn, and shows one notification the first time and after unusually large cleanups. Turn it off with **Clean automatically** in Storage or `agentTandem.autoCleanReviewData`; **Clean now** runs it once and **Preview unused files…** lists them first.
-- **Compress** in Storage → App data shrinks the saved token counts without changing them (a chat that is still active may turn its file back into plain text). **Delete kept history…** is there for counts whose chat was deleted. Neither happens unless you choose it.
-- On Windows, **Storage** suggests excluding AgentTandem's data folder from real-time antivirus scanning, which can slow snapshot writes. The folder holds copies of your project files and chat attachments, and excluding it means they are no longer scanned, so the tip says so. It shows the folder and offers **Copy folder path**, **Copy PowerShell command** (Microsoft Defender, run as administrator) and **Open Windows Security**; **Got it** collapses the tip.
-- Usage from chats outside AgentTandem, such as the Claude Code or Codex extensions and terminal CLIs, is attributed to the **Active CLI sign-in** at that time when nothing more specific identifies the account, so recent responses no longer wait as **Unknown account** for a quota match. A later quota match or your own assignment still takes priority. Time right after an account switch stays unknown until you restart the extension host, and history from before this update is unchanged.
+- Open saved Codex and Claude Code transcripts from the expanded **Subagents** section. Select **Back** to return to the parent chat.
+- Use keyboard shortcuts to focus chat, start a conversation, search history, pick a changed file, or open Quick Accounts. Chat, Review, and account picker hints show platform-specific keycaps.
+- Edit changed text in Review and select **Save edits** to write it to the workspace. You can still accept or reject the saved edits.
 
 ### Changed
 
-- The dashboard’s **Open chat** button uses a chat icon that works with any chat view placement.
-- The sidebar header shows the current chat or section title. **Back** appears when there is a previous view. To open AgentTandem in an editor tab, choose **Open in tab** from the sidebar’s **⋯** menu.
-- **New chat**, **Conversation history**, and **Review changes** sit beside **⋯** in the Agent Tandem sidebar title bar, with label-only tooltips.
-- Panel titles use regular weight, and Review, Conversations, and Manage CLIs start closer to their headers. The introductory text in Review and Manage CLIs has been removed.
-- The pending file count appears beside **Review** in the sidebar and editor tab. Hover over the count to see what it includes.
-- Review shows a shorter status caption using the same text style as Manage CLIs.
-- Conversation history uses compact, single-line rows with semibold titles and smaller provider icons. Hover over a title to read it in full, or hover over the row to reveal its timestamp and over the timestamp to see the exact time.
-- Conversation history groups chats by the local day they were last updated, using the same accordion styling as Review. Select a day to expand or collapse it, or search to expand the days with matches.
-- Conversation history shows the selected workspace beside the provider filters in a picker that matches the other dropdowns. In narrow panels, the filters move together to the next row.
-- Review reverts, checkpoint restores, agent approvals, and saved-history cleanup now open in VS Code-themed dialogs with the affected files or permission details.
-- Click a file row in chat or Review to open its diff, or hover over the row to reveal its action icons. Diff counts sit at the right edge, with the action icons aligned across files.
-- Hover over a conversation group header in Review to reveal the **Open conversation** icon beside its file count. The provider is shown by its icon beside the title.
-- Chat, review, and account picker hints show OS-specific keycaps using the active VS Code theme.
-- Chat messages are grouped by local day with centered dividers. Hover over a message to see its time inline, beside **Restore code** and **Edit and resend** on your messages.
-- Consecutive tool calls and results sit inside a collapsed **Tools** accordion beneath the following agent message in the same turn. Expand it to inspect each call or result, including while the agent is still working.
-- **You** appears above each user message bubble, right-aligned in the same text style as the provider name. **Restore code** and **Edit and resend** appear below the bubble.
-- Chat image previews fill their attachment cards without a filename label.
-- The Review status bar hover puts the pending file count first and groups workspace and tracking details below it.
-- Codex and Claude Code status bar hovers show countdowns for quota resets and earned reset expiry.
-- Dashboard, Storage, and VS Code settings use shorter descriptions for quota estimates, history assignments, and cleanup.
-- Dashboard and Settings date fields match the dropdown height and use a themed calendar.
-- The Usage Dashboard, Accounts, Preferences, Storage, history assignment and the Review file selector now use the same dropdown picker as the chat panel.
-- Dropdown checkmarks appear at the end of the selected option and match the option text color in the active VS Code theme.
-- Codex **Fast mode** uses a switch in the model picker. When enabled, select the lightning chip beside the model name to turn it off.
-- Select the current reasoning level beside the model picker to open the reasoning slider.
-- The Review editor’s native menu groups **Refresh** and **Native diff** separately from **Open Workspace Changes** and **Open Conversation**. **Undo** is available in Workspace Changes. Review buttons match the sidebar’s **Revert** and **Accept** styles.
-- **Accept all** and **Revert all** use distinct bulk-action icons in the Review editor and sidebar.
-- The Review header and each change toolbar stay on one row. As the pane narrows, action buttons switch to icons, then the icon beside the file selector and the selector itself disappear.
-- Review leaves the Explorer selection alone by default. Enable `agentTandem.revealReviewFileInExplorer` to select each file as you review it.
-- The native diff’s inline review actions use plain text, matching the style of VS Code’s merge editor.
-- Manage CLIs cards show the CLI version and installation origin, with evenly padded extension and terminal icons to distinguish editor extensions from global installations.
-- Manage CLIs entries use the same rounded cards as Review conversation groups and start collapsed each time you open the screen. Select an installation to see its executable path and management actions.
-- In Manage CLIs, **Add** opens a two-step VS Code wizard. Enter an executable path or browse for the installation folder, then confirm or change the suggested name. Editing replaces the entry’s details and actions with the form until you save or cancel. Executable paths fit on one line. Hover to see the full path or select it to copy.
-- In Manage CLIs, **Default** offers **Automatic** for both Codex and Claude Code. **This project** offers **Use Default** and saved installations. An existing terminal PATH override appears as the current project selection and can be replaced from the dropdown.
-- Manage CLIs shows icons alongside **Scan**, **Check versions**, and **Add** for Codex and Claude Code.
-- The **Provider checks** section in Manage CLIs is now called **Diagnostics**.
-- Both CLI dropdowns show saved CLI names without the **Pinned:** prefix or **(disabled/unavailable)** suffix. Unavailable entries remain disabled. The selected-executable summary and idle reminder about enabled CLIs have been removed.
-- Restoring a checkpoint no longer asks you to stop change tracking first. Edits saved since the last scan are captured before the preview, and tracking continues after the restore.
-- **Tokens per 1% quota** is easier to read. The rate, estimated full cycle, tokens left and the current cycle's interval sit side by side, and the cycles are now part of the chart: the old cycle list is replaced by a table of figures (cycle start, quota remaining, recorded tokens, quota used, tokens / 1%, full quota, change) aligned under each chart column, with the chosen metric's row emphasized. Columns stretch to the panel, and **Show all** reveals up to 30 cycles instead of 12.
-- Automatic tracking of saved workspace changes is lighter on the disk and CPU. After a save, the background scan re-reads only the files VS Code reported. Refresh, opening Changes and agent turns still read the whole workspace, as does the first background scan after five minutes without one. Edits VS Code does not report, such as in folders excluded by `files.watcherExclude`, are therefore picked up at those points instead of by the next scan. Files whose size and timestamps are unchanged are not read again, a scan that finds nothing writes nothing, and content that is already stored is verified instead of written again.
-- Change tracking no longer copies files that Git already stores unchanged, so it uses far less disk and starts faster. On one 41,000-file repository, the tracking baseline shrank from 1.4 GB to 200 MB and tracking started in 12 s instead of 66 s. Existing baselines are converted on the first scan after updating, which took about 20 s on that repository; automatic cleanup then removes the old copies. Restore points in a Git repository now read unchanged files back from Git, so they need those objects to still exist. Normal commits and branch switches keep them. If Git has lost a file's earlier content, that file is left out of review with a notice instead of stopping tracking.
-- The **Unused files** tab is now **App data** and appears on its own instead of beside Restore history; the unused-files preview moved below it.
-- Comparing a changed file for review (+/- counts, individual blocks and the inline patch) now calculates the diff on a background thread, so a slow comparison of a large or heavily rewritten file no longer blocks the extension host. If the background thread is unavailable the calculation runs as before. A pair of files that takes more than two seconds to count shows no +/- numbers instead of waiting.
-- The sidebar and editor-tab **⋯** actions now use VS Code's native overflow menu instead of a custom in-panel menu.
-- **Getting started** has its own section in the sidebar and editor-tab **⋯** menus.
-- **Refresh** is the rightmost action in the Conversations, Review, and Manage CLIs headers.
-- Popovers and dropdown menus now have a blurred translucent background, falling back to opaque in high-contrast and reduced-transparency modes.
-- Five-hour and weekly quota labels are now flat filled **5h** and **7d** badges across the status bar, hover, account picker, chat, account cards and dashboard. Status-bar Text style keeps plain labels.
-- The Dashboard, Accounts and Storage tab bars share one style and stay pinned below the Settings header; dashboard tabs show icons, and the Accounts app filter uses the same underlined tabs.
-- Dashboard account filter is now a picker on the same sticky row as Overview, Quota, Conversations and Details showing each account's provider logo, email and details, replacing the "All accounts" back bar. The Provider filter is hidden while an account is selected.
-- Settings tab bar and dashboard period chips scroll horizontally in narrow panels instead of wrapping.
-- Open the dashboard through **Open Dashboard** in the sidebar toolbar, command palette, quota hover and account picker. Its editor tab is named **AgentTandem Dashboard**.
-- Account picker shows each quota period's percentage left with its reset countdown, without exact reset times.
-- Settings page titles match their tab names and no longer show a small label above.
-- Dashboard Preferences gives each setting its own card with a title, description, and controls, grouped into **Status bar**, **Dashboard**, and **Extension tools**.
-- With several VS Code windows open, quota and sign-ins are read once per minute in total instead of once per window: a window reuses another's recent result, including for saved accounts every ten minutes. Account switches, sign-ins and CLI changes still read immediately.
-- Local and Device **Tokens per 1%** estimates now warn that they assume the account is used only on this device, since quota also counts other devices. Conversation quota equivalents from those estimates are marked **this device only**.
-- **Assign history** now opens a dialog over the current dashboard tab, from Unknown account cards, conversation details or the **History assignments** row in Details, instead of jumping to an expandable section. Saved assignments are listed and removable in the same dialog.
+- The sidebar shows the current chat or section title and offers **Back** where available. **New chat**, **Conversation history**, and **Review changes** are in the title bar, with **Open in tab** and **Getting started** in its **⋯** menu. The dashboard’s **Open chat** icon works with any chat placement.
+- Conversation history uses compact rows grouped by the local day each chat was last updated. Expand a day manually or search to expand matching days. Hover to see full titles and timestamps. The workspace picker and provider filters stay together in narrow panels.
+- Chat groups messages by local day and shows timestamps on hover. User messages are labeled **You**, with **Restore code** and **Edit and resend** below. Consecutive calls and results appear in a collapsed **Tools** section, and image previews fill their cards without a filename label.
+- In the composer, enable Codex **Fast mode** from the model picker and turn it off with the lightning chip. Select the current reasoning level to open its keyboard-accessible slider. Model and provider menus fit narrow panels.
+- Chat and Review file rows open diffs on click and reveal actions on hover, with diff counts aligned on the right. Review shows a pending count with a tooltip beside its title, and conversation groups reveal **Open conversation** on hover.
+- Review keeps its toolbar on one row, collapsing controls as space runs out. The editor menu groups navigation and diff commands, and Workspace Changes offers **Undo**. Bulk actions use distinct icons, inline native diff actions use text, and Review only reveals files in Explorer when `agentTandem.revealReviewFileInExplorer` is enabled.
+- Review reverts, checkpoint restores, agent approvals, and saved-history cleanup use VS Code-themed dialogs with affected files or permission details.
+- **Manage CLIs** shows versions and installation origins in collapsed cards. **Add** opens a two-step wizard, editing happens in place, and long executable paths can be revealed or copied.
+- **Manage CLIs** now includes **Diagnostics**. Set a provider’s **Default** to **Automatic** or a saved installation, and use **This project** to inherit the default or replace an existing PATH override. **Choose Codex CLI** and **Choose Claude Code CLI** offer the same project choices, with unavailable installations disabled.
+- Dashboard and Review share the chat picker style, and dashboard date fields use a themed calendar. Preferences groups settings into **Status bar**, **Dashboard**, and **Extension tools**. Panel headers and settings descriptions are more compact, with **Refresh** on the right in Conversations, Review, and Manage CLIs.
+- Status bar hovers put pending files first for Review and show quota reset and earned-reset expiry countdowns for Codex and Claude Code. The Preferences preview matches the live quota hover.
 
 ### Removed
 
-- Provider checks now run in **Manage CLIs**. Use **This project** to choose a Codex or Claude Code executable. The separate Diagnostics page and CLI picker have been removed.
-
-- Removed the Accept and Revert description and the accordion’s diff icon from the pending review panel in chat.
-- Removed the **Read-only transcript** label from subagent conversations.
-- Removed the duplicate workspace path beneath the Conversations header.
-- Removed provider badges from chat tool calls and results.
-- Removed the duplicate Change tracking button from Review. Use **Change tracking…** in the **⋯** menu.
-- Removed the **Extension Storage** section from the Codex and Claude Code status bar hovers. Storage details are available in **Settings → Storage**.
+- Removed the standalone Diagnostics page and CLI picker, the duplicate workspace path in Conversations, and the duplicate Change tracking button in Review. Use **Change tracking…** from the **⋯** menu.
+- Removed the explanatory text and diff icon from the pending review header and provider badges from chat tools. Storage details moved from quota hovers to **Settings → Storage**.
 
 ### Fixed
 
 - Storage cleanup (**Clean now**, **Choose what to clean…**, automatic cleanup and the size limit) no longer stops with "Storage metadata exceeds the cleanup limit" once a tracked project has very many files. One project with about 180,000 files had a 28 MB snapshot list, which blocked every cleanup.
 - Cleanup no longer stops with "A referenced snapshot is missing" when a change tracking baseline lost part of its data to a pre-0.1.49 build. The damaged baseline is left as it is and everything else is cleaned. **Storage → Restore history** also lists it again, so you can delete it there.
 - **Clean now** and **Preview unused files…** wait while another storage task is running, instead of showing "Wait for storage management to finish" when clicked again.
-- The Preferences status bar preview shows the same quota hover as the live status bar, including quota bars, reset countdowns, earned resets, and saved accounts.
-- Opening the reasoning effort popup leaves focus on its button. Tab to the slider to adjust it with a rounded focus ring that matches the VS Code theme.
-- Chat uses consistent spacing between messages and the **Tools** and **Subagents** accordions, including when a message ends with a code block.
-- The bottom of a chat scrolls clear of the floating message navigator.
-- The pending review row stays above the chat input. Its accordion trigger and review actions are available when the current conversation has pending files. Review shows all pending workspace changes, including shared and unassigned files.
-- Pending review files and Review conversation groups keep a steady background when you press their headings, matching the chat Subagents accordion.
-- **Open conversation** in Review opens the chat directly, even if conversation history was open before Review.
-- Conversations shows main Codex chats and omits subagents and Guardian reviews from the list and its counts.
-- Conversation history date groups align with the workspace filter and search field.
-- **Choose Codex CLI** and **Choose Claude Code CLI** now match the project choices in **Manage CLIs**, including disabled installations and any existing terminal PATH override.
-- Quick Accounts shows each email once per entry for Codex and Claude Code.
-- In narrow Manage CLIs panels, provider names stay on one line and the header actions move below them together, like the pending-review header.
-- The chat composer’s **Model** and provider lists stay visible when expanded in narrow panels.
-- Accepting or rejecting a block in the custom review editor updates the same diff in place and keeps the viewport anchored while that file still has pending changes.
-- The Agent Tandem view now declares its icon, fixing the missing-icon manifest warning and retaining its icon when moved to another view container.
-- VSIX packaging uses the updated project-local packager (4.1.1), resolving the outdated-version warning that persisted after upgrading the global `vsce` installation.
-- **API equivalent** cost now covers GPT-6.2 Sol, GPT-6.2 Astra and GPT-6.1 Terra, plus Claude Fable 5.2 and Claude Mythos 5.2, at their published standard rates (including the 2× input / 1.5× output premium for GPT prompts over 272K tokens). Their tokens were previously counted as unpriced. Existing history is repriced on the next usage read. Other models on the OpenAI pricing page, such as the GPT-5 mini/nano/pro variants, GPT-4.1, GPT-4o and o3, are priced too.
-- Far fewer Codex tokens show as **Unknown account**. Codex records the quota reset times it was served with each response, and these identify the account, so responses are matched to it through saved quota history, even after an account switch made without restarting the extension host or with several VS Code windows open. Older weeks that AgentTandem never read quota for are attributed to the account that created the threads started in that week, but only when every such thread had the same, known creator. Reset-time matches take priority over quota-rise matches and show as **Matched from quota changes**; weeks labelled by their threads' creator are used only when neither matches, still before the active sign-in, and show as **Inferred from session evidence**. Neither replaces native evidence or your own choices. Codex usage from before reset times were written, and Claude history from before AgentTandem read its quota, still has nothing that identifies the account; assign it by date range. Token history is re-read once after updating.
-- Claude usage from recent Claude Code versions (for example 2.1.319; 2.1.295 does not record it) is attributed to the account Claude Code records as the session's owner, instead of a quota-rise match or the active sign-in, which occasionally picked the wrong account. A response copied into a session continued by another account uses neither owner and falls back to quota-rise matches or the active sign-in, as before. Older Claude sessions record no owner and are unchanged; token history is re-read once after updating.
-- **Tokens per 1% quota** no longer reports absurd API figures such as hundreds of billions of tokens per cycle. A lifetime token total of 0 was accepted as the starting point of an API baseline, so the next real reading looked like one cycle that used every token the account ever had. A total of 0 is now treated as not reported, and baselines that began at 0 are discarded. Saved API cycles that claim more than 25 times the account's typical tokens per 1% are ignored in the figures, without being removed from your history. The affected window shows **Waiting for new usage** until a real reading follows.
-- Device **Tokens per 1% quota** estimates no longer count another account's usage on the same machine. Usage attributed to a different account by the active CLI sign-in, a quota match or your own assignment was added to every account's Device figure, so with several Codex or Claude accounts on one machine an account could show many times its real rate, or a rate made entirely of other accounts' tokens. Unknown usage and usage attributed to the account itself still count. Device cycles saved before this fix are ignored in the figures, without being removed from your history, so an account may show an API figure, fewer cycles, or **No tokens attributed to this account** until new usage is recorded.
-- **Tokens per 1% quota** cycles no longer run across resets that were never read at 0%, such as while you used another account or when a request came right after a reset. A new cycle now starts when a reading comes after the last known reset time, or falls in a window that began after the previous reading, instead of only on a 0% reading, so one "5h" cycle can no longer collect 30+ hours of tokens. Saved cycles longer than their window are ignored in the figures, without being removed from your history.
-- With several VS Code windows open, a quota reading that one window got late (such as 8% → 4% → 8%) no longer causes huge burn rates on the Quota tab, restarts the **Tokens per 1%** cycle, or creates false quota-rise matches. Such dips are dropped once a later reading returns to the earlier level, including ones already saved. A real drop is used after 5 minutes of readings.
-- Dashboard tabs stay clear of the account picker while scrolling, including in narrow panels. Switching pinned Overview, Quota, Conversations or Details tabs reveals the start of the new section, and scrolling content stays behind the account picker.
-- Keyboard navigation keeps the selected dashboard tab visible in narrow panels.
-- Quota-cycle views let you switch between Codex and Claude accounts without leaving the selected cycle range.
-- Banked reset details reopen on hover or focus after being dismissed with Escape.
-- Settings search boxes, date pickers, dropdowns and expandable sections use the themed styling, and date fields and their calendar follow the VS Code light or dark theme.
-- The quota status-bar item turns warning at 25% or less left and error when exhausted, matching its hover.
-- Status-bar quota hover opens immediately instead of waiting for the account refresh.
+- The chat composer keeps pending review actions accessible, and Review includes shared and unassigned workspace changes. **Open conversation** goes directly to the chat, and accepting or rejecting a block keeps the diff anchored while the file still has pending changes.
+- Chat spacing stays consistent around **Tools** and **Subagents**, and the last message scrolls clear of the message navigator. Conversation history excludes Codex subagents and Guardian reviews from its list and counts.
+- Quick Accounts lists each email once per provider entry. In narrow **Manage CLIs** panels, provider names stay on one line and actions move below them together.
+- Fixed the missing Agent Tandem view icon and outdated VSIX packager warning.
+
+## [0.1.50] - 2026-11-18
+
+### Fixed
+
+- **API equivalent** costs now include more OpenAI and Claude models, including GPT-6.2 Sol, GPT-6.2 Astra, GPT-6.1 Terra, Claude Fable 5.2, and Claude Mythos 5.2. Estimates apply applicable long-context rates and recalculate existing history on the next usage read.
+
+## [0.1.49] - 2026-11-17
+
+### Added
+
+- **Restore code** works for messages sent from the Codex and Claude Code CLIs and extensions while change tracking is on. The restore preview lists all files that would change when returning the workspace to its last tracked state before the message. **Undo restore** brings back the state from before the restore.
+
+### Changed
+
+- Checkpoint restores capture recent saved edits before showing the preview and keep change tracking active after the restore.
+- In Git repositories, change tracking reuses unchanged files from Git to speed up capture and reduce disk use. Existing baselines migrate on the next scan. If a needed Git object is missing, Review skips the affected file and shows a notice.
+
+## [0.1.48] - 2026-11-08
+
+### Fixed
+
+- Codex usage matches accounts using recorded quota reset times, including after an account switch. When quota evidence is unavailable, older usage can be inferred from weeks where every recorded thread has the same known creator. Native account evidence and manual assignments take priority.
+- Claude usage uses the session owner recorded by recent Claude Code versions. Responses copied across accounts fall back to quota matches or the active CLI sign-in.
+
+## [0.1.47] - 2026-11-08
+
+### Fixed
+
+- Device **Tokens per 1% quota** estimates exclude usage attributed to other accounts. Previously saved device estimates are excluded from calculations until new usage is recorded.
+- Quota cycles start on the correct boundary when a reset occurs between readings. Previously saved cycles longer than their quota window are excluded from estimates.
+
+## [0.1.46] - 2026-11-06
+
+### Changed
+
+- Updated the documentation screenshots for accounts, usage dashboards, chat, Review, and Storage.
+
+## [0.1.45] - 2026-11-06
+
+### Added
+
+- **Storage → App data** shows usage and cleanup policies by data type. Use **Clean now** or **Preview unused files…** to manage review snapshots, **Compress** to shrink saved token history, or **Delete kept history…** to remove token counts from deleted chats.
+- AgentTandem automatically cleans up unused review snapshots and enforces a rolling 5 GB data limit. When the limit is exceeded, unused snapshots are removed first, followed by the oldest message restore points. Pending changes, tracking baselines, the last undo backup, token history, accounts, and attachments are protected. Set `agentTandem.storageLimitGB` to `0` to disable the limit, or use `agentTandem.autoCleanReviewData` to control automatic snapshot cleanup.
+- On Windows, Storage explains how to exclude the AgentTandem data folder from antivirus scanning to speed up snapshot writes, with options to copy the folder path or Defender command and open Windows Security.
+
+### Changed
+
+- **Tokens per 1% quota** aligns each cycle’s figures with its chart column and shows up to 30 cycles with **Show all**.
+- Background change tracking normally scans only files reported by VS Code. Refresh, opening Changes, and agent turns still scan the entire workspace.
+- Review computes diffs in the background to keep VS Code responsive when comparing large changes.
+
+### Fixed
+
+- API **Tokens per 1% quota** ignores zero starting totals and excludes extreme outlier cycles from estimates.
+
+## [0.1.44] - 2026-11-05
+
+### Added
+
+- Usage from external Claude Code and Codex chats falls back to the **Active CLI sign-in** when account evidence is unavailable. Quota matches and manual assignments take priority.
+
+### Changed
+
+- VS Code windows share recent quota and sign-in results. Switching accounts, signing in, or changing CLIs still triggers an immediate refresh.
+- **Assign history** opens a dialog from the current dashboard tab where you can make and remove assignments.
+- Local and Device **Tokens per 1%** estimates identify conversation quota equivalents as **this device only** and explain how usage on other devices can affect the estimate.
+
+### Fixed
+
+- Delayed readings from another VS Code window no longer create false quota spikes, cycle boundaries, or account matches when later readings confirm the dip was stale.
+
+## [0.1.43] - 2026-11-05
+
+### Changed
+
+- Use **Open Dashboard** from the sidebar toolbar, command palette, quota hover, or account picker. The editor tab is named **AgentTandem Dashboard**.
+- The account picker now sits beside **Overview**, **Quota**, **Conversations**, and **Details** on the pinned tab row.
+
+### Fixed
+
+- Switching dashboard tabs reveals the start of the selected section. Keyboard navigation keeps the selected tab visible in narrow panels.
+
+## [0.1.42] - 2026-11-05
+
+### Added
+
+- Earned Codex resets show their titles, expiry dates, and time remaining in the quota hover and through **Banked resets** on account cards.
+- Use **AgentTandem: Diagnostics** from the native overflow menu or command palette.
+
+### Changed
+
+- Sidebar and editor-tab actions use VS Code’s native **⋯** menu. **Settings** opens the dashboard and its settings tabs, and the account picker offers a single **Open settings** entry.
+- Dashboard, Accounts, and Storage tabs stay pinned, and the settings tab bar and date chips scroll horizontally in narrow panels. The dashboard’s account picker replaces the **All accounts** back bar.
+- Quota labels use filled **5h** and **7d** badges, and the account picker groups each quota percentage with its reset countdown.
+- Popovers, dropdowns, and dashboard date controls follow the VS Code theme. Popovers use an opaque background in high-contrast and reduced-transparency modes.
+
+### Fixed
+
+- The quota hover opens without waiting for an account refresh. The status bar warns at 25% remaining and shows an error when quota is exhausted, matching the hover.
+- Dashboard tabs stay clear of the account picker while scrolling. Switching between Codex and Claude accounts keeps the selected quota-cycle range.
+- Banked reset details reopen on hover or focus after dismissal with Escape.
 
 ## [0.1.41] - 2026-11-03
 
@@ -173,6 +187,12 @@ Historical version dates and boundaries are reconstructed from package version c
 ### Added
 
 - Usage: correct historical account switches for selected response IDs. Corrections appear as **User confirmed**, take priority over broad conversation or date assignments, and can be removed in the dashboard.
+
+## [0.1.37] - 2026-10-31
+
+### Added
+
+- Accounts refresh automatically after a Codex or Claude Code terminal sign-in. Renewed credentials are verified and saved until you choose **Switch account**, and a manual refresh shows progress.
 
 ## [0.1.36] - 2026-10-30
 
@@ -267,8 +287,6 @@ Historical version dates and boundaries are reconstructed from package version c
 ## [0.1.23] - 2026-10-18
 
 ### Added
-
-- Accounts: automatically update Claude Code and Codex profiles when terminal sign-in finishes. New credentials retry immediately after an earlier sign-in error; unchanged credentials retain quota backoff. Verify account identity before updating the saved profile, discard stale signed-out reads during login, and keep renewed credentials until explicitly switching to them, including across restarts. Show progress while refreshing accounts.
 
 - Review: select the file being reviewed in VS Code's Explorer as you move between changed files, in both the Monaco review and native diffs. Review files open from snapshots, so Explorer's own auto-reveal never followed them. Keyboard focus returns to the editor; deleted files are skipped. Turn off with `agentTandem.revealReviewFileInExplorer`.
 
@@ -543,45 +561,55 @@ Historical version dates and boundaries are reconstructed from package version c
 - Fixed Enter/send failing in projects over 20,000 files: removed workspace file-count/total-size limits, bounded capture concurrency and reuse of unchanged/identical blobs.
 - Resolve unavailable ChatGPT Codex models from the app-server catalog without changing CLI configuration.
 
-[Unreleased]: https://github.com/nh-kng/agent-tandem/compare/6d0ed39b1ef87f399d93117f931e19dd73088837...HEAD
-[0.1.41]: https://github.com/nh-kng/agent-tandem/compare/f8f13a992dfd139d2e7d38ba5380219444346047...6d0ed39b1ef87f399d93117f931e19dd73088837
-[0.1.40]: https://github.com/nh-kng/agent-tandem/compare/0417483d87e64849e83cce371f266b31830613d7...f8f13a992dfd139d2e7d38ba5380219444346047
-[0.1.39]: https://github.com/nh-kng/agent-tandem/compare/10ab9daee2380b84f6ad3d8b0aa0ed999d3dc844...0417483d87e64849e83cce371f266b31830613d7
-[0.1.38]: https://github.com/nh-kng/agent-tandem/compare/074c7fdb9e4a70582c401e301f0d4b3757f321e8...10ab9daee2380b84f6ad3d8b0aa0ed999d3dc844
-[0.1.36]: https://github.com/nh-kng/agent-tandem/compare/2bddae8575a72d8a0341d78b4c7176f38235d861...074c7fdb9e4a70582c401e301f0d4b3757f321e8
-[0.1.35]: https://github.com/nh-kng/agent-tandem/compare/4e54c88915fe2ced7f152c2bf3e3500e965858da...2bddae8575a72d8a0341d78b4c7176f38235d861
-[0.1.34]: https://github.com/nh-kng/agent-tandem/compare/c0188777a174d5f37934c3f96d50c90dd4272381...4e54c88915fe2ced7f152c2bf3e3500e965858da
-[0.1.33]: https://github.com/nh-kng/agent-tandem/compare/b3f83a893a603c69cd31db3b97217523478277c5...c0188777a174d5f37934c3f96d50c90dd4272381
-[0.1.32]: https://github.com/nh-kng/agent-tandem/compare/90eeee7c589f84679168500a0f1c854ad739886b...b3f83a893a603c69cd31db3b97217523478277c5
-[0.1.31]: https://github.com/nh-kng/agent-tandem/compare/88752e245d10d4923fd0a14fc7cc533ae979483d...90eeee7c589f84679168500a0f1c854ad739886b
-[0.1.30]: https://github.com/nh-kng/agent-tandem/compare/286b958419158ad078188317ff3ee84751503efe...88752e245d10d4923fd0a14fc7cc533ae979483d
-[0.1.29]: https://github.com/nh-kng/agent-tandem/compare/2584ddd31153c780284663357731c3d95bb6b063...286b958419158ad078188317ff3ee84751503efe
-[0.1.28]: https://github.com/nh-kng/agent-tandem/compare/054f40594ed02d5746568ff7c4b3bcb3d0763171...2584ddd31153c780284663357731c3d95bb6b063
-[0.1.27]: https://github.com/nh-kng/agent-tandem/compare/1b0e6ab7861db290fe08b8eb2dcb1be1420a8cf3...054f40594ed02d5746568ff7c4b3bcb3d0763171
-[0.1.26]: https://github.com/nh-kng/agent-tandem/compare/04e2c7284e473a25135d8c50b498aff59b62a9fe...1b0e6ab7861db290fe08b8eb2dcb1be1420a8cf3
-[0.1.25]: https://github.com/nh-kng/agent-tandem/compare/07502d5ece0bead4a8e6c9e63cd0f4fe70874085...04e2c7284e473a25135d8c50b498aff59b62a9fe
-[0.1.24]: https://github.com/nh-kng/agent-tandem/compare/91598c44525df70642d5c68d86fcb3e3f4f9662f...07502d5ece0bead4a8e6c9e63cd0f4fe70874085
-[0.1.23]: https://github.com/nh-kng/agent-tandem/compare/e7e32039723f4db4a28527f131aebd4b498eaa6d...91598c44525df70642d5c68d86fcb3e3f4f9662f
-[0.1.22]: https://github.com/nh-kng/agent-tandem/compare/53e7a021f137377991bd6a991aa69618603d3455...e7e32039723f4db4a28527f131aebd4b498eaa6d
-[0.1.21]: https://github.com/nh-kng/agent-tandem/compare/3b5509e5f53f1625ddf20d94fb52cacbd34d92fb...53e7a021f137377991bd6a991aa69618603d3455
-[0.1.20]: https://github.com/nh-kng/agent-tandem/compare/24507e279164a0e7bbd4b7600fe36ba62751487b...3b5509e5f53f1625ddf20d94fb52cacbd34d92fb
-[0.1.19]: https://github.com/nh-kng/agent-tandem/compare/fcc348ba3c9789eeb5978fc569030b9afea3316e...24507e279164a0e7bbd4b7600fe36ba62751487b
-[0.1.18]: https://github.com/nh-kng/agent-tandem/compare/0d7f7b151f0795e16db515a562ac7cd7e7b8e98c...fcc348ba3c9789eeb5978fc569030b9afea3316e
-[0.1.17]: https://github.com/nh-kng/agent-tandem/compare/97124edabd54a3a8002986fb95d89c10c671f7b1...0d7f7b151f0795e16db515a562ac7cd7e7b8e98c
-[0.1.16]: https://github.com/nh-kng/agent-tandem/compare/33267c194e6db3f4b4603ab5fb76c360bcfa6103...97124edabd54a3a8002986fb95d89c10c671f7b1
-[0.1.15]: https://github.com/nh-kng/agent-tandem/compare/f92be9d958ed506451595744a3d753facdd17938...33267c194e6db3f4b4603ab5fb76c360bcfa6103
-[0.1.14]: https://github.com/nh-kng/agent-tandem/compare/ba089549a74ad2d52d8c2d78e79095cc32a3c51b...f92be9d958ed506451595744a3d753facdd17938
-[0.1.13]: https://github.com/nh-kng/agent-tandem/compare/8730972e7317b8a8a7373a381ce725fdd10db5de...ba089549a74ad2d52d8c2d78e79095cc32a3c51b
-[0.1.12]: https://github.com/nh-kng/agent-tandem/compare/6f83872f9d92781bcfbcdb2d81b324571e97ca0e...8730972e7317b8a8a7373a381ce725fdd10db5de
-[0.1.11]: https://github.com/nh-kng/agent-tandem/compare/9114441a3865294d6982bf0cf813ab6e41236ecd...6f83872f9d92781bcfbcdb2d81b324571e97ca0e
-[0.1.10]: https://github.com/nh-kng/agent-tandem/compare/1d97a890b13b16ca522d54c42b592421146133c4...9114441a3865294d6982bf0cf813ab6e41236ecd
-[0.1.9]: https://github.com/nh-kng/agent-tandem/compare/c57bdb6240d627b4234f7722ada8aed0875fa5b7...1d97a890b13b16ca522d54c42b592421146133c4
-[0.1.8]: https://github.com/nh-kng/agent-tandem/compare/771f1ad39323db5450f3a7f0b2424b1f515183f6...c57bdb6240d627b4234f7722ada8aed0875fa5b7
-[0.1.7]: https://github.com/nh-kng/agent-tandem/compare/2050de8609fb75edba45bdac46c0b04f32260ecf...771f1ad39323db5450f3a7f0b2424b1f515183f6
-[0.1.6]: https://github.com/nh-kng/agent-tandem/compare/ba04ebe5260c824708c2dbed71c75c71b133af02...2050de8609fb75edba45bdac46c0b04f32260ecf
-[0.1.5]: https://github.com/nh-kng/agent-tandem/compare/94d3f180adadc0e99d482abe59e375ac6d4feac6...ba04ebe5260c824708c2dbed71c75c71b133af02
-[0.1.4]: https://github.com/nh-kng/agent-tandem/compare/d78f541eceee07202053000abd8a26592c723fbf...94d3f180adadc0e99d482abe59e375ac6d4feac6
-[0.1.3]: https://github.com/nh-kng/agent-tandem/compare/6c882e747eb34bc82170f761233966ba46340a04...d78f541eceee07202053000abd8a26592c723fbf
-[0.1.2]: https://github.com/nh-kng/agent-tandem/compare/fd99a3b305289efcf3c9e571d0b4149d2fba83b6...6c882e747eb34bc82170f761233966ba46340a04
-[0.1.1]: https://github.com/nh-kng/agent-tandem/compare/49618bd224ad8ef287c7560241f151b04711de3b...fd99a3b305289efcf3c9e571d0b4149d2fba83b6
+[Unreleased]: https://github.com/nh-kng/agent-tandem/compare/30c2c28e53ddb2479b0b41bf4ded121908230f03...HEAD
+[0.1.50]: https://github.com/nh-kng/agent-tandem/compare/9aa7bba7a77259fe1280cd7e6e6469053216ab67...30c2c28e53ddb2479b0b41bf4ded121908230f03
+[0.1.49]: https://github.com/nh-kng/agent-tandem/compare/638a3a648243f46c0eab9fe835ec7698e97157ad...9aa7bba7a77259fe1280cd7e6e6469053216ab67
+[0.1.48]: https://github.com/nh-kng/agent-tandem/compare/731b062092e8a8a8bfc647c37f1711a777e1fbe9...638a3a648243f46c0eab9fe835ec7698e97157ad
+[0.1.47]: https://github.com/nh-kng/agent-tandem/compare/3e5c045148337aee6e56d2979325cd6bd409c288...731b062092e8a8a8bfc647c37f1711a777e1fbe9
+[0.1.46]: https://github.com/nh-kng/agent-tandem/compare/b1b968cef9f3176721ef007b91865e90300f8513...3e5c045148337aee6e56d2979325cd6bd409c288
+[0.1.45]: https://github.com/nh-kng/agent-tandem/compare/5a16efcd08b55dbecbff3c9dd8cae846147ae4a6...b1b968cef9f3176721ef007b91865e90300f8513
+[0.1.44]: https://github.com/nh-kng/agent-tandem/compare/8990e4bd756e98aaba7df59e63ab771e9ba36f27...5a16efcd08b55dbecbff3c9dd8cae846147ae4a6
+[0.1.43]: https://github.com/nh-kng/agent-tandem/compare/4f22cf6b31b6d0e6cd68d11010cea10264ca4aaf...8990e4bd756e98aaba7df59e63ab771e9ba36f27
+[0.1.42]: https://github.com/nh-kng/agent-tandem/compare/v0.1.41...4f22cf6b31b6d0e6cd68d11010cea10264ca4aaf
+[0.1.41]: https://github.com/nh-kng/agent-tandem/compare/v0.1.40...v0.1.41
+[0.1.40]: https://github.com/nh-kng/agent-tandem/compare/v0.1.39...v0.1.40
+[0.1.39]: https://github.com/nh-kng/agent-tandem/compare/v0.1.38...v0.1.39
+[0.1.38]: https://github.com/nh-kng/agent-tandem/compare/v0.1.37...v0.1.38
+[0.1.37]: https://github.com/nh-kng/agent-tandem/compare/v0.1.36...v0.1.37
+[0.1.36]: https://github.com/nh-kng/agent-tandem/compare/v0.1.35...v0.1.36
+[0.1.35]: https://github.com/nh-kng/agent-tandem/compare/v0.1.34...v0.1.35
+[0.1.34]: https://github.com/nh-kng/agent-tandem/compare/v0.1.33...v0.1.34
+[0.1.33]: https://github.com/nh-kng/agent-tandem/compare/v0.1.32...v0.1.33
+[0.1.32]: https://github.com/nh-kng/agent-tandem/compare/v0.1.31...v0.1.32
+[0.1.31]: https://github.com/nh-kng/agent-tandem/compare/v0.1.30...v0.1.31
+[0.1.30]: https://github.com/nh-kng/agent-tandem/compare/v0.1.29...v0.1.30
+[0.1.29]: https://github.com/nh-kng/agent-tandem/compare/v0.1.28...v0.1.29
+[0.1.28]: https://github.com/nh-kng/agent-tandem/compare/v0.1.27...v0.1.28
+[0.1.27]: https://github.com/nh-kng/agent-tandem/compare/v0.1.26...v0.1.27
+[0.1.26]: https://github.com/nh-kng/agent-tandem/compare/v0.1.25...v0.1.26
+[0.1.25]: https://github.com/nh-kng/agent-tandem/compare/v0.1.24...v0.1.25
+[0.1.24]: https://github.com/nh-kng/agent-tandem/compare/v0.1.23...v0.1.24
+[0.1.23]: https://github.com/nh-kng/agent-tandem/compare/v0.1.22...v0.1.23
+[0.1.22]: https://github.com/nh-kng/agent-tandem/compare/v0.1.21...v0.1.22
+[0.1.21]: https://github.com/nh-kng/agent-tandem/compare/v0.1.20...v0.1.21
+[0.1.20]: https://github.com/nh-kng/agent-tandem/compare/v0.1.19...v0.1.20
+[0.1.19]: https://github.com/nh-kng/agent-tandem/compare/v0.1.18...v0.1.19
+[0.1.18]: https://github.com/nh-kng/agent-tandem/compare/v0.1.17...v0.1.18
+[0.1.17]: https://github.com/nh-kng/agent-tandem/compare/v0.1.16...v0.1.17
+[0.1.16]: https://github.com/nh-kng/agent-tandem/compare/v0.1.15...v0.1.16
+[0.1.15]: https://github.com/nh-kng/agent-tandem/compare/v0.1.14...v0.1.15
+[0.1.14]: https://github.com/nh-kng/agent-tandem/compare/v0.1.13...v0.1.14
+[0.1.13]: https://github.com/nh-kng/agent-tandem/compare/v0.1.12...v0.1.13
+[0.1.12]: https://github.com/nh-kng/agent-tandem/compare/v0.1.11...v0.1.12
+[0.1.11]: https://github.com/nh-kng/agent-tandem/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/nh-kng/agent-tandem/compare/v0.1.9...v0.1.10
+[0.1.9]: https://github.com/nh-kng/agent-tandem/compare/v0.1.8...v0.1.9
+[0.1.8]: https://github.com/nh-kng/agent-tandem/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/nh-kng/agent-tandem/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/nh-kng/agent-tandem/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/nh-kng/agent-tandem/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/nh-kng/agent-tandem/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/nh-kng/agent-tandem/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/nh-kng/agent-tandem/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/nh-kng/agent-tandem/compare/49618bd224ad8ef287c7560241f151b04711de3b...v0.1.1
 [0.1.0]: https://github.com/nh-kng/agent-tandem/tree/49618bd224ad8ef287c7560241f151b04711de3b
