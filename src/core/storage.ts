@@ -13,6 +13,9 @@ const grace = 10 * 60 * 1000;
 // these links; they are unrelated to our snapshot references and candidates.
 const nativeTemporary = (relative: string) => /^accounts\/profiles\/[a-f0-9-]{36}\/tmp(?:\/|$)/i.test(relative);
 const vanishedTemporary = (error: unknown, relative: string) => nativeTemporary(relative) && (error as NodeJS.ErrnoException).code === 'ENOENT';
+// Cleanup parses metadata to find what is still referenced. A snapshot manifest lists every file of a project, so a
+// large repository needs tens of MB; this only stops files that could not be parsed safely at all.
+const maxMetadataBytes = 256 * 1024 * 1024;
 export interface StoredFile { relative: string; bytes: number; modified: number; changed: number; inode: number }
 export interface CleanupPlan { token: string; createdAt: number; files: StoredFile[]; bytes: number }
 export interface CleanupResult { removed: number; bytes: number; skipped: number; failures: string[] }
@@ -115,7 +118,7 @@ export class StorageManager {
     await walk(this.root, ''); return result;
   }
   private async json(file: StoredFile): Promise<any> {
-    if (file.bytes > 16 * 1024 * 1024) throw new Error(`Storage metadata exceeds the cleanup limit: ${file.relative}`);
+    if (file.bytes > maxMetadataBytes) throw new Error(`Storage metadata exceeds the cleanup limit: ${file.relative}`);
     try { return JSON.parse(await readFile(path.join(this.root, file.relative), 'utf8')); }
     catch { throw new Error(`Cleanup blocked by unreadable metadata: ${file.relative}`); }
   }
@@ -178,20 +181,25 @@ export class StorageManager {
     }
     // A difference manifest is only readable with its complete base. A base that is otherwise unused keeps just the
     // entries its differences still show, so content every later capture replaced can go.
+    // Builds before difference snapshots could remove a base they did not know was in use. Such a difference can never
+    // be restored, so there is nothing left to protect for it: it stays where it is and cleanup carries on.
+    const damaged = new Set<string>();
     for (const key of [...kept]) {
       const { scope, info } = manifests.get(key)!;
       if (!info.base) continue;
       const base = manifests.get(`${scope}:${info.base}`);
-      if (!base || base.info.base) throw new Error('A referenced snapshot is missing. Repair storage before cleanup.');
+      if (!base) { damaged.add(key); continue; }
+      if (base.info.base) throw new Error(`Invalid snapshot: ${base.file.relative}`);
       kept.add(`${scope}:${info.base}`); bases.add(`${scope}:${info.base}`);
     }
+    const blobFiles = new Set(files.map(file => file.relative)), blobPath = (scope: 'review' | 'demo', id: string) => `${scope === 'review' ? 'reviews/history/' : ''}blobs/${id}`;
     for (const [key, { file, scope, info }] of manifests) {
       if (!kept.has(key)) { removable.push(file); continue; }
       if (!info.base && bases.has(key) && !needed.has(key)) continue;
-      for (const blob of neededBlobs(info, info.base ? manifests.get(`${scope}:${info.base}`)!.info : undefined)) blobs[scope].add(blob);
+      const base = info.base ? manifests.get(`${scope}:${info.base}`)?.info : undefined;
+      for (const blob of neededBlobs(info, base)) if (!damaged.has(key) || blobFiles.has(blobPath(scope, blob))) blobs[scope].add(blob);
     }
-    const blobFiles = new Set(files.map(file => file.relative));
-    for (const scope of ['review', 'demo'] as const) for (const id of blobs[scope]) if (!blobFiles.has(`${scope === 'review' ? 'reviews/history/' : ''}blobs/${id}`)) throw new Error('A protected snapshot blob is missing. Repair storage before cleanup.');
+    for (const scope of ['review', 'demo'] as const) for (const id of blobs[scope]) if (!blobFiles.has(blobPath(scope, id))) throw new Error('A protected snapshot blob is missing. Repair storage before cleanup.');
     for (const file of files) {
       const match = /^(reviews\/history\/)?blobs\/([a-f0-9]{64})$/.exec(file.relative);
       if (match && (released.has(file.relative) || (!selectedOnly && now - file.modified >= minAge)) && !blobs[match[1] ? 'review' : 'demo'].has(match[2]!)) removable.push(file);
@@ -215,9 +223,12 @@ export class StorageManager {
       let entry = paths.get(id);
       if (!entry) {
         entry = (async () => {
-          const own = await info(id), base = own.base ? await info(own.base) : undefined;
+          const own = await info(id);
+          // A difference whose base is gone cannot be restored, but it must stay listable so users can release it.
+          // Builds before difference snapshots did not know a base was in use and could clean it up.
+          const base = own.base && byPath.has(relative(own.base)) ? await info(own.base) : undefined;
           if (base?.base) throw new Error(`Invalid snapshot: ${relative(id)}`);
-          return [relative(id), ...(own.base ? [relative(own.base)] : []), ...[...neededBlobs(own, base)].map(blob => `reviews/history/blobs/${blob}`)];
+          return [relative(id), ...(base ? [relative(own.base!)] : []), ...[...neededBlobs(own, base)].map(blob => `reviews/history/blobs/${blob}`)];
         })();
         paths.set(id, entry);
       }

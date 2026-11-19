@@ -319,6 +319,41 @@ describe('Snapshot storage management', () => {
     const restored = await f.reviews.restoreCheckpoint(f.project, await f.reviews.prepareCheckpoint(f.project, checkpoint), snapshot => f.checkpoints.saveUndo(f.project, snapshot).then(() => undefined));
     expect(restored.busy).toBe(false); expect(await demo.snapshot(saved.id)).toBeTruthy();
   });
+  it('plans cleanup with a snapshot of a very large project instead of blocking at 16 MB', async () => {
+    const f = await fixture(), blob = await f.reviews.history.putBlob(Buffer.from('shared')), id = randomUUID();
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 220_000; index++) files[`src/vendor/package-${index % 500}/module-${index}.php`] = blob;
+    const large = path.join(f.reviews.history.directory, 'snapshots', `${id}.json`);
+    await mkdir(path.dirname(large), { recursive: true }); await writeFile(large, JSON.stringify({ id, files }));
+    expect((await lstat(large)).size).toBeGreaterThan(16 * 1024 * 1024);
+    const unused = await f.orphan(); await f.age();
+    const plan = await f.manager.preview();
+    expect(plan.files.map(file => file.relative)).toEqual(expect.arrayContaining([`reviews/history/snapshots/${unused.id}.json`, `reviews/history/snapshots/${id}.json`]));
+    expect(await f.manager.cleanup(plan)).toMatchObject({ skipped: 0, failures: [] });
+    await expect(lstat(large)).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 30_000);
+  it('keeps cleaning when a tracking baseline lost its base snapshot, and still lets users delete that baseline', async () => {
+    const f = await fixture(); await f.reviews.initializeExternalTracking(f.project);
+    const reviewFile = (await readdir(path.join(f.root, 'reviews'))).find(name => name.endsWith('.json'))!;
+    const baseline = JSON.parse(await readFile(path.join(f.root, 'reviews', reviewFile), 'utf8')).external as string;
+    const manifest = path.join(f.reviews.history.directory, 'snapshots', `${baseline}.json`), missing = randomUUID();
+    await writeFile(manifest, JSON.stringify({ ...JSON.parse(await readFile(manifest, 'utf8')), base: missing }));
+    await f.checkpoints.record(f.project, 'tracking:timeline', ['tracked edit'], baseline);
+    const unused = await f.orphan(); await f.age();
+    const plan = await f.manager.preview(), planned = plan.files.map(file => file.relative);
+    expect(planned).toContain(`reviews/history/snapshots/${unused.id}.json`);
+    expect(planned).not.toContain(`reviews/history/snapshots/${baseline}.json`);
+    expect(await f.manager.cleanup(plan)).toMatchObject({ skipped: 0, failures: [] });
+    await expect(lstat(unused.file)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await f.manager.autoCleanReview()).toMatchObject({ failures: [] });
+    expect((await lstat(manifest)).isFile()).toBe(true);
+    const histories = (await f.manager.inspect()).histories!;
+    const chosen = histories.filter(history => history.kind === 'tracking' || history.kind === 'checkpoints');
+    expect(chosen).toHaveLength(2);
+    expect(await f.manager.deleteHistory(await f.manager.previewHistoryDeletion(chosen.map(history => history.id)))).toMatchObject({ failures: [], trackingStopped: 1, checkpointsRemoved: 1 });
+    await expect(lstat(manifest)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(missing).not.toBe(baseline);
+  });
   it('protects active capture and recent snapshots, including shared blobs from old unused manifests', async () => {
     const f = await fixture(); await f.reviews.begin(f.project, 'active'); const active = await f.reviews.checkpointBefore(f.project, 'active');
     const shared = (await f.reviews.history.snapshot(active)).files['source.ts']!;

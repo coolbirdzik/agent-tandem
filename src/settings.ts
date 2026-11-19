@@ -1662,7 +1662,9 @@ function renderDataPolicies(value: UsageDashboardState) {
   const categories = value.storage?.categories ?? value.extensionStorage?.categories;
   const size = (...labels: string[]) => categories ? categories.filter(row => labels.includes(row.label)).reduce((sum, row) => sum + row.bytes, 0) : undefined;
   const auto = value.autoClean, tokens = value.tokenHistory, retained = value.data?.retained, unused = value.storage?.cleanable, limit = value.storageLimit;
-  const signature = JSON.stringify([categories, auto, tokens, retained, unused, limit, value.extensionStorage?.total ?? value.storage?.total]);
+  // A storage job already running would turn a second click into an error, so its buttons wait for it.
+  const storageBusy = value.storage?.status === 'loading' || value.storage?.status === 'cleaning';
+  const signature = JSON.stringify([categories, auto, tokens, retained, unused, limit, value.extensionStorage?.total ?? value.storage?.total, storageBusy]);
   if (signature === policySignature) return;
   policySignature = signature;
   const button = (label: string, icon: string, id: string, onclick: () => void, disabled = false) => {
@@ -1685,8 +1687,8 @@ function renderDataPolicies(value: UsageDashboardState) {
       total?.runs ? `${fileSize(total.bytes)} cleaned automatically so far${total.lastAt ? ` · last ${sinceLabel(total.lastAt)}` : ''}` : 'Nothing cleaned automatically yet',
       ...(auto?.error ? [`Automatic cleanup could not finish: ${auto.error}`] : []),
     ],
-    actions: [toggle, button(auto?.running ? 'Cleaning…' : 'Clean now', 'sparkle', 'autoclean-now', () => send('autoCleanNow'), !auto || auto.running),
-      button('Preview unused files…', 'search', 'autoclean-preview', () => send('previewReviewCleanup', { scope: 'accepted' }))],
+    actions: [toggle, button(auto?.running ? 'Cleaning…' : 'Clean now', 'sparkle', 'autoclean-now', () => send('autoCleanNow'), !auto || auto.running || storageBusy),
+      button('Preview unused files…', 'search', 'autoclean-preview', () => send('previewReviewCleanup', { scope: 'accepted' }), storageBusy)],
   });
   const cap = limit?.bytes ?? 0, limitField = node('label', undefined, 'policy-toggle'), limitInput = node('input');
   limitInput.type = 'number'; limitInput.id = 'storage-limit'; limitInput.min = '0'; limitInput.max = '1024'; limitInput.step = '0.5'; limitInput.disabled = !limit;
