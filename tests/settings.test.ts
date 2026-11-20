@@ -1052,7 +1052,9 @@ describe('Settings usage dashboard', () => {
     const status = { status: 'ready' as const, account: identity, usage: codexTokenActivity({ summary: { lifetimeTokens: 9000000, peakDailyTokens: null, currentStreakDays: 0 }, dailyUsageBuckets: [{ startDate: '2026-10-09', tokens: 700000 }] }, accountId, Date.now()) };
     render({ ...value, accounts: { Codex: status } }); choose('filter-range', 'all');
     const api = document.querySelector('#api-activity')!;
-    expect(api.textContent).toContain('account/usage/read'); expect(api.textContent).toContain('codex@test.invalid');
+    expect(api.closest('section')?.querySelector('h2 [data-source="API"]')?.textContent).toBe('API');
+    expect(document.querySelector('.local-usage-heading h2 [data-source="Local"]')?.textContent).toBe('Local');
+    expect(api.textContent).toContain('codex@test.invalid');
     expect(api.querySelector('strong')?.getAttribute('title')).toBe('700,000');
     expect([...api.querySelectorAll('strong')].map(node => node.getAttribute('title'))).toContain('9,000,000');
     expect(api.textContent).toContain('Not reported by API'); expect(api.textContent).toContain('Current streak0');
