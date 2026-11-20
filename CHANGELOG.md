@@ -27,6 +27,8 @@ Historical release dates and boundaries are reconstructed from package version c
 - **Manage CLIs** now includes **Diagnostics**. Set a provider’s **Default** to **Automatic** or a saved installation, and use **This project** to inherit the default or replace an existing PATH override. **Choose Codex CLI** and **Choose Claude Code CLI** offer the same project choices, with unavailable installations disabled.
 - Dashboard and Review share the chat picker style, and dashboard date fields use a themed calendar. Preferences groups settings into **Status bar**, **Dashboard**, and **Extension tools**. Panel headers and settings descriptions are more compact, with **Refresh** on the right in Conversations, Review, and Manage CLIs.
 - Status bar hovers put pending files first for Review and show quota reset and earned-reset expiry countdowns for Codex and Claude Code. The Preferences preview matches the live quota hover.
+- **Review snapshots** in **Storage → App data** now has one **Clean all review data…** button that removes every review snapshot, restore point and change tracking copy. Your code and chat messages stay, and change tracking stops in every tracked project. The row says how much change tracking is holding, since **Clean now** only removes data nothing uses. Clearing pending review is a checkbox inside the preview; the three preset buttons under the technical breakdown are gone.
+- Storage deletions show numbered steps (check references, update history, remove files, refresh totals). Steps that wait show elapsed time and what is happening, file removal shows space freed and time left, and the result shows how much space was freed. Steps do not animate when reduced motion is on.
 
 ### Removed
 
@@ -35,6 +37,10 @@ Historical release dates and boundaries are reconstructed from package version c
 
 ### Fixed
 
+- Large storage cleanups no longer make Settings slow or unresponsive. A full review cleanup can list over 160,000 files, and that list (30 MB) was sent and redrawn on every progress update; the preview now lists the largest 200 with the total count. Files are also removed several at a time, which is several times faster for large cleanups.
+- Storage cleanup previews such as **Clean all review data…** appear about three times sooner: around 10 s instead of 35 s for a data folder with 160,000 files. While a preview is being prepared, a **Preparing cleanup preview…** box shows how long it has been running.
+- A file that is briefly locked (for example by antivirus on Windows) no longer stops a cleanup from removing the rest. It is retried, and if it still fails only that file is kept.
+- Deleting a project's change tracking in **Storage** now frees its space. The tracking baseline and its **Change tracking history** restore points share the same snapshot, so they showed as two rows that each freed almost nothing (for example 1.9 KB of 3.6 GB), and deleting either one alone removed nothing. They are now one **Change tracking** row per project, showing the space it really frees; deleting it removes both and stops tracking for that project.
 - Storage cleanup (**Clean now**, **Choose what to clean…**, automatic cleanup and the size limit) no longer stops with "Storage metadata exceeds the cleanup limit" once a tracked project has very many files. One project with about 180,000 files had a 28 MB snapshot list, which blocked every cleanup.
 - Cleanup no longer stops with "A referenced snapshot is missing" when a change tracking baseline lost part of its data to a pre-0.1.49 build. The damaged baseline is left as it is and everything else is cleaned. **Storage → Restore history** also lists it again, so you can delete it there.
 - **Clean now** and **Preview unused files…** wait while another storage task is running, instead of showing "Wait for storage management to finish" when clicked again.

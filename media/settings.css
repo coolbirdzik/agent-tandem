@@ -98,6 +98,33 @@ button.quiet:hover { background: var(--vscode-list-hoverBackground); }
 @keyframes storage-progress-slide { to { background-position: 150% 0, 0 0; } }
 @media (prefers-reduced-motion: reduce) { .storage-progress progress:not([value]) { animation: none; background-position: 50% 0, 0 0; } }
 @media (forced-colors: active) { .storage-progress progress { appearance: auto; border: 1px solid CanvasText; } }
+/* Deletion steps: done steps get a check, the active one pulses, later ones wait. */
+.storage-progress { padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--vscode-editorWidget-background, transparent); }
+.storage-steps { display: flex; flex-wrap: wrap; gap: 6px 4px; margin: 0 0 12px; padding: 0; list-style: none; font-size: 11px; counter-reset: storage-step; }
+.storage-steps li { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); counter-increment: storage-step; }
+.storage-steps li + li::before { content: ''; width: 18px; height: 1px; margin-right: 2px; background: var(--line); }
+.storage-steps li[data-state="done"] + li::before, .storage-steps li[data-state="done"] + li[data-state="active"]::before { background: var(--vscode-progressBar-background, var(--accent)); }
+.storage-step-mark { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--line); font-size: 9px; font-variant-numeric: tabular-nums; }
+.storage-step-mark::after { content: counter(storage-step); }
+.storage-steps li[data-state="active"] { color: var(--vscode-foreground); font-weight: 600; }
+.storage-steps li[data-state="active"] .storage-step-mark { border-color: var(--vscode-progressBar-background, var(--accent)); color: var(--vscode-progressBar-background, var(--accent)); animation: storage-step-pulse 1.4s ease-in-out infinite; }
+.storage-steps li[data-state="done"] { color: var(--vscode-foreground); }
+.storage-steps li[data-state="done"] .storage-step-mark { border-color: transparent; background: var(--vscode-progressBar-background, var(--accent)); color: var(--vscode-button-foreground, #fff); }
+.storage-steps li[data-state="done"] .storage-step-mark::after { content: '¹3'; }
+@keyframes storage-step-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--vscode-progressBar-background, var(--accent)) 45%, transparent); } 50% { box-shadow: 0 0 0 4px transparent; } }
+.storage-progress-label span:first-child { font-weight: 600; }
+.storage-progress progress { height: 8px; border-radius: 4px; }
+.storage-progress-hint { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+.storage-discard-toggle { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.storage-discard-toggle input { margin-top: 2px; }
+.storage-discard-toggle span { display: flex; flex-direction: column; gap: 2px; }
+.storage-discard-toggle small { color: var(--muted); }
+.storage-done { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; animation: storage-done-in .35s ease-out; }
+.storage-done .codicon { font-size: 22px; color: var(--vscode-testing-iconPassed, #73c991); }
+.storage-done strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+@keyframes storage-done-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .storage-steps li[data-state="active"] .storage-step-mark, .storage-done { animation: none; } }
+@media (forced-colors: active) { .storage-steps li[data-state="done"] .storage-step-mark { background: Highlight; color: HighlightText; } }
 .storage-history-tools { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin: 20px 0 12px; }
 .storage-history-tools label { display: flex; flex-direction: column; min-width: 0; gap: 6px; color: var(--muted); font-size: 11px; }
 .storage-history-tools .tandem-dropdown { max-width: 340px; }
@@ -146,10 +173,6 @@ button.danger:hover { filter: brightness(.9); }
 @media (max-width: 720px) { .storage-overview { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .storage-overview-bar span { transition: none; } }
 .storage-extension-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 20px; }
-.storage-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.storage-review-actions button { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
-.storage-review-actions .codicon-clear-all { color: var(--vscode-charts-blue, #75beff); }
-.storage-review-actions .codicon-trash { color: var(--vscode-editorWarning-foreground, #cca700); }
 .native-cleanup { max-width: 1120px; margin-inline: auto; }
 .native-heading { align-items: center; margin-bottom: 22px; }
 .native-heading h2 { font-size: 20px; letter-spacing: -.4px; }

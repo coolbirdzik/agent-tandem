@@ -71,7 +71,7 @@ import { isAccountProvider, isChatAccount } from './core/account-providers';
 import { DesktopAccounts, desktopExecutable, windowsAntigravityCredential } from './core/desktop-accounts';
 import { spawn as launchDesktopProcess } from 'node:child_process';
 import { withStorageLock } from './core/storage-lock';
-import { StorageManager, type StorageState, type CleanupPlan, type HistoryDeletionPlan, type StorageProgress } from './core/storage';
+import { StorageManager, storageView, type StorageState, type CleanupPlan, type HistoryDeletionPlan, type StorageProgress } from './core/storage';
 import { ConversationCleanup, type ConversationCleanupState, type DeletionProgress } from './core/conversation-cleanup';
 import { conversationCleanupPrompts } from './host/conversation-cleanup-prompts';
 import { deleteCodexThread } from './providers/codex-history-mutation';
@@ -317,7 +317,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   function dashboardState(): UsageDashboardState {
     const config = vscode.workspace.getConfiguration('agentTandem');
     const grouping = config.get<UsageGrouping>('usageDashboardDefaultGrouping', 'day');
-    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, usageWindow, extensionStorage, autoClean: { enabled: autoCleanEnabled(), running: autoCleanRunning, total: storageFreed(context.globalState.get(autoCleanKey)), error: autoCleanError }, storageLimit: { bytes: storageLimit(), running: limitRunning, total: storageFreed(context.globalState.get(limitKey)), blocked: context.globalState.get<number>(limitBlockedKey) === storageLimit() || undefined, error: limitError }, tokenHistory, antivirusTip: antivirusTip(process.platform, context.globalStorageUri.fsPath, context.globalState.get(antivirusTipKey)), storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageState, accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaCycleStarts: quotaHistoryStore.cycleStarts, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
+    return { ...usageState, ...accountManager.state, conversationCleanup: conversationCleanupState, usageWindow, extensionStorage, autoClean: { enabled: autoCleanEnabled(), running: autoCleanRunning, total: storageFreed(context.globalState.get(autoCleanKey)), error: autoCleanError }, storageLimit: { bytes: storageLimit(), running: limitRunning, total: storageFreed(context.globalState.get(limitKey)), blocked: context.globalState.get<number>(limitBlockedKey) === storageLimit() || undefined, error: limitError }, tokenHistory, antivirusTip: antivirusTip(process.platform, context.globalStorageUri.fsPath, context.globalState.get(antivirusTipKey)), storageFreed: storageFreed(context.globalState.get(freedKey)), attributionBusy, attributionError, attributionNotice, accountSwitchBlocked: chatAbort || reviewing ? 'Finish the active agent turn before switching accounts.' : undefined, conversationTitles: { ...usageConversationTitles, ...Object.fromEntries((state.conversations ?? []).map(row => [row.key, row.title])) }, quotaTicks: savedQuotaTicks, storage: storageView(storageState), accounts: state.accounts, quotaHistory, quotaBaselines: quotaHistoryStore.baselines, quotaCycleStarts: quotaHistoryStore.cycleStarts, quotaHistoryError, preferences: { showQuotaInStatusBar: config.get('showQuotaInStatusBar', true),
       grouping: ['day', 'week', 'month'].includes(grouping) ? grouping : 'day', statusBar: readStatusBarPreferences(config) }, activeProvider: state.conversation?.conversation.provider ?? state.composeProvider ?? 'Codex' };
   }
   const settings = new SettingsView(context.extensionUri, dashboardState,
@@ -1115,17 +1115,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.previewHistoryDeletion', value => storageAction(async () => {
     if (!value || typeof value !== 'object' || !Array.isArray((value as { ids?: unknown }).ids)) throw new Error('Select saved history to delete.');
     cleanupPlan = undefined;
-    const summary = await storage.inspect();
-    if (summary.cleanupBlocked) throw new Error(summary.cleanupBlocked);
-    historyDeletionPlan = await storage.previewHistoryDeletion((value as { ids: string[] }).ids);
-    return { ...summary, historyPlan: historyDeletionPlan };
+    const summary = await storage.inspectAndPreview({ history: (value as { ids: string[] }).ids });
+    historyDeletionPlan = summary.historyPlan; return summary;
   }));
   register('agentTandem.previewCleanAll', value => storageAction(async () => {
     cleanupPlan = undefined;
-    const summary = await storage.inspect();
-    if (summary.cleanupBlocked) throw new Error(summary.cleanupBlocked);
-    historyDeletionPlan = await storage.previewKindCleanup((value as { kinds?: unknown } | undefined)?.kinds);
-    return { ...summary, historyPlan: historyDeletionPlan };
+    const summary = await storage.inspectAndPreview({ kinds: (value as { kinds?: unknown } | undefined)?.kinds });
+    historyDeletionPlan = summary.historyPlan; return summary;
   }));
   register('agentTandem.previewReviewCleanup', async value => {
     const scope = (value as { scope?: unknown } | undefined)?.scope;
@@ -1133,10 +1129,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     await settings.open('storage', 'restore');
     return storageAction(async () => {
       cleanupPlan = undefined; historyDeletionPlan = undefined;
-      const summary = await storage.inspect();
-      if (summary.cleanupBlocked) throw new Error(summary.cleanupBlocked);
-      historyDeletionPlan = await storage.previewReviewCleanup(scope);
-      return { ...summary, historyPlan: historyDeletionPlan };
+      const summary = await storage.inspectAndPreview({ review: scope });
+      historyDeletionPlan = summary.historyPlan; return summary;
     });
   });
   register('agentTandem.deleteHistory', value => storageAction(async () => {

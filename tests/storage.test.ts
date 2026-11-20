@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, utimes, rm, lstat, symlink, readdi
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
-import { StorageManager, type StorageProgress } from '../src/core/storage';
+import { StorageManager, storageView, VIEW_PLAN_FILES, type StorageProgress } from '../src/core/storage';
 import { ReviewStore } from '../src/core/review';
 import { HistoryStore } from '../src/core/history';
 import { CheckpointStore } from '../src/core/checkpoints';
@@ -27,6 +27,15 @@ async function fixture() {
   return { folder, root, project, reviews, checkpoints, manager, orphan, age };
 }
 describe('Snapshot storage management', () => {
+  it('sends the webview only the largest files of a big plan, with the full count', () => {
+    const files = Array.from({ length: VIEW_PLAN_FILES + 50 }, (_, i) => ({ relative: `reviews/history/blobs/${i}`, bytes: i, modified: 0, changed: 0, inode: i }));
+    const historyPlan = { token: 't', createdAt: 0, files, bytes: 1, histories: [], records: [] }, state = { status: 'ready' as const, root: 'r', historyPlan };
+    const view = storageView(state);
+    expect(view.historyPlan!.fileCount).toBe(files.length); expect(view.historyPlan!.files).toHaveLength(VIEW_PLAN_FILES);
+    expect(view.historyPlan!.files[0]!.bytes).toBe(files.length - 1); expect(historyPlan.files).toHaveLength(files.length);
+    expect(storageView({ ...state, historyPlan: { ...historyPlan, files: files.slice(0, 3) } }).historyPlan!.fileCount).toBeUndefined();
+    expect(storageView(state).historyPlan).toBe(view.historyPlan);
+  });
   it('previews and clears retained comparisons and revert Undo without changing workspace files', async () => {
     const f = await fixture();
     await f.reviews.begin(f.project, 'pending');
@@ -250,6 +259,32 @@ describe('Snapshot storage management', () => {
     expect((await f.reviews.setExternalTracking(f.project, true)).externalTracking).toBe(true);
     expect((await f.manager.previewKindCleanup(['tracking'])).kinds).toEqual(['tracking']);
   });
+  it('shows a tracking baseline and its timeline restore points as one history that frees their shared space', async () => {
+    const f = await fixture(); await writeFile(path.join(f.project, 'large.bin'), Buffer.alloc(50_000, 7));
+    await f.reviews.initializeExternalTracking(f.project);
+    const reviewFile = (await readdir(path.join(f.root, 'reviews'))).find(name => name.endsWith('.json'))!;
+    const external = async () => JSON.parse(await readFile(path.join(f.root, 'reviews', reviewFile), 'utf8')).external as string;
+    const first = await external(); await f.checkpoints.track(f.project, first);
+    await writeFile(path.join(f.project, 'source.ts'), 'external edits\n'); await f.reviews.scanExternal(f.project);
+    const second = await external(); expect(second).not.toBe(first); await f.checkpoints.track(f.project, second);
+    await f.age();
+    const histories = (await f.manager.inspect()).histories!;
+    // Both share the full first snapshot: as separate rows neither could free it.
+    expect(histories).toEqual([expect.objectContaining({ kind: 'tracking', label: 'Change tracking', count: 2 })]);
+    expect(histories[0]!.reclaimable).toBeGreaterThan(50_000);
+    const plan = await f.manager.previewHistoryDeletion([histories[0]!.id]);
+    expect(plan.bytes).toBeGreaterThanOrEqual(histories[0]!.reclaimable);
+    // One scan for both the summary and the preview gives what the two separate calls give.
+    const combined = await f.manager.inspectAndPreview({ review: 'all' }), separate = await f.manager.previewReviewCleanup('all');
+    expect(combined.histories).toEqual(histories); expect(combined.historyPlan.bytes).toBe(separate.bytes);
+    expect(combined.historyPlan.files.map(file => file.relative).sort()).toEqual(separate.files.map(file => file.relative).sort());
+    expect((await f.manager.inspectAndPreview({ history: [histories[0]!.id] })).historyPlan.bytes).toBe(plan.bytes);
+    await expect(f.manager.inspectAndPreview({ kinds: [] })).rejects.toThrow('Choose what to clean up');
+    expect(await f.manager.deleteHistory(plan)).toMatchObject({ checkpointsRemoved: 2, trackingStopped: 1, skipped: 0, failures: [], bytes: plan.bytes });
+    expect(await f.checkpoints.timeline(f.project)).toEqual([]);
+    for (const id of [first, second]) await expect(lstat(path.join(f.reviews.history.directory, 'snapshots', `${id}.json`))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await f.manager.inspect()).histories).toEqual([]);
+  });
   it('allows deleting restore backups explicitly and keeps pending Review revert working', async () => {
     const f = await fixture(); await f.reviews.begin(f.project, 'turn'); const before = await f.reviews.checkpointBefore(f.project, 'turn');
     await writeFile(path.join(f.project, 'source.ts'), 'agent changes\n'); const review = await f.reviews.finish(f.project, 'turn');
@@ -349,7 +384,7 @@ describe('Snapshot storage management', () => {
     expect((await lstat(manifest)).isFile()).toBe(true);
     const histories = (await f.manager.inspect()).histories!;
     const chosen = histories.filter(history => history.kind === 'tracking' || history.kind === 'checkpoints');
-    expect(chosen).toHaveLength(2);
+    expect(chosen).toEqual([expect.objectContaining({ kind: 'tracking', count: 1 })]);
     expect(await f.manager.deleteHistory(await f.manager.previewHistoryDeletion(chosen.map(history => history.id)))).toMatchObject({ failures: [], trackingStopped: 1, checkpointsRemoved: 1 });
     await expect(lstat(manifest)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(missing).not.toBe(baseline);

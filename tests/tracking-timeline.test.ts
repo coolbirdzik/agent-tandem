@@ -98,7 +98,8 @@ describe('Change tracking timeline', () => {
     for (const text of ['second\n', 'third\n']) { await tick(); await f.set('source.ts', text); await f.reviews.scanExternal(f.project); }
     const manager = new StorageManager(f.root), state = await manager.inspect();
     expect(state.cleanupBlocked).toBeUndefined();
-    expect(state.histories?.find(history => history.label === 'Change tracking history')).toMatchObject({ kind: 'checkpoints', count: 3 });
+    // Tracking timeline states join the project's tracking baseline: they share its snapshots.
+    expect(state.histories?.find(history => history.kind === 'tracking')).toMatchObject({ label: 'Change tracking', count: 3 });
     const [oldest, ...newer] = await f.checkpoints.timeline(f.project);
     const result = await manager.enforceLimit(1, { maxRecords: 1 });
     expect(result).toMatchObject({ checkpointsRemoved: 1, failures: [] });

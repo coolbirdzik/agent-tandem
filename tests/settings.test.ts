@@ -45,18 +45,27 @@ describe('Settings usage dashboard', () => {
     expect(input.value).toBe('');
     expect(document.querySelector('#date-picker')).toBeNull();
   });
-  it('offers review cleanup presets next to the category and explains their different impact', () => {
+  it('offers one Clean all for review data, with clearing pending review as an opt-in inside its preview', () => {
     const storage = { status: 'ready' as const, root: 'root', categories: [{ label: 'Review snapshots & tracking', bytes: 4096, files: 3 }], retainedReviews: [{ project: 'D:/project', files: 7, undo: 1, bytes: 4096 }] };
     render({ ...value, storage });
     expect(document.querySelector('#storage-categories')!.textContent).toContain('D:/project');
     expect(document.querySelector('#storage-categories')!.textContent).toContain('7 saved comparisons');
     expect(document.querySelector('#storage-totals')!.textContent).toContain('Unused snapshots');
-    for (const scope of ['accepted', 'all', 'discard']) {
-      document.querySelector<HTMLButtonElement>(`button[data-review-cleanup="${scope}"]`)!.click();
-      expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReviewCleanup', value: { scope } });
-    }
+    expect(document.querySelector('[data-review-cleanup]')).toBeNull();
+    document.querySelector<HTMLButtonElement>('#review-clean-all')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReviewCleanup', value: { scope: 'all' } });
+    // The preview takes a full scan: a waiting box shows until it arrives.
+    const wait = document.querySelector<HTMLElement>('#storage-preview-wait')!;
+    expect(wait.hidden).toBe(false); expect(wait.textContent).toContain('Preparing cleanup preview');
+    render({ ...value, storage: { ...storage, status: 'loading' } }); expect(wait.hidden).toBe(false);
+    // An error left by an earlier preview does not end a new wait before its load starts.
+    render({ ...value, storage: { ...storage, status: 'error', error: 'Nothing to clean up.' } }); expect(wait.hidden).toBe(true);
+    document.querySelector<HTMLButtonElement>('#review-clean-all')!.click(); expect(wait.hidden).toBe(false);
+    render({ ...value, storage: { ...storage, status: 'error', error: 'Nothing to clean up.' } }); expect(wait.hidden).toBe(false);
+    render({ ...value, storage: { ...storage, status: 'loading' } }); expect(wait.hidden).toBe(false);
     const historyPlan = { token: 'review-only', createdAt: Date.now(), reviewScope: 'accepted' as const, histories: [], records: [], files: [], bytes: 0 };
     render({ ...value, storage: { ...storage, historyPlan } });
+    expect(wait.hidden).toBe(true);
     expect(document.querySelector('#storage-history-plan-heading')!.textContent).toContain('Clean accepted');
     expect(document.querySelector('#storage-history-impact')!.textContent).toContain('Tracking baselines, pending review, checkpoints and Undo stay protected');
     expect(document.querySelector('#storage-history-plan-files')!.textContent).toContain('Nothing to clean');
@@ -66,11 +75,23 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('#storage-history-plan-heading')!.textContent).toBe('Clean all review snapshots & tracking');
     expect(document.querySelector('#storage-history-impact')!.textContent).toContain('Change tracking stops in 1 project');
     expect(document.querySelector('#storage-history-impact')!.textContent).toContain('Pending review and its revert Undo stay protected');
+    const discard = document.querySelector<HTMLInputElement>('#storage-history-discard-box')!;
+    expect(document.querySelector<HTMLElement>('#storage-history-discard')!.hidden).toBe(false); expect(discard.checked).toBe(false);
+    expect(document.querySelector('#storage-history-discard')!.textContent).toContain('7 saved comparisons in 1 project');
+    discard.checked = true; discard.dispatchEvent(new Event('change'));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReviewCleanup', value: { scope: 'discard' } });
+    // While the new preview is prepared the old plan is still in state: the choice stays and deletion waits.
+    render({ ...value, storage: { ...storage, status: 'loading', historyPlan: { ...historyPlan, token: 'all', reviewScope: 'all', histories, records: [{ relative: 'reviews/one.json', digest: 'one', ids: [] }] } } });
+    expect(discard.checked).toBe(true); expect(document.querySelector('#storage-history-discard')!.textContent).toContain('Updating preview');
+    expect(document.querySelector<HTMLButtonElement>('#storage-history-delete')!.disabled).toBe(true);
+    render({ ...value, storage: { ...storage, historyPlan: { ...historyPlan, token: 'all-again', reviewScope: 'all', histories, records: [{ relative: 'reviews/one.json', digest: 'one', ids: [] }] } } });
+    expect(discard.checked).toBe(false);
     document.querySelector<HTMLButtonElement>('#storage-history-delete')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'deleteHistory', value: { token: 'all' } });
-    expect(document.querySelector<HTMLButtonElement>('[data-review-cleanup="all"]')!.disabled).toBe(true);
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'deleteHistory', value: { token: 'all-again' } });
+    expect(document.querySelector<HTMLButtonElement>('#review-clean-all')!.disabled).toBe(true);
     render({ ...value, storage: { ...storage, historyPlan: { ...historyPlan, token: 'discard', reviewScope: 'discard', discardedReviews: [{ project: 'D:/project', files: 7, undo: 1 }] } } });
     expect(document.querySelector('#storage-history-plan-heading')!.textContent).toBe('Clear saved review data');
+    expect(document.querySelector<HTMLInputElement>('#storage-history-discard-box')!.checked).toBe(true);
     expect(document.querySelector('#storage-history-impact')!.textContent).toContain('These changes can no longer be reverted from Review');
     expect(document.querySelector('#storage-history-plan-groups')!.textContent).toContain('D:/project · 7 saved comparisons');
   });
@@ -203,7 +224,7 @@ describe('Settings usage dashboard', () => {
     expect(row('other').textContent).toContain('273.0 MB');
     const toggle = document.querySelector<HTMLInputElement>('#autoclean-toggle')!; expect(toggle.checked).toBe(true);
     toggle.checked = false; toggle.dispatchEvent(new Event('change')); expect(postMessage).toHaveBeenLastCalledWith({ type: 'setAutoCleanReview', value: { enabled: false } });
-    for (const [id, message] of [['autoclean-now', { type: 'autoCleanNow' }], ['autoclean-preview', { type: 'previewReviewCleanup', value: { scope: 'accepted' } }], ['token-compress', { type: 'compressTokenHistory' }], ['token-purge', { type: 'purgeRetainedUsage' }]] as const) {
+    for (const [id, message] of [['autoclean-now', { type: 'autoCleanNow' }], ['review-clean-all', { type: 'previewReviewCleanup', value: { scope: 'all' } }], ['token-compress', { type: 'compressTokenHistory' }], ['token-purge', { type: 'purgeRetainedUsage' }]] as const) {
       document.querySelector<HTMLButtonElement>(`#${id}`)!.click(); expect(postMessage).toHaveBeenLastCalledWith(message);
     }
     render({ ...value, storage: { status: 'ready', root: 'root', categories, total: 2 * 1024 ** 3 }, storageLimit: { bytes: 5 * 1024 ** 3, running: false, total: { bytes: 1024 ** 3, conversations: 0, files: 40, runs: 1, lastAt: Date.now() - 60000 } } });
@@ -938,12 +959,12 @@ describe('Settings usage dashboard', () => {
     document.querySelector<HTMLButtonElement>('#storage-clean-all')!.click();
     const kind = (name: string) => document.querySelector<HTMLInputElement>(`input[data-clean-kind="${name}"]`)!;
     expect(kind('tracking').checked).toBe(false); expect(kind('tracking').disabled).toBe(false);
-    expect(document.querySelector('#storage-clean-choices')!.textContent).toContain('1 project · stops change tracking');
+    expect(document.querySelector('#storage-clean-choices')!.textContent).toContain('1 project · baseline and its restore points · stops change tracking');
     kind('tracking').click(); document.querySelector<HTMLButtonElement>('#storage-clean-review')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewCleanAll', value: { kinds: ['checkpoints', 'tracking'] } });
     const historyPlan = { token: 'track', createdAt: Date.now(), histories: [tracking], records: [], files: [], bytes: 1024, kinds: ['tracking' as const] };
     render({ ...value, storage: { ...storage, historyPlan } });
-    expect(document.querySelector('#storage-history-plan-heading')!.textContent).toBe('Clean up change tracking baselines');
+    expect(document.querySelector('#storage-history-plan-heading')!.textContent).toBe('Clean up change tracking');
     const impact = document.querySelector('#storage-history-impact')!.textContent;
     expect(impact).toContain('Change tracking stops in 1 project'); expect(impact).not.toContain('permanently unavailable'); expect(impact).not.toContain('tracking baselines stay');
     expect(document.querySelector('#storage-history-plan-groups')!.textContent).toContain('stops tracking');
@@ -1002,12 +1023,19 @@ describe('Settings usage dashboard', () => {
     const row = document.querySelector('.storage-history-row');
     render({ ...value, storage: { ...storage, progress: { phase: 'removing', done: 3, total: 4, bytes: 3072, totalBytes: 4096 } } });
     expect(bar.value).toBe(75); expect(cleanup.textContent).toContain('Removing files'); expect(cleanup.textContent).toContain('75% · 3 / 4 files');
+    expect([...cleanup.querySelectorAll<HTMLElement>('.storage-steps li')].map(step => step.dataset.state)).toEqual(['done', 'active', 'pending']);
     expect(document.querySelector('#storage-status')!.textContent).toContain('3 / 4 files');
     expect(document.querySelector('.storage-history-row')).toBe(row);
     render({ ...value, storage: { status: 'cleaning', root: 'root', histories, historyPlan: { ...plan, histories, records: [] }, progress: { phase: 'history', done: 0, total: 1, bytes: 0, totalBytes: 2048 } } });
     expect(cleanup.hidden).toBe(true); expect(document.querySelector('#storage-history-progress')!.textContent).toContain('Updating restore history');
+    // Deletion checks references again after editing history; the steps must not move backwards.
+    render({ ...value, storage: { status: 'cleaning', root: 'root', histories, historyPlan: { ...plan, histories, records: [] }, progress: { phase: 'checking', done: 0, total: 1, bytes: 0, totalBytes: 2048 } } });
+    const steps = () => [...document.querySelectorAll<HTMLElement>('#storage-history-progress .storage-steps li')].map(step => step.dataset.state);
+    expect(steps()).toEqual(['done', 'active', 'pending', 'pending']);
+    expect(document.querySelector('#storage-history-progress-phase')!.textContent).toBe('Checking references again…');
     render({ ...value, storage: { status: 'ready', root: 'root', histories, result: { removed: 4, bytes: 4096, skipped: 0, failures: [] } } });
     expect(document.querySelector<HTMLElement>('#storage-history-progress')!.hidden).toBe(true);
+    expect(document.querySelector('#storage-result .storage-done')!.textContent).toBe('4.0 KB freed');
   });
   it('renders untrusted history labels as text and disables history deletion on unreadable metadata', () => {
     const histories = [{ id: 'one', projectId: 'one', project: 'project', label: '<img src=x onerror=alert(1)>', kind: 'checkpoints' as const, count: 1, bytes: 1, reclaimable: 1, createdAt: 1, updatedAt: 2 }];

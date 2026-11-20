@@ -456,7 +456,7 @@ el('storage-quick-select').onchange = () => {
   selectedHistory.clear(); historyRange.reset(); for (const group of quickSelection(visibleHistory(state?.storage), preset)) selectedHistory.add(group.id);
   renderStorageHistories(state?.storage);
 };
-el('storage-history-preview').onclick = () => send('previewHistoryDeletion', { ids: [...selectedHistory] });
+el('storage-history-preview').onclick = () => { waitForPreview(); send('previewHistoryDeletion', { ids: [...selectedHistory] }); };
 cancelHistory.onclick = () => send('storage');
 // "Clean up…" opens a category chooser; the extension previews only the chosen kinds.
 const cleanKinds = new Set<CleanupKind>(['checkpoints', 'undo', 'unused']);
@@ -466,7 +466,7 @@ el('storage-clean-all').onclick = () => {
   if (cleanChooser) { const heading = el('storage-clean-choices-heading'); heading.tabIndex = -1; heading.focus(); }
 };
 el('storage-clean-choices-cancel').onclick = () => { cleanChooser = false; renderCleanChoices(state?.storage); el('storage-clean-all').focus(); };
-el('storage-clean-review').onclick = () => { const kinds = chosenCleanKinds(state?.storage); if (kinds.length) send('previewCleanAll', { kinds }); };
+el('storage-clean-review').onclick = () => { const kinds = chosenCleanKinds(state?.storage); if (kinds.length) { waitForPreview(); send('previewCleanAll', { kinds }); } };
 el('storage-history-delete').onclick = () => { if (state?.storage?.historyPlan) send('deleteHistory', { token: state.storage.historyPlan.token }); };
 el('open-chat').onclick = () => send('chat'); el('manage-clis').onclick = () => send('clis');
 el('open-vscode-settings').onclick = () => send('vscodeSettings'); el('refresh').onclick = () => send('refresh');
@@ -1312,6 +1312,15 @@ function renderUsage() {
   }
   renderConversations(filters); renderAccountGroups(filters);
 }
+/** A plan's full file count: the host sends only the largest files of a big plan. */
+const planFiles = (plan: { files: unknown[]; fileCount?: number }) => plan.fileCount ?? plan.files.length;
+/** File list of a plan preview, noting when only the largest files are shown. */
+function planFileList(list: HTMLElement, plan: { files: { relative: string; bytes: number }[]; fileCount?: number }) {
+  list.replaceChildren();
+  for (const file of plan.files) list.append(node('li', `${file.relative} · ${fileSize(file.bytes)}`));
+  const hidden = planFiles(plan) - plan.files.length;
+  if (hidden > 0) list.append(node('li', `…and ${hidden.toLocaleString()} smaller files`, 'muted'));
+}
 const fileSize = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : bytes < 1024 ** 3 ? `${(bytes / 1024 ** 2).toFixed(1)} MB` : `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 function visibleHistory(storage: UsageDashboardState['storage']) {
   const project = el<HTMLSelectElement>('storage-project').value, kind = el<HTMLSelectElement>('storage-kind').value;
@@ -1360,14 +1369,15 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
       [...list.querySelectorAll<HTMLInputElement>('input')].find(input => input.dataset.historyId === group.id)?.focus({ preventScroll: true });
     });
     const copy = node('span', undefined, 'storage-history-copy');
-    const detail = group.kind === 'tracking' ? 'Deleting stops change tracking for this project · Last scanned' : `${group.kind === 'undo' ? 'Restore backup' : `${group.count} message checkpoint${group.count === 1 ? '' : 's'}`} · Last saved`;
+    const detail = group.kind === 'tracking' ? `${group.count ? `Baseline and ${plural(group.count, 'restore point')} · ` : ''}Deleting stops change tracking for this project · Last saved` : `${group.kind === 'undo' ? 'Restore backup' : `${group.count} message checkpoint${group.count === 1 ? '' : 's'}`} · Last saved`;
     copy.append(node('strong', group.label), node('small', group.project), node('small', `${detail} ${new Date(group.updatedAt).toLocaleString()}`));
     const bytes = node('span', fileSize(group.reclaimable), 'storage-history-size'); bytes.append(node('small', `of ${fileSize(group.bytes)} referenced`));
     bytes.title = 'Space freed by deleting only this history. Data shared with other history or Review stays; deleting those together can free more.';
     row.append(checkbox, copy, bytes); list.append(row);
   }
   const preview = storage?.historyPlan;
-  el<HTMLButtonElement>('storage-history-delete').disabled = blocked || !preview || (!!preview.reviewScope && !preview.files.length && !preview.records.length);
+  if (!preview || pendingDiscard?.token !== preview.token) pendingDiscard = undefined;
+  el<HTMLButtonElement>('storage-history-delete').disabled = blocked || !preview || !!pendingDiscard || (!!preview.reviewScope && !planFiles(preview) && !preview.records.length);
   cancelHistory.disabled = busy;
   if (preview) {
     const kinds = preview.kinds, lost = kinds ? [kinds.includes('checkpoints') && 'every message checkpoint', kinds.includes('undo') && 'every restore backup'].filter((item): item is string => !!item) : [];
@@ -1375,10 +1385,19 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
     const stops = tracking ? `Change tracking stops in ${plural(tracking, 'project')}; turn it on again in Review to capture a new baseline. ` : '';
     el('storage-history-plan-heading').textContent = kinds ? `Clean up ${joinWords(kinds.map(kind => cleanKindLabels[kind].toLowerCase()))}` : 'Delete selected restore history';
     el('storage-history-delete-label').textContent = kinds ? 'Clean up' : 'Delete history';
-    el('storage-history-plan-summary').textContent = `${historyCounts(preview.histories)} · ${fileSize(preview.bytes)} reclaimable · ${preview.files.length} snapshot files`;
+    el('storage-history-plan-summary').textContent = `${historyCounts(preview.histories)} · ${fileSize(preview.bytes)} reclaimable · ${planFiles(preview).toLocaleString()} snapshot files`;
     el('storage-history-impact').textContent = kinds
       ? `${lost.length ? `${capitalize(joinWords(lost))} will be permanently unavailable. ` : ''}${stops}${kinds.includes('unused') ? 'Unused snapshots are removed. ' : ''}Your code, chat messages${tracking ? ' and pending review stay' : ', pending review and tracking baselines stay'} as they are.`
-      : `${preview.histories.some(group => group.kind !== 'tracking') ? 'The selected checkpoints and restore backups will be permanently unavailable. ' : ''}${stops}Your code, chat messages and pending review stay as they are. Shared data still needed by Review or other checkpoints is kept.`;
+      : `${preview.histories.some(group => group.count > 0) ? 'The selected checkpoints and restore backups will be permanently unavailable. ' : ''}${stops}Your code, chat messages and pending review stay as they are. Shared data still needed by Review or other checkpoints is kept.`;
+    // Clearing pending review frees little and loses Revert, so it is an opt-in inside the "Clean all" preview.
+    // A new preview takes as long as the first one; until it arrives, keep showing the choice just made.
+    const discard = el<HTMLInputElement>('storage-history-discard-box'), kept = storage?.retainedReviews ?? [];
+    el('storage-history-discard').hidden = preview.reviewScope !== 'all' && preview.reviewScope !== 'discard';
+    discard.checked = pendingDiscard?.checked ?? preview.reviewScope === 'discard'; discard.disabled = busy || !!pendingDiscard;
+    el('storage-history-discard-detail').textContent = pendingDiscard ? 'Updating preview…' : kept.length
+      ? `${plural(kept.reduce((sum, review) => sum + review.files, 0), 'saved comparison')} in ${plural(kept.length, 'project')} · ${fileSize(kept.reduce((sum, review) => sum + review.bytes, 0))}. Agent changes waiting for review can then no longer be reverted. Your files are not changed.`
+      : 'Nothing is waiting for review right now.';
+    discard.onchange = () => { pendingDiscard = { token: preview.token, checked: discard.checked }; historySignature = ''; send('previewReviewCleanup', { scope: discard.checked ? 'discard' : 'all' }); renderStorageHistories(state?.storage); };
     if (preview.reviewScope) {
       const all = preview.reviewScope === 'all';
       el('storage-history-plan-heading').textContent = all ? 'Clean all review snapshots & tracking' : 'Clean accepted / unused review snapshots';
@@ -1393,11 +1412,10 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
       }
     }
     const owners = el('storage-history-plan-groups'); owners.replaceChildren();
-    for (const group of preview.histories) owners.append(node('li', `${group.project} · ${group.label} · ${group.kind === 'tracking' ? 'stops tracking' : `${group.count} restore points`}`));
+    for (const group of preview.histories) owners.append(node('li', `${group.project} · ${group.label} · ${group.kind === 'tracking' ? `stops tracking${group.count ? ` · ${plural(group.count, 'restore point')}` : ''}` : `${group.count} restore points`}`));
     for (const review of preview.discardedReviews ?? []) owners.append(node('li', `${review.project} · ${plural(review.files, 'saved comparison')} · ${plural(review.undo, 'revert Undo file')}`));
-    const files = el('storage-history-plan-files'); files.replaceChildren();
-    for (const file of preview.files) files.append(node('li', `${file.relative} · ${fileSize(file.bytes)}`));
-    if (!preview.files.length) files.append(node('li', preview.reviewScope && !preview.records.length
+    const files = el('storage-history-plan-files'); planFileList(files, preview);
+    if (!planFiles(preview)) files.append(node('li', preview.reviewScope && !preview.records.length
       ? 'Nothing to clean yet. Remaining snapshots are protected or less than 10 minutes old.'
       : 'These snapshots are shared with retained history or Review. Only the selected restore points will be removed.'));
   }
@@ -1406,22 +1424,82 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
   const result = el('storage-history-result'); result.replaceChildren();
   if (storage?.historyResult) {
     const r = storage.historyResult;
+    result.append(doneCard(r.bytes));
     result.append(node('p', `Deleted ${r.checkpointsRemoved} restore points${r.trackingStopped ? ` · stopped change tracking in ${plural(r.trackingStopped, 'project')}` : ''} · ${fileSize(r.bytes)} freed${r.skipped ? ` · ${r.skipped} changed or newly protected files kept` : ''}.`));
     if (r.failures.length) { const failures = node('ul'); for (const failure of r.failures) failures.append(node('li', failure)); result.append(node('p', 'Some data could not be deleted:'), failures); }
   }
 }
 const storageProgressPhases = { checking: 'Checking references…', history: 'Updating restore history…', removing: 'Removing files…', refreshing: 'Refreshing storage totals…' } as const;
-/** Progress inside the deletion preview that started it: counted while removing files, indeterminate otherwise. */
-function renderStorageProgress(prefix: 'storage-cleanup' | 'storage-history', storage: UsageDashboardState['storage'], active: boolean) {
-  const progress = active && storage?.status === 'cleaning' ? storage.progress ?? { phase: 'checking' as const, done: 0, total: 0, bytes: 0, totalBytes: 0 } : undefined;
-  el(`${prefix}-progress`).hidden = !progress; if (!progress) return;
-  const bar = el<HTMLProgressElement>(`${prefix}-progress-bar`), counted = progress.total > 0 && (progress.phase === 'removing' || progress.phase === 'refreshing');
-  if (counted) bar.value = progress.done / progress.total * 100; else bar.removeAttribute('value');
-  const phase = el(`${prefix}-progress-phase`); if (phase.textContent !== storageProgressPhases[progress.phase]) phase.textContent = storageProgressPhases[progress.phase];
-  el(`${prefix}-progress-count`).textContent = counted ? `${Math.round(progress.done / progress.total * 100)}% · ${progress.done} / ${progress.total} files · ${fileSize(progress.bytes)} of ${fileSize(progress.totalBytes)}` : progress.total ? `${progress.total} files · ${fileSize(progress.totalBytes)}` : '';
+type StoragePrefix = 'storage-cleanup' | 'storage-history';
+type StoragePhase = keyof typeof storageProgressPhases;
+type StorageTick = NonNullable<NonNullable<UsageDashboardState['storage']>['progress']>;
+const storageSteps: Record<StoragePrefix, StoragePhase[]> = { 'storage-cleanup': ['checking', 'removing', 'refreshing'], 'storage-history': ['checking', 'history', 'removing', 'refreshing'] };
+const storageStepLabels: Record<StoragePhase, string> = { checking: 'Check references', history: 'Update history', removing: 'Remove files', refreshing: 'Refresh totals' };
+const storageStepHints: Partial<Record<StoragePhase, string>> = {
+  checking: 'Reading every saved snapshot so nothing still in use is deleted. With large projects this can take a minute.',
+  history: 'Removing the chosen restore points and stopping change tracking where chosen.',
+  refreshing: 'Measuring what is left.',
+};
+/** One deletion as the user sees it. Steps never move backwards: deletion checks references again after editing history. */
+interface StorageRun { token: string; reached: number; phase: string; phaseAt: number; removingAt?: number; progress: StorageTick }
+const storageRuns: Partial<Record<StoragePrefix, StorageRun>> = {};
+/** The pending-review choice made in a "Clean all" preview whose replacement is still being prepared. */
+let pendingDiscard: { token: string; checked: boolean } | undefined;
+let storageTicker: ReturnType<typeof setInterval> | undefined;
+const duration = (ms: number) => { const seconds = Math.max(1, Math.round(ms / 1000)); return seconds < 60 ? `${seconds} s` : `${Math.round(seconds / 60)} min`; };
+/** Waiting steps show elapsed time each second, so a long reference check does not look stuck. */
+function syncStorageTicker() {
+  const active = Object.values(storageRuns).some(Boolean);
+  if (active && !storageTicker) storageTicker = setInterval(() => {
+    // The page can be torn down (or rebuilt) between ticks.
+    if (!document.getElementById('storage-history-progress')) { clearInterval(storageTicker); storageTicker = undefined; return; }
+    for (const prefix of Object.keys(storageRuns) as StoragePrefix[]) renderStorageCounts(prefix);
+  }, 1000);
+  else if (!active && storageTicker) { clearInterval(storageTicker); storageTicker = undefined; }
 }
-const cleanKindLabels: Record<CleanupKind, string> = { checkpoints: 'Message checkpoints', undo: 'Restore backups', tracking: 'Change tracking baselines', unused: 'Unused snapshots' };
-/** Restore points, plus tracking baselines when any are included (they hold no restore points). */
+function renderStorageCounts(prefix: StoragePrefix) {
+  const run = storageRuns[prefix]; if (!run) return;
+  const progress = run.progress, bar = el<HTMLProgressElement>(`${prefix}-progress-bar`), now = Date.now();
+  const counted = progress.total > 0 && (progress.phase === 'removing' || progress.phase === 'refreshing');
+  if (counted) bar.value = progress.done / progress.total * 100; else bar.removeAttribute('value');
+  let text: string;
+  if (counted) {
+    text = `${Math.round(progress.done / progress.total * 100)}% · ${progress.done.toLocaleString()} / ${progress.total.toLocaleString()} files · ${fileSize(progress.bytes)} of ${fileSize(progress.totalBytes)} freed`;
+    const elapsed = now - (run.removingAt ?? run.phaseAt);
+    if (progress.phase === 'removing' && progress.done > 0 && progress.done < progress.total && elapsed > 3000) text += ` · about ${duration((progress.total - progress.done) * elapsed / progress.done)} left`;
+  } else text = `${progress.total ? `${progress.total.toLocaleString()} files · ${fileSize(progress.totalBytes)} · ` : ''}${duration(now - run.phaseAt)}`;
+  const count = el(`${prefix}-progress-count`); if (count.textContent !== text) count.textContent = text;
+}
+/** Progress inside the deletion preview that started it: a step list, then a counted bar while files are removed. */
+function renderStorageProgress(prefix: StoragePrefix, storage: UsageDashboardState['storage'], active: boolean) {
+  const plan = prefix === 'storage-cleanup' ? storage?.plan : storage?.historyPlan;
+  const progress = active && plan && storage?.status === 'cleaning' ? storage.progress ?? { phase: 'checking' as const, done: 0, total: 0, bytes: 0, totalBytes: 0 } : undefined;
+  el(`${prefix}-progress`).hidden = !progress;
+  if (!progress || !plan) { delete storageRuns[prefix]; syncStorageTicker(); return; }
+  const steps = storageSteps[prefix], index = Math.max(0, steps.indexOf(progress.phase)), now = Date.now();
+  let run = storageRuns[prefix];
+  if (!run || run.token !== plan.token) run = storageRuns[prefix] = { token: plan.token, reached: 0, phase: '', phaseAt: now, progress };
+  const again = index < run.reached;
+  run.reached = Math.max(run.reached, index); run.progress = progress;
+  const key = `${progress.phase}:${again}`;
+  if (run.phase !== key) { run.phase = key; run.phaseAt = now; }
+  if (progress.phase === 'removing') run.removingAt ??= now;
+  const list = el(`${prefix}-progress-steps`);
+  if (list.childElementCount !== steps.length) list.replaceChildren(...steps.map(step => { const item = node('li'); item.append(node('span', undefined, 'storage-step-mark'), node('span', storageStepLabels[step])); return item; }));
+  [...list.children].forEach((item, i) => { (item as HTMLElement).dataset.state = i < run.reached ? 'done' : i === run.reached ? 'active' : 'pending'; });
+  const label = again ? 'Checking references again…' : storageProgressPhases[progress.phase];
+  const phase = el(`${prefix}-progress-phase`); if (phase.textContent !== label) phase.textContent = label;
+  const hint = progress.phase === 'removing' ? '' : storageStepHints[progress.phase] ?? '';
+  const hintNode = el(`${prefix}-progress-hint`); if (hintNode.textContent !== hint) hintNode.textContent = hint; hintNode.hidden = !hint;
+  renderStorageCounts(prefix); syncStorageTicker();
+}
+/** Headline of a finished cleanup. */
+function doneCard(bytes: number) {
+  const card = node('div', undefined, 'storage-done'), icon = node('span', undefined, 'codicon codicon-pass-filled');
+  icon.setAttribute('aria-hidden', 'true'); card.append(icon, node('strong', `${fileSize(bytes)} freed`)); return card;
+}
+const cleanKindLabels: Record<CleanupKind, string> = { checkpoints: 'Message checkpoints', undo: 'Restore backups', tracking: 'Change tracking', unused: 'Unused snapshots' };
+/** Restore points (including tracking timeline points), plus the tracking baselines included. */
 function historyCounts(groups: StoredHistoryRow[]) {
   const tracking = groups.filter(group => group.kind === 'tracking').length;
   return `${groups.reduce((sum, group) => sum + group.count, 0)} restore points${tracking ? ` · ${plural(tracking, 'tracking baseline')}` : ''}`;
@@ -1432,7 +1510,7 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 function cleanKindSummary(storage: UsageDashboardState['storage'], kind: CleanupKind): { detail: string; bytes?: number; available: boolean } {
   if (kind === 'unused') { const files = storage?.cleanable?.files ?? 0; return { detail: `${plural(files, 'unused file')} · older than 10 min`, bytes: storage?.cleanable?.bytes, available: files > 0 }; }
   const groups = (storage?.histories ?? []).filter(group => group.kind === kind), points = groups.reduce((sum, group) => sum + group.count, 0);
-  return { detail: kind === 'checkpoints' ? `${plural(points, 'restore point')} in ${plural(groups.length, 'conversation')}` : kind === 'tracking' ? `${plural(groups.length, 'project')} · stops change tracking` : plural(groups.length, 'backup'), bytes: storage?.histories ? groups.reduce((sum, group) => sum + group.bytes, 0) : undefined, available: groups.length > 0 };
+  return { detail: kind === 'checkpoints' ? `${plural(points, 'restore point')} in ${plural(groups.length, 'conversation')}` : kind === 'tracking' ? `${plural(groups.length, 'project')} · baseline and its restore points · stops change tracking` : plural(groups.length, 'backup'), bytes: storage?.histories ? groups.reduce((sum, group) => sum + group.bytes, 0) : undefined, available: groups.length > 0 };
 }
 function chosenCleanKinds(storage: UsageDashboardState['storage']) {
   return (Object.keys(cleanKindLabels) as CleanupKind[]).filter(kind => cleanKinds.has(kind) && cleanKindSummary(storage, kind).available);
@@ -1618,7 +1696,39 @@ function renderNativeHistory(value: UsageDashboardState['conversationCleanup']) 
   }
   renderNativeDialog(value);
 }
+/**
+ * A preview scans the whole data folder and checks every snapshot, which takes seconds on a large one. Until it
+ * arrives, show that it is being prepared and for how long, instead of a page that seems to ignore the click.
+ */
+let previewWait: { at: number; token?: string; loading: boolean } | undefined, previewWaitTicker: ReturnType<typeof setInterval> | undefined;
+function waitForPreview() {
+  previewWait = { at: Date.now(), token: state?.storage?.historyPlan?.token, loading: false };
+  storagePage('restore'); renderPreviewWait(state?.storage);
+}
+function renderPreviewWait(storage: UsageDashboardState['storage']) {
+  if (previewWait) {
+    // An error left by an earlier preview must not end this wait: only a load that started after the click does. If the
+    // host refused before loading (another storage job was running), give up after a few seconds.
+    const age = Date.now() - previewWait.at;
+    if (storage?.status === 'loading') previewWait.loading = true;
+    else if (previewWait.loading || (storage?.historyPlan && storage.historyPlan.token !== previewWait.token) || age > 5000) previewWait = undefined;
+    if (previewWait && age > 5 * 60 * 1000) previewWait = undefined;
+  }
+  const box = el('storage-preview-wait'), shown = box.hidden && !!previewWait; box.hidden = !previewWait;
+  if (!previewWait) { if (previewWaitTicker) { clearInterval(previewWaitTicker); previewWaitTicker = undefined; } return; }
+  const files = state?.extensionStorage?.files;
+  el('storage-preview-wait-hint').textContent = `${files ? `Scanning ${files.toLocaleString()} files` : 'Scanning AgentTandem data'} and checking which snapshots are still in use. Nothing is deleted until you confirm.`;
+  const tick = () => {
+    const time = document.getElementById('storage-preview-wait-time');
+    if (!previewWait || !time) { clearInterval(previewWaitTicker); previewWaitTicker = undefined; return; }
+    if (!previewWait.loading && Date.now() - previewWait.at > 5000) { renderPreviewWait(state?.storage); return; }
+    time.textContent = duration(Date.now() - previewWait.at);
+  };
+  tick(); previewWaitTicker ??= setInterval(tick, 1000);
+  if (shown) box.scrollIntoView?.({ block: 'nearest' });
+}
 function renderStorage(storage: UsageDashboardState['storage']) {
+  renderPreviewWait(storage);
   if (storage?.historyPlan && storage.historyPlan.token !== historyPreviewToken) storagePage('restore');
   renderCleanChoices(storage);
   renderStorageHistories(storage);
@@ -1633,7 +1743,7 @@ function renderStorage(storage: UsageDashboardState['storage']) {
   el<HTMLButtonElement>('storage-refresh').disabled = !!storage && ['loading', 'cleaning'].includes(storage.status);
   el<HTMLButtonElement>('storage-preview').disabled = busy || !!error || !storage?.cleanable?.files;
   el<HTMLButtonElement>('storage-clean-all').disabled = busy || !!error || !!storage?.historyPlan?.kinds || (!storage?.histories?.length && !storage?.cleanable?.files);
-  el<HTMLButtonElement>('storage-clean').disabled = busy || !storage?.plan?.files.length;
+  el<HTMLButtonElement>('storage-clean').disabled = busy || !storage?.plan || !planFiles(storage.plan);
   el<HTMLButtonElement>('storage-cancel').disabled = busy;
   const totals = el('storage-totals'); totals.replaceChildren();
   for (const [label, bytes, detail] of [['Total stored', storage?.total, 'AgentTandem extension data only'], ['Unused snapshots', storage?.cleanable?.bytes, `${storage?.cleanable?.files ?? 0} unused files · older than 10 min · saved review is kept`]] as const) {
@@ -1646,29 +1756,17 @@ function renderStorage(storage: UsageDashboardState['storage']) {
       if (category.label !== 'Review snapshots & tracking') return;
       const cell = root.querySelectorAll('tbody tr')[index]?.firstElementChild; if (!cell) return;
       for (const review of storage.retainedReviews ?? []) cell.append(node('p', `${review.project} · ${fileSize(review.bytes)} kept by ${plural(review.files, 'saved comparison')}${review.undo ? ` and ${plural(review.undo, 'revert Undo file')}` : ''}`));
-      const actions = node('div', undefined, 'storage-review-actions');
-      for (const scope of ['accepted', 'all', 'discard'] as const) {
-        const button = node('button', undefined, 'quiet'); button.type = 'button'; button.dataset.reviewCleanup = scope;
-        button.append(node('span', undefined, `codicon codicon-${scope === 'accepted' ? 'clear-all' : 'trash'}`), document.createTextNode(scope === 'accepted' ? 'Clean accepted' : scope === 'all' ? 'Clean history (keep pending)' : 'Clear saved review data…'));
-        button.firstElementChild!.setAttribute('aria-hidden', 'true');
-        button.title = scope === 'accepted' ? 'Preview unused review snapshots; keep tracking, checkpoints and Undo.' : 'Preview all review history; removes checkpoints and restore backups, and stops tracking. Pending review stays protected.';
-        if (scope === 'discard') button.title = 'Preview removal of saved comparisons, revert Undo, checkpoints and tracking. Workspace files stay unchanged.';
-        button.disabled = busy || !!error || !!storage.historyPlan || !category.files;
-        button.onclick = () => send('previewReviewCleanup', { scope }); actions.append(button);
-      }
-      cell.append(actions);
     });
   }
   else loadingRows(el('storage-categories'), 3);
   el('storage-plan').hidden = !storage?.plan;
   if (storage?.plan) {
-    el('storage-plan-summary').textContent = `${storage.plan.files.length} files · ${fileSize(storage.plan.bytes)}. References are checked again before cleanup; newly used files are kept.`;
-    const files = el('storage-plan-files'); files.replaceChildren();
-    for (const file of storage.plan.files) files.append(node('li', `${file.relative} · ${fileSize(file.bytes)}`));
+    el('storage-plan-summary').textContent = `${planFiles(storage.plan).toLocaleString()} files · ${fileSize(storage.plan.bytes)}. References are checked again before cleanup; newly used files are kept.`;
+    planFileList(el('storage-plan-files'), storage.plan);
   }
   const result = el('storage-result'); result.replaceChildren();
   if (storage?.result) {
-    const r = storage.result; result.append(node('p', `Cleaned ${r.removed} files · ${fileSize(r.bytes)} freed${r.skipped ? ` · ${r.skipped} changed or newly protected files kept` : ''}.`));
+    const r = storage.result; result.append(doneCard(r.bytes)); result.append(node('p', `Cleaned ${r.removed} files · ${fileSize(r.bytes)} freed${r.skipped ? ` · ${r.skipped} changed or newly protected files kept` : ''}.`));
     if (r.failures.length) { const list = node('ul'); for (const failure of r.failures) list.append(node('li', failure)); result.append(node('p', `${r.failures.length} files could not be removed:`), list); }
   }
 }
@@ -1686,7 +1784,10 @@ function renderDataPolicies(value: UsageDashboardState) {
   const auto = value.autoClean, tokens = value.tokenHistory, retained = value.data?.retained, unused = value.storage?.cleanable, limit = value.storageLimit;
   // A storage job already running would turn a second click into an error, so its buttons wait for it.
   const storageBusy = value.storage?.status === 'loading' || value.storage?.status === 'cleaning';
-  const signature = JSON.stringify([categories, auto, tokens, retained, unused, limit, value.extensionStorage?.total ?? value.storage?.total, storageBusy]);
+  // "Clean now" only removes what nothing uses; say what holds the rest, so a 0 B cleanup does not look broken.
+  const tracking = value.storage?.histories?.filter(group => group.kind === 'tracking') ?? [];
+  const tracked = tracking.reduce((sum, group) => sum + group.reclaimable, 0);
+  const signature = JSON.stringify([categories, auto, tokens, retained, unused, limit, value.extensionStorage?.total ?? value.storage?.total, storageBusy, tracking.length, tracked, !!value.storage?.historyPlan]);
   if (signature === policySignature) return;
   policySignature = signature;
   const button = (label: string, icon: string, id: string, onclick: () => void, disabled = false) => {
@@ -1703,14 +1804,15 @@ function renderDataPolicies(value: UsageDashboardState) {
   rows.push({
     key: 'review', title: 'Review snapshots', bytes: size('Review snapshots & tracking'),
     chip: auto?.error ? 'Cleanup blocked' : auto?.enabled ? 'Cleaned automatically' : 'Automatic cleanup off', tone: auto?.error ? 'protected' : auto?.enabled ? 'auto' : 'choice',
-    text: 'When automatic cleanup is on, unused snapshots become eligible after one hour. Pending changes, tracking baselines and Undo stay protected.',
+    text: 'Copies of your files that let you review, accept and undo agent changes. Ones nothing needs any more, for example after you accept changes, are removed once they are an hour old. Change tracking keeps a full copy of each tracked project, which only Clean all removes. Pending review is kept unless you also choose to clear it.',
     facts: [
       unused ? (unused.bytes ? `${fileSize(unused.bytes)} unused right now` : 'Nothing unused right now') : 'Measuring…',
+      ...(tracked ? [`${fileSize(tracked)} kept by change tracking in ${plural(tracking.length, 'project')} · Clean all frees it and stops tracking`] : []),
       total?.runs ? `${fileSize(total.bytes)} cleaned automatically so far${total.lastAt ? ` · last ${sinceLabel(total.lastAt)}` : ''}` : 'Nothing cleaned automatically yet',
       ...(auto?.error ? [`Automatic cleanup could not finish: ${auto.error}`] : []),
     ],
     actions: [toggle, button(auto?.running ? 'Cleaning…' : 'Clean now', 'sparkle', 'autoclean-now', () => send('autoCleanNow'), !auto || auto.running || storageBusy),
-      button('Preview unused files…', 'search', 'autoclean-preview', () => send('previewReviewCleanup', { scope: 'accepted' }), storageBusy)],
+      button('Clean all review data…', 'trash', 'review-clean-all', () => { waitForPreview(); send('previewReviewCleanup', { scope: 'all' }); }, storageBusy || !!value.storage?.historyPlan || !size('Review snapshots & tracking'))],
   });
   const cap = limit?.bytes ?? 0, limitField = node('label', undefined, 'policy-toggle'), limitInput = node('input');
   limitInput.type = 'number'; limitInput.id = 'storage-limit'; limitInput.min = '0'; limitInput.max = '1024'; limitInput.step = '0.5'; limitInput.disabled = !limit;
