@@ -108,9 +108,11 @@ export class QuickAccounts implements vscode.Disposable {
         const active = profile.active || !!currentId && currentId === profileIdentityKey(provider, profile.identity);
         const status = accountProfileStatus(profile, active && native?.quota ? native : profile.status);
         const identity = status?.account || profile.identity;
+        const email = identity?.email;
+        const distinctEmail = email?.trim().toLowerCase() === profile.label.trim().toLowerCase() ? undefined : email;
         const blocked = state.accountSwitchBlocked || (state.accountsBusy ? 'Account operation in progress' : undefined);
         items.push({ id: profile.id, label: `$(${active ? 'check' : switching && operation.profileId === profile.id ? 'loading~spin' : 'account'}) ${profile.label}`,
-          description: [active ? 'Active' : undefined, identity?.email, identity?.plan].filter(Boolean).join(' · '), detail: [quickQuota(status), quotaDetail(status), !active && blocked ? blocked : undefined, !isChatAccount(provider) ? 'Close app windows before switching' : undefined].filter(Boolean).join(' · '),
+          description: [active ? 'Active' : undefined, distinctEmail, identity?.plan].filter(Boolean).join(' · '), detail: [quickQuota(status), quotaDetail(status), !active && blocked ? blocked : undefined, !isChatAccount(provider) ? 'Close app windows before switching' : undefined].filter(Boolean).join(' · '),
           ...(!active && !blocked && !this.working ? { action: 'switch' as const } : {}) });
       }
     }

@@ -27,13 +27,13 @@ export class ReviewHunkLenses implements vscode.CodeLensProvider, vscode.Disposa
       const request = { project, revision, file, hunk: hunk.id, line };
       const place = `block ${index + 1} of ${hunks.length} in ${file}`;
       const lenses = [
-        new vscode.CodeLens(range, { title: '$(check) Accept', tooltip: `Keep ${place} and mark it reviewed`, command: 'agentTandem.acceptHunk', arguments: [request] }),
-        new vscode.CodeLens(range, { title: '$(discard) Reject', tooltip: `Reject ${place} and restore its previous content`, command: 'agentTandem.rejectHunk', arguments: [request] }),
+        new vscode.CodeLens(range, { title: 'Accept', tooltip: `Keep ${place} and mark it reviewed`, command: 'agentTandem.acceptHunk', arguments: [request] }),
+        new vscode.CodeLens(range, { title: 'Reject', tooltip: `Reject ${place} and restore its previous content`, command: 'agentTandem.rejectHunk', arguments: [request] }),
       ];
       if (hunks.length > 1 || target.files > 1) lenses.push(new vscode.CodeLens(range,
-        { title: '$(arrow-down) Next change', tooltip: 'Go to the next change, continuing into the next changed file', command: 'agentTandem.nextChange' }));
+        { title: 'Next change', tooltip: 'Go to the next change, continuing into the next changed file', command: 'agentTandem.nextChange' }));
       if (target.files > 1) lenses.push(new vscode.CodeLens(range,
-        { title: '$(chevron-right) Next file', tooltip: 'Skip the remaining edits in this file and open the next changed file', command: 'agentTandem.nextFile', arguments: [{ project, revision, file }] }));
+        { title: 'Next file', tooltip: 'Skip the remaining edits in this file and open the next changed file', command: 'agentTandem.nextFile', arguments: [{ project, revision, file }] }));
       lenses.push(new vscode.CodeLens(range, { title: `Block ${index + 1}/${hunks.length}`, command: '' }));
       return lenses;
     });

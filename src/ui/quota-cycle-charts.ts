@@ -72,6 +72,7 @@ export function quotaCycleCharts(cycles: QuotaCycle[], weightedRate: number, sco
   const history = element('figure', undefined, 'quota-history-chart'), heading = element('figcaption', undefined, 'quota-chart-heading');
   heading.append(element('span', 'Across quota cycles'));
   const control = element('label', 'Chart metric', 'quota-chart-control'), select = element('select');
+  select.setAttribute('aria-label', 'Chart metric');
   for (const [value, label] of choices) { const option = element('option', label); option.value = value; select.append(option); }
   select.value = selectedMetrics.get(scope) ?? 'tokensPerPercent'; control.append(select); heading.append(control);
   const viewport = element('div', undefined, 'quota-chart-viewport');
@@ -92,7 +93,7 @@ export function quotaCycleCharts(cycles: QuotaCycle[], weightedRate: number, sco
     const min = change ? -max : 0;
     const width = slot * shown.length;
     viewport.style.setProperty('--quota-gutter', `${gutter}px`); viewport.style.setProperty('--quota-sheet-width', `${gutter + width}px`);
-    const svg = svgElement('svg', { viewBox: `0 0 ${width} 170`, preserveAspectRatio: 'none', role: 'group', 'aria-label': `${select.selectedOptions[0]!.textContent} by reset cycle` });
+    const svg = svgElement('svg', { viewBox: `0 0 ${width} 170`, preserveAspectRatio: 'none', role: 'group', 'aria-label': `${select.options[select.selectedIndex]!.textContent} by reset cycle` });
     // Equal slots keep nearby resets readable; the table under each column carries the actual dates.
     const x = (index: number) => slot * (index + 0.5);
     const y = (value: number) => 155 - (value - min) / (max - min) * 130;

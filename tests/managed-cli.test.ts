@@ -148,7 +148,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
     await expect(resolver.resolve('Codex', { executable: path.join(root, 'missing') })).rejects.toThrow('executable was not found');
     let registry = await store.read(); registry = await store.setDefault(registry.revision, 'Codex', selected.id);
     await store.remove(registry.revision, selected.id);
-    await expect(resolver.resolve('Codex', {})).rejects.toThrow('default Codex CLI was removed');
+    await expect(resolver.resolve('Codex', {})).rejects.toThrow('The Codex CLI selected under Default was removed');
     await expect(resolver.resolve('Codex', { id: selected.id })).rejects.toThrow('selected Codex CLI was removed');
   });
   it.each([false, true])('blocks disabled extension execution before probing (current host: %s)', async currentHost => {

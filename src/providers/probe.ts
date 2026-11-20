@@ -1,5 +1,5 @@
 import { spawn, execFile } from 'node:child_process';
-import { access, readFile, readdir, realpath } from 'node:fs/promises';
+import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import os from 'node:os';
@@ -15,7 +15,7 @@ async function npmCodex(folder: string): Promise<string | undefined> {
   const launcher = (await Promise.all(shim.map(async file => await exists(file) ? file : undefined))).find(Boolean);
   if (!launcher) return;
   const text = await readFile(launcher, 'utf8');
-  if (!/node_modules[\\/]@openai[\\/]codex[\\/]bin[\\/]codex\.js/.test(text)) throw new Error(`Cannot resolve the Codex launcher at ${launcher}. Choose its native executable in Diagnostics.`);
+  if (!/node_modules[\\/]@openai[\\/]codex[\\/]bin[\\/]codex\.js/.test(text)) throw new Error(`Cannot resolve the Codex launcher at ${launcher}. Choose its native executable in Manage CLIs.`);
   const architecture = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
   const packageArchitecture = process.arch === 'arm64' ? 'arm64' : 'x64';
   // Resolve the current NVM/package-manager link on each discovery, just as
@@ -126,6 +126,20 @@ async function vscodeExtensionClaudeExecutables(extensionPaths: readonly string[
     if (await exists(native)) files.push(native);
   }
   return files;
+}
+
+export async function executableInCLIFolder(name: 'codex' | 'claude', folder: string): Promise<string | undefined> {
+  if (!path.isAbsolute(folder)) return;
+  const filename = process.platform === 'win32' ? `${name}.exe` : name;
+  for (const directory of [folder, path.join(folder, 'bin')]) {
+    const file = path.join(directory, filename);
+    if ((await stat(file).catch(() => undefined))?.isFile()) return file;
+  }
+  const bundled = name === 'codex' ? vscodeExtensionCodexExecutables : vscodeExtensionClaudeExecutables;
+  for (const file of await bundled([folder], false)) {
+    if ((await stat(file).catch(() => undefined))?.isFile()) return file;
+  }
+  if (name === 'codex' && process.platform === 'win32') return npmCodex(folder);
 }
 
 /** Fallback when no terminal Claude exists: newest working CLI bundled with the editor extension. */

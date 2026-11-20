@@ -1,0 +1,23 @@
+.tandem-keybinding,.tandem-keybinding-chord {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  vertical-align:middle;
+  white-space:nowrap;
+}
+.tandem-keybinding-chord { gap:2px; font-size:10px; }
+.tandem-keybinding kbd {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:1em;
+  padding:1px 4px;
+  border:1px solid var(--vscode-keybindingLabel-border,var(--vscode-contrastBorder,currentColor));
+  border-bottom-color:var(--vscode-keybindingLabel-bottomBorder,var(--vscode-keybindingLabel-border,currentColor));
+  border-radius:3px;
+  background:var(--vscode-keybindingLabel-background,transparent);
+  color:var(--vscode-keybindingLabel-foreground,var(--vscode-foreground));
+  font:inherit;
+  line-height:1.2;
+}
+.tandem-hover-hint .tandem-keybinding { margin-inline-start:6px; }

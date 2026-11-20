@@ -4,7 +4,7 @@ AgentTandem must open existing repository conversations from Claude Code and Cod
 
 ## Implemented
 
-- One **AgentTandem** WebviewView in the Activity Bar/sidebar, with conversations first. Conversation history opens from its button, changes from Review changes, and diagnostics from More actions. Conversations, tools and steps open in the same panel; only Open in tab/Open diff in editor create editor tabs.
+- One **AgentTandem** WebviewView in the Activity Bar/sidebar, with conversations first. Conversation history opens from its button, changes from Review changes, and Manage CLIs from More actions. Conversations, tools and steps open in the same panel; only Open in tab/Open diff in editor create editor tabs.
 - Provider icons and names on each conversation, header, reply and tool: Claude Code (orange starburst), Codex (blue terminal). The list can be filtered by provider.
 - Uses the current workspace root automatically, without a picker. Multi-root workspaces follow the active file's root; closing it or switching to a file outside the workspace retains the current root. Opens the saved selection or most recent session automatically.
 - Safe Markdown replies, code blocks and collapsible tool activity; history search and provider filters in the panel.

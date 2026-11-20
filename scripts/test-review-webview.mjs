@@ -11,7 +11,8 @@ const root = process.cwd(), manifest = JSON.parse(await readFile('package.json',
 const packaged = process.argv.includes('--packaged');
 const editions = packaged || process.argv.includes('--marketplace-only') ? ['marketplace'] : ['local', 'marketplace'];
 for (const edition of editions) {
-  const runtime = path.join(root, '.test-runtime', `review-webview-${edition}-${Date.now()}`), project = path.join(runtime, 'workspace'), profile = path.join(runtime, 'profile');
+  // Electron's Unix socket path includes the profile directory.
+  const runtime = path.join(root, '.test-runtime', `review-webview-${edition}-${Date.now()}`), project = path.join(runtime, 'workspace'), profile = path.join(runtime, 'p');
   for (const folder of [project, path.join(profile, 'User'), path.join(root, 'artifacts')]) await mkdir(folder, { recursive: true });
   const codexSessions = path.join(runtime, 'codex', 'sessions'); await mkdir(codexSessions, { recursive: true });
   for (const [id, title] of [['11111111-1111-4111-8111-111111111111', 'Review new code and image changes'], ['22222222-2222-4222-8222-222222222222', 'Other agent conversation']]) {
@@ -33,7 +34,8 @@ for (const edition of editions) {
     for (const folder of ['dist', 'media', 'docs']) await cp(path.join(root, folder), path.join(extensionPath, folder), { recursive: true });
     await writeFile(path.join(extensionPath, 'package.json'), JSON.stringify(extensionManifest));
   }
-  await writeFile(path.join(profile, 'User', 'settings.json'), JSON.stringify({ 'window.restoreWindows': 'none', 'files.hotExit': 'off', 'window.zoomLevel': 0, 'editor.accessibilitySupport': 'off', 'workbench.startupEditor': 'none', 'agentTandem.autoTrackExternalChanges': false, 'agentTandem.codexExecutable': path.join(runtime, 'missing-codex.exe'), 'agentTandem.claudeExecutable': path.join(runtime, 'missing-claude.exe') }));
+  // Use the workbench renderer so CDP can inspect and select VS Code menu items on every platform.
+  await writeFile(path.join(profile, 'User', 'settings.json'), JSON.stringify({ 'window.restoreWindows': 'none', 'window.menuStyle': 'custom', 'files.hotExit': 'off', 'window.zoomLevel': 0, 'editor.accessibilitySupport': 'off', 'workbench.startupEditor': 'none', 'agentTandem.autoTrackExternalChanges': false, 'agentTandem.codexExecutable': path.join(runtime, 'missing-codex.exe'), 'agentTandem.claudeExecutable': path.join(runtime, 'missing-claude.exe') }));
   const server = createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); const port = server.address().port; await new Promise(resolve => server.close(resolve));
   console.log(`Review Webview runtime (${edition}): ${runtime}`);
   // No --enable-proposed-api: both editions exercise only the stable Webview APIs.

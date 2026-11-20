@@ -27,10 +27,10 @@ Tracking captures saved, non-ignored files, including manual edits. It cannot re
 
 Review opens with changed files grouped by conversation. Shared and unassigned changes stay visible when their source cannot be established. Select a file to compare immutable before/after snapshots in the bundled Monaco editor, with syntax highlighting, search and inline actions.
 
-- **Accept / Reject** acts on an individual change block. **Accept all** keeps all changes in the current file; **Reject all** restores the whole file to its saved baseline after a confirmation that names the file. Newer saved edits and unsaved buffers still block rejection, and **Undo** recovers it.
+- **Accept** and **Revert** act on an individual change block. **Accept all** keeps all changes in the current file. **Revert all** restores the file to its saved baseline after a confirmation that names it. Newer saved edits and unsaved buffers still block a revert.
 - **Previous / Next change** and **Previous / Next file** move through the review. Use the file picker to jump directly to another file.
-- File and conversation **Revert** actions preview their scope. **Undo** recovers the latest file, group or block revert.
-- **…** contains Refresh, Native diff and conversation details. Images show saved **Before / After** versions with whole-file actions.
+- File and conversation **Revert** actions preview their scope. **Undo** in Workspace Changes recovers the latest file, group or block revert.
+- The native **⋯** menu contains **Refresh**, **Native diff**, **Open Workspace Changes**, and **Open Conversation**. Images show saved **Before / After** versions with whole-file actions.
 - Image changes opened from **Source Control** (and Git image diff tabs restored after a reload) open in AgentTandem's **Before / After** view instead of VS Code's built-in Git image diff, which in VS Code 1.142 fails on its original side (`Cannot read properties of undefined (reading 'selection')`) and closes. Staged changes compare HEAD → index, unstaged index → working tree, with **Previous / Next file** across the changed images. **AgentTandem: Open Image Changes** (Source Control context menu, image editor title, Command Palette) opens it directly; set `agentTandem.openGitImageDiffs` to `false` to keep the built-in diff.
 
 ![Review panel grouping saved changes by Codex and Claude conversations, with shared and unassigned files](media/screenshots/review.png)
@@ -53,7 +53,7 @@ After a Codex or Claude Code switch, select **Restart Extension Host** to let th
 
 Hover a provider's quota in the VS Code status bar to open the account menu: remaining quota, reset countdowns, saved accounts and **Open Dashboard** are available without clicking the status bar. Select a saved account to switch. **Refresh quota** stays in the menu; clicking the status bar opens a searchable account picker with the same labeled shortcuts. In the dashboard, **View usage** selects an account's statistics without switching its sign-in.
 
-Quota rows use theme colors: green for healthy, amber at 25% remaining or less, red when exhausted. The active account, reset actions and extension storage have distinct icons.
+Quota rows use theme colors: green for healthy, amber at 25% remaining or less, red when exhausted. The active account and earned resets have distinct icons.
 
 The hover and status bar use the same current quota snapshot. Repeated limit windows and saved copies of the same account appear once; hover percentages show quota **remaining**, and saved quota is marked **Cached quota**. A profile named after its email does not repeat that email on the next line.
 
@@ -191,9 +191,9 @@ Open **Settings → Preferences** to show both agents, the selected chat agent, 
 
 Open **Settings → Storage** to see what agent history takes up and how much cleanup has reclaimed.
 
-The status-bar hover also shows **Extension storage**, its measured size and the largest data categories. **Manage storage** opens the extension's **App data** tab directly, where you can see what each kind of saved data is, who decides when it goes, and preview the exact files. AgentTandem checks its own data folder in the background every five minutes and refreshes after cleanup. Native Codex/Claude transcripts are managed separately in **Conversations**.
+The **App data** tab shows AgentTandem's measured storage size and data categories, how each kind of saved data is cleaned up, and previews of the files available for cleanup. AgentTandem checks its own data folder in the background every five minutes and refreshes after cleanup. Native Codex/Claude transcripts are managed in **Conversations**.
 
-At **1 GB** by default, the hover and Storage page show a warning and a notification offers **Manage storage**. Notifications appear at most once per day. Change **AgentTandem: Storage Warning MB** (`agentTandem.storageWarningMB`) in VS Code Settings; set it to `0` to disable size warnings. Monitoring does not delete anything.
+At **1 GB** by default, the Storage page shows a warning and a notification offers **Manage storage**, which opens **App data**. Notifications appear at most once per day. Change **AgentTandem: Storage Warning MB** (`agentTandem.storageWarningMB`) in VS Code Settings. Set it to `0` to disable size warnings. Monitoring does not delete anything.
 
 Two headline cards stay visible on every Storage tab:
 
@@ -211,7 +211,7 @@ The **App data** tab lists each kind of data AgentTandem keeps with its size, a 
 
 The **Restore history** tab filters saved restore history by project/type; select entries and **Review deletion** before removing them.
 
-**Review snapshots & tracking** has two shortcuts, also available in the status-bar hover: **Clean accepted** previews unreferenced review snapshots left after Accept or other review actions, while keeping tracking baselines, checkpoints and Undo. **Clean all** also removes every message checkpoint and restore backup and stops change tracking across projects. Pending review and its revert Undo remain protected, so some space can remain. Both actions show the exact files and bytes before the final cleanup button. Captures less than 10 minutes old stay protected unless their saved history is explicitly removed. Workspace files, chats and recorded demos are kept.
+**Clean accepted** previews unreferenced review snapshots left after Accept or other review actions, while keeping tracking baselines, checkpoints and Undo. **Clean all** also removes every message checkpoint and restore backup and stops change tracking across projects. Pending review and its revert Undo remain protected, so some space can remain. Both actions show the exact files and bytes before the final cleanup button. Captures less than 10 minutes old stay protected unless their saved history is explicitly removed. Workspace files, chats and recorded demos are kept.
 
 ![Clean accepted and Clean all shortcuts beside Review snapshots & tracking](media/screenshots/review-storage.png)
 
@@ -236,12 +236,20 @@ Install AgentTandem in the **WSL/SSH workspace** so it can access that environme
 
 ## Keyboard shortcuts
 
-| Shortcut | Action |
-| --- | --- |
-| `Enter` / `Shift+Enter` | Send a chat message or queue a follow-up / insert a newline |
-| `Alt+Y` / `Alt+N` | Accept / reject the current change in an active review editor |
-| `Alt+Up` / `Alt+Down` | Previous / next change |
-| `Alt+PageUp` / `Alt+PageDown` | Previous / next changed file |
+| Action | macOS | Windows and Linux |
+| --- | --- | --- |
+| Focus the current chat composer | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>T</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
+| Start a new chat | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>N</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> |
+| Open conversation history | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>H</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> |
+| Pick a file in the active review | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>J</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd> |
+| Open Quick Accounts | <kbd>⌘</kbd><kbd>K</kbd>, <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> | <kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> |
+| Send or queue a message / insert a newline | <kbd>↩</kbd> / <kbd>⇧</kbd><kbd>↩</kbd> | <kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd> |
+| Accept / reject the current change | <kbd>⌥</kbd><kbd>Y</kbd> / <kbd>⌥</kbd><kbd>N</kbd> | <kbd>Alt</kbd>+<kbd>Y</kbd> / <kbd>Alt</kbd>+<kbd>N</kbd> |
+| Previous / next change or chat message | <kbd>⌥</kbd><kbd>↑</kbd> / <kbd>⌥</kbd><kbd>↓</kbd> | <kbd>Alt</kbd>+<kbd>↑</kbd> / <kbd>Alt</kbd>+<kbd>↓</kbd> |
+| Previous / next changed file | <kbd>⌥</kbd><kbd>⇞</kbd> / <kbd>⌥</kbd><kbd>⇟</kbd> | <kbd>Alt</kbd>+<kbd>Page Up</kbd> / <kbd>Alt</kbd>+<kbd>Page Down</kbd> |
+| Save edits in the Review editor | <kbd>⌘</kbd><kbd>S</kbd> | <kbd>Ctrl</kbd>+<kbd>S</kbd> |
+
+For a two-step shortcut, press the first combination, release it, then press the second. The five two-step bindings can be changed in VS Code’s **Keyboard Shortcuts** editor. AgentTandem’s webview tooltips show the shipped defaults.
 
 *Screenshots capture the current interface with demonstration data. Account names, emails, token counts, quota values and switch logs are fictional.*
 

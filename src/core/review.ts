@@ -2,18 +2,18 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import type { Stats } from 'node:fs';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile, rename, unlink, readdir, lstat, realpath } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile, rename, unlink, readdir, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import ignore from 'ignore';
 import { diffLineParts, diffPatch } from './diff-async';
-import { HistoryStore, assertPath } from './history';
+import { HistoryStore, assertPath, decodeText } from './history';
 import type { FileChange, Manifest, Snapshot } from './types';
 import { streamFile } from './blob';
 import { reviewHunksAsync, textSnapshots, encodeSnapshot, type ReviewHunk } from './review-hunks';
 import { withStorageLock } from './storage-lock';
 import { captureConversations, editOverlapsCapture, type ReviewCapture, type ReviewConversation, type ConversationEdit } from './review-conversations';
 import { reviewGroup } from './review-groups';
-import { imageSnapshots, type ImageComparison } from './media-preview';
+import { imageMime, imageSnapshots, type ImageComparison } from './media-preview';
 import { reviewGitHead, reviewCommittedPaths, reviewCommittedFile, reviewUncommittedPaths, reviewGitEquivalentFiles, reviewIgnoredPaths, reviewListedPaths, reviewIndexEntries } from './review-git';
 import { gitRefOf, gitRefOfFile } from './git-refs';
 
@@ -23,7 +23,8 @@ const hash = (value: string | Buffer) => createHash('sha256').update(value).dige
 interface StatEntry { size: number; mtimeMs: number; ctimeMs: number; ino: number; seen: number; id: string }
 /** A file modified within this window of being hashed can change without moving its timestamps (Git's "racy clean" rule). */
 const racyMs = 2000;
-const externalNotice = 'Already applied · Conversation groups use native edit history or manual links. Other saved edits remain unassigned.';
+const externalNotice = 'Changes are already applied.';
+const legacyExternalNotice = 'Already applied · Conversation groups use native edit history or manual links. Other saved edits remain unassigned.';
 const sameManifest =(left: Manifest, right: Manifest) => {
   const names = Object.keys(left);
   return names.length === Object.keys(right).length && names.every(name => left[name] === right[name]);
@@ -48,7 +49,11 @@ export interface ReviewWebviewFile extends ReviewFile {
   beforeText?: string; afterText?: string; hunks: ReviewHunk[];
   beforeSize: number; afterSize: number; notice?: string;
   images?: ImageComparison;
+  editable?: boolean;
 }
+const reviewTextLimit = 4 * 1024 * 1024;
+// Monaco normalizes line endings in a text model.
+const editableText = (text: string) => !/\r(?!\n)/.test(text) && (!text.includes('\r\n') || !/(?<!\r)\n/.test(text));
 export interface CheckpointPlan { target: string; current: string; revision: string; files: ReviewFile[] }
 
 /** Workspace changes are already applied. Review owns snapshots and decisions only. */
@@ -81,6 +86,9 @@ export class ReviewStore {
       value = { version: 1, project, revision: randomUUID(), files: [] };
     }
     if (value.version !== 1 || value.project !== project || typeof value.revision !== 'string' || !Array.isArray(value.files)) throw new Error('Invalid pending change review.');
+    if (typeof value.notice === 'string' && value.notice.startsWith(legacyExternalNotice)) {
+      value.notice = externalNotice + value.notice.slice(legacyExternalNotice.length);
+    }
     if (value.gitHead !== undefined && value.gitHead !== null && (typeof value.gitHead !== 'string' || !/^[a-f0-9]{40,64}$/.test(value.gitHead))) throw new Error('Invalid review Git commit.');
     if (value.external !== undefined && !/^[a-f0-9-]{36}$/i.test(value.external)) throw new Error('Invalid external review baseline.');
     if (value.externalPreference !== undefined && typeof value.externalPreference !== 'boolean') throw new Error('Invalid external tracking preference.');
@@ -732,7 +740,7 @@ export class ReviewStore {
     value.revertUndo = remaining.length ? { id: undo.id, createdAt: undo.createdAt, files: remaining } : undefined;
     value.revision = randomUUID(); await this.save(value);
   }
-  private async writeDecision(project: string, name: string, expected: string | undefined, target: string | undefined) {
+  private async writeDecision(project: string, name: string, expected: string | undefined, target: string | undefined, beforeEdit?: (target: string) => void) {
     const current = await this.fingerprint(project, name);
     if (current !== expected) throw new Error(`Cannot update ${name}: it changed during review. Your edits were kept.`);
     if (current === target) return;
@@ -742,8 +750,11 @@ export class ReviewStore {
     const temporary = `${full}.${randomUUID()}.agent-tandem-revert`;
     try {
       await this.history.copyBlob(target, temporary);
+      if (beforeEdit) await chmod(temporary, (await lstat(full)).mode & 0o777);
       if (await this.fingerprint(project, name) !== expected) throw new Error(`Cannot update ${name}: it changed during review. Your edits were kept.`);
-      await this.safePath(project, name); await rename(temporary, full);
+      await this.safePath(project, name);
+      beforeEdit?.(full);
+      await rename(temporary, full);
     } finally { await unlink(temporary).catch(() => undefined); }
   }
   private async applyRevert(value: PendingReview, files: RevertFile[]) {
@@ -790,23 +801,61 @@ export class ReviewStore {
     value.notice = 'Restored the reverted changes to pending review.';
     await this.save(value); return this.view(value);
   }); }
-  private async hunkData(file: ReviewFile) {
+  private async textData(file: ReviewFile) {
     const sizes = await Promise.all([file.before, file.after].map(id => id ? this.history.inspectBlob(id) : { size: 0 }));
-    if (sizes.reduce((sum, item) => sum + item.size, 0) > 4 * 1024 * 1024) throw new Error('Large changes need file-level review.');
+    if (sizes.reduce((sum, item) => sum + item.size, 0) > reviewTextLimit) throw new Error('Large changes need file-level review.');
     const [left, right] = await Promise.all([
       file.before ? this.history.readBlob(file.before) : Buffer.alloc(0),
       file.after ? this.history.readBlob(file.after) : Buffer.alloc(0),
     ]);
-    const texts = textSnapshots(left, right), { before, after } = texts;
+    return { left, right, ...textSnapshots(left, right) };
+  }
+  private async hunkData(file: ReviewFile) {
+    const data = await this.textData(file), { before, after } = data;
     let hunks = await reviewHunksAsync(before, after);
     // Creating/deleting even an empty file is one complete change.
     if (!hunks.length && (!file.before || !file.after)) hunks = [{ id: hash(`${file.before}:${file.after}`), oldLine: 0, newLine: 0, oldLines: 0, newLines: 0, oldStart: 0, oldEnd: before.length, newStart: 0, newEnd: after.length }];
-    return { left, right, ...texts, hunks };
+    return { ...data, hunks };
   }
   hunks(request: ReviewRequest) { return this.serial(async (): Promise<ReviewHunk[]> => {
     const value = await this.load(request.project), file = this.selected(value, request)[0]!;
     if (!request.file) throw new Error('Choose a file change.');
     return (await this.hunkData(file)).hunks;
+  }); }
+  edit(request: ReviewRequest, text: string, beforeWrite: (target: string) => void) { return this.serial(async () => {
+    if (!request.file) throw new Error('Choose a file change.');
+    const value = await this.load(request.project, true), file = this.selected(value, request)[0]!;
+    if (!file.after || imageMime(file.path)) throw new Error('This file cannot be edited in Review.');
+    if (text.length > reviewTextLimit) throw new Error('The edited file is too large for Review.');
+    const data = await this.textData(file);
+    if (data.bytes || !editableText(data.afterText)) throw new Error('Open the workspace file to edit its original text format.');
+    const bytes = encodeSnapshot(text, data.right);
+    if (decodeText(bytes) !== text) throw new Error('The edited text cannot be saved in this file’s encoding.');
+    if (data.left.length + bytes.length > reviewTextLimit) throw new Error('The edited file is too large for Review.');
+    const updated = hash(bytes);
+    const current = await this.fingerprint(request.project, file.path);
+    if (current !== file.after && current !== updated) throw new Error(`Cannot save ${file.path}: it changed on disk since capture. Your review draft was kept.`);
+    const full = await this.safePath(request.project, file.path);
+    beforeWrite(full);
+    if (updated === file.after) return this.view(value);
+
+    await this.history.putBlob(bytes);
+    const parts = updated !== file.before && data.left.length + bytes.length <= 512 * 1024
+      ? await diffLineParts(data.before, text, 2000) : undefined;
+    this.setPending(value, file.path, updated === file.before ? undefined : {
+      ...file, after: updated, binary: false,
+      additions: parts?.filter(part => part.added).reduce((n, part) => n + part.count, 0),
+      deletions: parts?.filter(part => part.removed).reduce((n, part) => n + part.count, 0),
+    });
+    await this.saveExternalBaseline(value, { [file.path]: updated });
+    if (value.revertUndo) {
+      value.revertUndo.files = value.revertUndo.files.filter(entry => entry.original.path !== file.path);
+      if (!value.revertUndo.files.length) value.revertUndo = undefined;
+    }
+    await this.writeDecision(request.project, file.path, current, updated, beforeWrite);
+    value.revision = randomUUID(); value.notice = undefined;
+    await this.save(value);
+    return this.view(value);
   }); }
   decideHunk(request: ReviewHunkRequest, revert: boolean) { return this.serial(async () => {
     if (typeof request.file !== 'string' || !request.file || typeof request.hunk !== 'string') throw new Error('Choose a change to review.');
@@ -868,10 +917,10 @@ export class ReviewStore {
     // Inspect live: changes saved before legacy Japanese support still say binary.
     const binary = { ...result, notice: 'Binary file. Review the whole file or open its saved snapshots in the native editor.' };
     if (left!.binary || right!.binary) return binary;
-    if (left!.size + right!.size > 4 * 1024 * 1024) return { ...result, notice: 'Large file. Review the whole file or open its full saved snapshots in the native editor.' };
+    if (left!.size + right!.size > reviewTextLimit) return { ...result, notice: 'Large file. Review the whole file or open its full saved snapshots in the native editor.' };
     try {
       const data = await this.hunkData(file);
-      return { ...result, binary: false, beforeText: data.beforeText, afterText: data.afterText, hunks: data.hunks };
+      return { ...result, binary: false, beforeText: data.beforeText, afterText: data.afterText, hunks: data.hunks, editable: !!file.after && !data.bytes && editableText(data.afterText) };
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Binary changes')) return binary;
       if (error instanceof Error && error.message.includes('computing changes took too long')) return { ...result, notice: error.message };

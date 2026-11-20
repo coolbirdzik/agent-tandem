@@ -5,9 +5,22 @@ export function attachmentCards(root: HTMLElement, items: ChatAttachment[], remo
   items.forEach((item, index) => {
     const card = document.createElement('div'); card.className = 'attachment-card';
     const url = imageDataUrl(item);
-    if (url) { const image = document.createElement('img'); image.src = url; image.alt = item.name; card.append(image); }
-    else { const icon = document.createElement('span'); icon.className = `codicon codicon-${attachmentKind(item) === 'audio' ? 'unmute' : 'file'}`; icon.setAttribute('aria-hidden', 'true'); card.append(icon); }
-    const label = document.createElement('span'); label.className = 'attachment-name'; label.textContent = item.name; label.title = `${item.name} · ${Math.ceil(attachmentBytes(item) / 1024)} KB`; card.append(label);
+    if (url) {
+      card.classList.add('attachment-image');
+      const image = document.createElement('img');
+      image.src = url;
+      image.alt = item.name;
+      card.append(image);
+    } else {
+      const icon = document.createElement('span');
+      icon.className = `codicon codicon-${attachmentKind(item) === 'audio' ? 'unmute' : 'file'}`;
+      icon.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.className = 'attachment-name';
+      label.textContent = item.name;
+      label.title = `${item.name} · ${Math.ceil(attachmentBytes(item) / 1024)} KB`;
+      card.append(icon, label);
+    }
     if (remove) { const button = document.createElement('button'); button.type = 'button'; button.className = 'icon-button'; button.setAttribute('aria-label', `Remove ${item.name}`); button.title = `Remove ${item.name}`; button.textContent = '×'; button.onclick = () => remove(index); card.append(button); }
     root.append(card);
   });

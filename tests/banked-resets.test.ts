@@ -2,13 +2,15 @@ import { expect, it } from 'vitest';
 import { bankedResetCountdown, bankedResetDetails } from '../src/core/banked-resets';
 import { quotaStatus } from '../src/core/quota-status';
 
-it('shows the authoritative count and expiry dates in the status text and hover tooltip', () => {
-  const expiresAt = Date.parse('2026-11-01T00:00:00Z');
-  const status = quotaStatus({ composeProvider: 'Codex', accounts: { Codex: { status: 'ready', quota: { status: 'available', windows: [],
+it('shows the authoritative count and relative timing in the status bar details', () => {
+  const expiresAt = Date.now() + 2.25 * 3600000;
+  const status = quotaStatus({ composeProvider: 'Codex', accounts: { Codex: { status: 'ready', quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 40, resetsAt: expiresAt }],
     bankedResets: { availableCount: 3, credits: [{ title: 'Full reset', expiresAt }, {}] } } } } });
   expect(status.text).toContain('↻ 3');
   expect(status.tooltip).toContain('Banked resets: 3 available');
-  expect(status.tooltip).toContain(`Full reset · Expires ${new Date(expiresAt).toLocaleString()}`);
+  expect(status.tooltip).toMatch(/5h: 60% remaining · resets in 2h1[45]m/);
+  expect(status.tooltip).toMatch(/Full reset · 2h 1[45]m left/);
+  expect(status.tooltip).not.toContain(new Date(expiresAt).toLocaleString());
   expect(status.tooltip).toContain('Expiry unavailable');
   expect(status.tooltip).toContain('Expiry details shown for some resets');
 });

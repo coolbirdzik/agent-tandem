@@ -12,6 +12,7 @@ import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
 import { bankedResetDetails } from './core/banked-resets';
 import { compactCountdown, quotaGlyphCharacter, quotaStatuses, resetClock } from './core/quota-status';
+import { quotaAccountHoverHtml } from './core/quota-account-hover';
 import { statusBarPreferences, type StatusBarField, type StatusBarPreferences } from './core/status-bar-preferences';
 import { ACCOUNT_PROVIDERS, accountProviderName, accountProviderDetail, isChatAccount, type AccountProvider } from './core/account-providers';
 import { validAssignmentScope, type UsageAssignmentScope } from './core/usage-attribution';
@@ -22,12 +23,17 @@ import { quotaCycleCharts } from './ui/quota-cycle-charts';
 import { observeQuotaCycleStarts, quotaCycleScope } from './core/quota-cycle-start';
 import { storageUsageLevel, storageSize } from './core/storage-usage';
 import { quotaWindowLabel } from './ui/quota-window-label';
+import { Dropdowns } from './ui/dropdown';
+import { DatePickers } from './ui/date-picker';
+import { setModalOpen } from './ui/modal';
 
 declare function acquireVsCodeApi(): { postMessage(value: unknown): void };
 autoHideScrollbars();
-hoverHints();
+hoverHints(document, renderStatusBarHover);
 const api = acquireVsCodeApi(), send = (type: string, value?: unknown) => api.postMessage({ type, value });
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const dropdowns = new Dropdowns(document.body);
+const datePickers = new DatePickers(document.body);
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => {
   const value = document.createElement(tag); if (text !== undefined) value.textContent = text; if (className) value.className = className; return value;
 };
@@ -59,8 +65,7 @@ const costLabel = (cost: ApiCost) => !cost.pricedTokens && cost.unpricedTokens ?
 let state: UsageDashboardState | undefined, initialized = false, currentPage = 'dashboard';
 let currentStoragePage = 'conversations', nativeScanRequested = false;
 let periodLimit = 60, modelSignature = '', accountSignature = '';
-interface AccountChoice { provider?: ConversationProvider; title: string; info: string }
-let accountChoices = new Map<string, AccountChoice>();
+interface AccountChoice { provider?: ConversationProvider; title: string; info: string; sortLabel: string }
 const collapsedPeriods = new Set<string>(); let periodsCollapsed = false, modelSlots = new Map<string, number>();
 let conversationLimit = 20, selectedUsageConversation: string | undefined;
 let accountPlatform: AccountProvider | '' = '';
@@ -76,6 +81,7 @@ function showTab(tab: DashboardTab, focus = false) {
     const selected = button.dataset.tab === tab; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
   });
   for (const name of DASHBOARD_TABS) el(`panel-${name}`).hidden = name !== tab;
+  if (tab !== 'quota') dropdowns.closeWithin(el('panel-quota'));
   // A pinned tab switch starts at the new panel, even after scrolling deep into the old one.
   if (changed && pinned) {
     const top = el(`panel-${tab}`).getBoundingClientRect().top + window.scrollY - stickyTop - tabs.offsetHeight - (Number.parseFloat(styles.marginBottom) || 0);
@@ -248,7 +254,7 @@ function renderAttributionPreview() {
   const scope = assignmentScope(), valid = validAssignmentScope(scope);
   const days = scope.conversationId ? state?.data?.conversations?.find(row => row.provider === scope.provider && row.id === scope.conversationId)?.days ?? [] : state?.data?.days ?? [];
   const totals = usageBreakdown(days.filter(row => !row.account || !!row.accountSource), { grouping: 'day', provider: scope.provider, from: scope.from, to: scope.to }).totals;
-  el('attribution-preview').textContent = valid ? `${number(totals.total)} tokens · ${number(totals.requests)} requests eligible. Only history without native per-turn evidence is reassigned. New history within this scope follows this choice until removed; the latest matching assignment wins.`
+  el('attribution-preview').textContent = valid ? `${number(totals.total)} tokens · ${number(totals.requests)} requests eligible. The latest matching assignment applies to existing and future eligible history until removed.`
     : 'Choose a conversation, or enter both dates for all conversations. Dates are inclusive; leave them blank to cover an entire conversation.';
   el<HTMLButtonElement>('attribution-save').disabled = !state?.data || !!state.attributionBusy || !valid || !el<HTMLSelectElement>('attribution-account').value || !totals.total;
 }
@@ -268,12 +274,14 @@ function openAttribution(provider: ConversationProvider, conversationId?: string
   renderAttributionPreview();
   const dialog = el<HTMLDialogElement>('attribution-dialog');
   if (!dialog.open) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
-  el('attribution-account').focus();
+  dropdowns.sync(); dropdowns.focus(el<HTMLSelectElement>('attribution-account'));
 }
 function closeAttribution() {
   const dialog = el<HTMLDialogElement>('attribution-dialog');
+  dropdowns.closeWithin(dialog);
   if (typeof dialog.close === 'function') dialog.close(); else dialog.removeAttribute('open');
   // Account cards are rebuilt on render, so the opener may be gone; fall back to the Details entry.
+  datePickers.sync();
   (attributionOpener?.isConnected ? attributionOpener : el('panel-details').hidden ? document.querySelector<HTMLElement>('[role=tab][aria-selected=true]') : el('attribution-open'))?.focus();
   attributionOpener = undefined;
 }
@@ -297,6 +305,7 @@ function renderAttribution() {
   if ([...conversationSelect.options].some(option => option.value === previousConversation)) conversationSelect.value = previousConversation;
   el('attribution-form').setAttribute('aria-busy', String(!!state?.attributionBusy));
   el('attribution-form').querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select').forEach(input => { input.disabled = !!state?.attributionBusy; });
+  datePickers.sync();
   el('attribution-status').textContent = state?.attributionBusy ? 'Saving history assignment…' : state?.attributionNotice ?? '';
   el('attribution-error').hidden = !state?.attributionError; el('attribution-error').textContent = state?.attributionError ?? '';
   const list = el('attribution-assignments'), assignments = state?.data?.assignments ?? []; list.replaceChildren();
@@ -310,6 +319,7 @@ function renderAttribution() {
     remove.onclick = () => send('usageAttribution', { action: 'remove', id: row.id }); item.append(label, remove); list.append(item);
   }
   renderAttributionPreview();
+  dropdowns.sync();
 }
 function attributionCaption(days: NonNullable<UsageDashboardState['data']>['days'], filters: UsageFilters) {
   return ([['matched', 'Matched from quota changes'], ['inferred', 'Inferred from session evidence'], ['active', 'Active CLI sign-in'], ['manual', 'User confirmed']] as const).flatMap(([source, label]) => {
@@ -318,19 +328,23 @@ function attributionCaption(days: NonNullable<UsageDashboardState['data']>['days
   }).join(' · ');
 }
 function page(value: string) {
+  if (value !== currentPage) dropdowns.close();
   currentPage = value;
   if (value === 'storage') storagePage(currentStoragePage);
   el('dashboard').hidden = value !== 'dashboard'; el('preferences').hidden = value !== 'preferences'; el('storage').hidden = value !== 'storage';
   el('managed-accounts').hidden = value !== 'accounts';
+  datePickers.sync();
   document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.page === value)));
 }
 function storagePage(value: string) {
+  if (value !== currentStoragePage) dropdowns.closeWithin(el('storage'));
   currentStoragePage = value;
   el('storage-conversations-page').hidden = value !== 'conversations';
   el('storage-extension-summary').hidden = value === 'conversations';
   // The policy list belongs to App data; the status, errors and Refresh above it serve both tabs.
   el('data-intro').hidden = el('data-app').hidden = value !== 'unused';
   el('storage-restore-page').hidden = value !== 'restore'; el('storage-unused-page').hidden = value !== 'unused';
+  datePickers.sync();
   document.querySelectorAll<HTMLButtonElement>('[data-storage-page]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.storagePage === value)));
   if (value === 'conversations' && (!state?.conversationCleanup || state.conversationCleanup.status === 'idle') && !nativeScanRequested) {
     nativeScanRequested = true; send('scanConversations');
@@ -339,12 +353,18 @@ function storagePage(value: string) {
 document.querySelectorAll<HTMLButtonElement>('[data-storage-page]').forEach(button => { button.onclick = () => storagePage(button.dataset.storagePage!); });
 document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(button => { button.onclick = () => { page(button.dataset.page!); if (button.dataset.page === 'storage') send('storage'); if (button.dataset.page === 'accounts') send('accountAction', { action: 'refresh' }); }; });
 el('accounts-refresh').onclick = () => send('accountAction', { action: 'refresh' });
+el('accounts-quick').onclick = () => send('quickAccounts');
 el('account-switch-view').onclick = showSwitchDialog;
 el('account-switch-close').onclick = hideSwitchDialog;
 el('account-switch-dialog').addEventListener('cancel', event => { event.preventDefault(); hideSwitchDialog(); });
 function accountConnection(open: boolean) {
-  el('account-connection').hidden = !open; el('account-connect').setAttribute('aria-expanded', String(open));
-  if (open) { if (accountPlatform) el<HTMLSelectElement>('account-provider').value = accountPlatform; renderAccountConnection(); el('account-provider').focus(); }
+  const connection = el('account-connection');
+  connection.hidden = !open; el('account-connect').setAttribute('aria-expanded', String(open));
+  if (open) {
+    const provider = el<HTMLSelectElement>('account-provider');
+    if (accountPlatform) provider.value = accountPlatform;
+    renderAccountConnection(); dropdowns.focus(provider);
+  } else dropdowns.closeWithin(connection);
 }
 el('account-connect').onclick = () => accountConnection(el('account-connection').hidden);
 el('account-connect-close').onclick = () => { accountConnection(false); el('account-connect').focus(); };
@@ -424,6 +444,9 @@ const selectedHistory = new Set<string>();
 const historyRange = new CheckboxRangeSelection();
 let historySignature = '';
 let historyPreviewToken: string | undefined;
+const historyDialog = el<HTMLDialogElement>('storage-history-plan');
+const cancelHistory = el<HTMLButtonElement>('storage-history-cancel');
+historyDialog.oncancel = event => { event.preventDefault(); cancelHistory.click(); };
 el('storage-project').onchange = el('storage-kind').onchange = () => { historyRange.reset(); renderStorageHistories(state?.storage); };
 el('storage-select-visible').onclick = () => { historyRange.reset(); for (const group of visibleHistory(state?.storage)) selectedHistory.add(group.id); renderStorageHistories(state?.storage); };
 el('storage-clear-selection').onclick = () => { selectedHistory.clear(); historyRange.reset(); renderStorageHistories(state?.storage); };
@@ -434,7 +457,7 @@ el('storage-quick-select').onchange = () => {
   renderStorageHistories(state?.storage);
 };
 el('storage-history-preview').onclick = () => send('previewHistoryDeletion', { ids: [...selectedHistory] });
-el('storage-history-cancel').onclick = () => send('storage');
+cancelHistory.onclick = () => send('storage');
 // "Clean up…" opens a category chooser; the extension previews only the chosen kinds.
 const cleanKinds = new Set<CleanupKind>(['checkpoints', 'undo', 'unused']);
 let cleanChooser = false, cleanSignature = '';
@@ -471,15 +494,30 @@ function selectedStatusBarFields(): StatusBarField[] {
   const previous = state?.preferences.statusBar?.fields ?? [];
   return [...previous.filter(field => selected.includes(field)), ...selected.filter(field => !previous.includes(field))];
 }
+function renderStatusBarHover(target: Element) {
+  const provider = target.getAttribute('data-hover-hint');
+  if (provider !== 'Codex' && provider !== 'Claude') return undefined;
+  const content = node('div', undefined, 'quota-account-hover');
+  // Only the shared template emits icon syntax. Account strings are already HTML-escaped.
+  content.innerHTML = quotaAccountHoverHtml(provider, state ?? {}, 'webview').replace(/\$\(([\w-]+)(~spin)?\)/g, (reference, name: string, spin?: string) => {
+    const glyph = quotaGlyphCharacter(reference);
+    if (glyph) return `<span class="quota-window-badge" role="img" aria-label="${name.endsWith('-5h') ? '5h' : '7d'}">${glyph}</span>`;
+    if (name === 'agent-tandem-codex' || name === 'agent-tandem-claude') return `<span class="quota-hover-provider-icon" aria-hidden="true">${name === 'agent-tandem-codex' ? '\uE001' : '\uE002'}</span>`;
+    return `<span class="codicon codicon-${name}${spin ? ' codicon-modifier-spin' : ''}" aria-hidden="true"></span>`;
+  });
+  return content;
+}
 function renderStatusBarPreview() {
   const enabled = el<HTMLInputElement>('show-status-quota').checked, root = el('status-bar-preview'); root.replaceChildren();
   const iconsOnly = el<HTMLSelectElement>('status-bar-style').value === 'icons';
   document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.status-bar-controls select, .status-bar-controls input, [data-status-field]').forEach(input => { input.disabled = !enabled || (iconsOnly && (input.dataset.statusField !== undefined || input.id === 'status-bar-windows')); });
+  dropdowns.sync();
   if (!enabled) { root.append(node('span', 'Status bar hidden', 'muted')); return; }
   const preferences = statusBarPreferences({ providers: el<HTMLSelectElement>('status-bar-providers').value as StatusBarPreferences['providers'], fields: selectedStatusBarFields(), quotaWindows: el<HTMLSelectElement>('status-bar-windows').value as StatusBarPreferences['quotaWindows'], style: el<HTMLSelectElement>('status-bar-style').value as StatusBarPreferences['style'], codexColor: statusBarColor('codex'), claudeColor: statusBarColor('claude') });
   for (const value of quotaStatuses({ accounts: state?.accounts, composeProvider: state?.activeProvider }, preferences)) {
     const item = node('span', undefined, 'status-bar-preview-item'), icon = providerIcon(value.provider);
-    icon.setAttribute('aria-hidden', 'true'); item.append(icon); item.title = value.tooltip;
+    icon.setAttribute('aria-hidden', 'true'); item.append(icon);
+    item.dataset.hoverHint = value.provider; item.tabIndex = 0;
     const custom = value.provider === 'Claude' ? preferences.claudeColor : preferences.codexColor;
     item.style.color = custom ? statusBarCss(custom) : value.tone === 'healthy' ? statusBarCss('charts.green') : value.tone === 'loading' ? statusBarCss(value.provider === 'Claude' ? 'charts.orange' : 'charts.blue') : '';
     for (const part of value.label.split(/(\$\([\w-]+\))/).filter(Boolean)) {
@@ -510,6 +548,7 @@ el('reset-filters').onclick = () => {
 function dateRange(): { from?: string; to?: string } {
   const range = el<HTMLSelectElement>('filter-range').value, today = localDay(Date.now());
   el('custom-dates').hidden = range !== 'custom';
+  datePickers.sync();
   if (range === 'today') return { from: today, to: today };
   if (range === 'yesterday') {
     const date = new Date(Date.now()); date.setDate(date.getDate() - 1);
@@ -576,7 +615,7 @@ function renderApiActivity(filters: UsageFilters) {
   }
   root.append(metrics);
   const details = node('details', undefined, 'usage-details'); details.append(node('summary', 'API details'));
-  details.append(node('p', 'Source: API · account/usage/read. Dates use the API timezone, which is unspecified. Missing days are not counted. Model breakdowns and API cost use local history.', 'muted'));
+  details.append(node('p', 'The API timezone is unspecified. Missing days are excluded. Model breakdowns and cost estimates use local history.', 'muted'));
   root.append(details);
   if (filters.model) root.append(node('p', 'Model filter: Local only', 'muted'));
   if (usage.detail) root.append(node('p', usage.detail, 'muted'));
@@ -607,35 +646,13 @@ if (typeof ResizeObserver !== 'undefined') {
   observer.observe(el('dashboard'));
 }
 const providerLabel = (provider: ConversationProvider) => provider === 'Claude' ? 'Claude Code' : provider;
-function accountPickerItem(choice: AccountChoice | undefined, element: 'button' | 'span' = 'span') {
-  const item = node(element, undefined, 'account-picker-item');
-  item.append(choice?.provider ? providerIcon(choice.provider) : node('span', undefined, `codicon ${choice ? 'codicon-question' : 'codicon-account'} account-picker-mark`));
-  const text = node('span', undefined, 'account-picker-text');
-  text.append(node('strong', choice?.title ?? 'All accounts'), node('small', choice ? [choice.provider && providerLabel(choice.provider), choice.info].filter(Boolean).join(' · ') : 'Every provider and account', 'muted'));
-  item.append(text); return item;
+function accountOption(id: string, choice?: AccountChoice) {
+  const option = new Option(choice?.title ?? 'All accounts', id);
+  option.title = choice ? [choice.provider && providerLabel(choice.provider), choice.info].filter(Boolean).join(' · ') : 'Every provider and account';
+  option.dataset.icon = choice?.provider?.toLowerCase() ?? (choice ? 'question' : 'account');
+  if (choice?.provider) option.dataset.iconSrc = document.body.dataset[`${option.dataset.icon}Icon`] ?? '';
+  return option;
 }
-function setAccountMenu(open: boolean) {
-  const menu = el('account-picker-menu'), trigger = el('account-picker-trigger');
-  menu.hidden = !open; trigger.setAttribute('aria-expanded', String(open));
-  if (open) (menu.querySelector<HTMLElement>('[aria-selected=true]') ?? menu.querySelector<HTMLElement>('[role=option]'))?.focus();
-}
-function renderAccountPicker(ids: string[]) {
-  const select = el<HTMLSelectElement>('filter-account'), trigger = el('account-picker-trigger'), menu = el('account-picker-menu');
-  trigger.replaceChildren(accountPickerItem(accountChoices.get(select.value) ?? (select.value ? { title: 'Unknown account', info: '' } : undefined)), node('span', undefined, 'codicon codicon-chevron-down account-picker-caret'));
-  menu.replaceChildren(...[''].concat(ids).map(id => {
-    const option = accountPickerItem(id ? accountChoices.get(id) : undefined, 'button'); option.setAttribute('role', 'option'); option.dataset.value = id;
-    option.setAttribute('aria-selected', String(id === select.value)); option.tabIndex = -1;
-    option.onclick = () => { setAccountMenu(false); trigger.focus(); if (select.value !== id) { select.value = id; select.dispatchEvent(new Event('change')); } };
-    return option;
-  }));
-}
-el('account-picker-trigger').onclick = () => setAccountMenu(el('account-picker-menu').hidden);
-el('account-picker-menu').onkeydown = event => {
-  const options = [...el('account-picker-menu').querySelectorAll<HTMLElement>('[role=option]')], at = options.indexOf(document.activeElement as HTMLElement);
-  if (event.key === 'Escape') { event.preventDefault(); setAccountMenu(false); el('account-picker-trigger').focus(); }
-  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); options[(at + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); }
-};
-document.addEventListener('click', event => { if (!el('account-picker').contains(event.target as Node)) setAccountMenu(false); });
 function providerIcon(provider: ConversationProvider) {
   const image = node('img', undefined, 'provider-icon'); image.alt = ''; image.dataset.provider = provider;
   image.src = document.body.dataset[`${provider.toLowerCase()}Icon`] ?? ''; return image;
@@ -788,6 +805,7 @@ function renderAccountConnection() {
   el('account-add').textContent = isChatAccount(provider) ? 'Sign in' : `Open ${provider}`;
   el('account-connection-detail').textContent = isChatAccount(provider) ? 'Sign in in a separate CLI profile, or save the account you already use.' : `Sign in in ${provider}, then save its current sign-in here. Quota stays in the app.`;
   el('account-import').title = isChatAccount(provider) ? 'Import native CLI account JSON' : 'Import an AgentTandem desktop sign-in JSON';
+  dropdowns.sync();
 }
 function renderManagedAccounts() {
   const root = el('managed-account-list'); root.replaceChildren();
@@ -1084,6 +1102,7 @@ function renderQuotaEstimates() {
     if (localTrend) item.append(localQuotaWarning());
     root.append(item);
   }
+  dropdowns.sync();
 }
 /** Quota counts every device using the account; local history only this one. */
 const LOCAL_QUOTA_WARNING = 'Local and Device estimates assume this account is used only on this device. Quota also counts other devices and CLIs with a separate config folder (CLAUDE_CONFIG_DIR or CODEX_HOME), so if the account is used there, tokens / 1%, full cycle and tokens left read too low.';
@@ -1179,7 +1198,7 @@ function cyclePeriods(periods: ReturnType<typeof usageBreakdown>['periods'], win
 function renderUsage() {
   renderRangeChips();
   if (!state || (state.status === 'loading' && !state.data)) {
-    const range = dateRange(); renderApiActivity({ ...range, grouping: usageGrouping() }); renderLoading(); renderCycleBar(); return;
+    const range = dateRange(); renderApiActivity({ ...range, grouping: usageGrouping() }); renderLoading(); renderCycleBar(); dropdowns.sync(); return;
   }
   // A cycle follows one account, so the account and its provider become the filters.
   const window = cycleWindow(), target = window ? cycleAccount() : undefined;
@@ -1190,32 +1209,34 @@ function renderUsage() {
   const provider = (accountPinned && !window ? '' : el<HTMLSelectElement>('filter-provider').value) as ConversationProvider | '', modelSelect = el<HTMLSelectElement>('filter-model');
   const pickerProvider = accountPinned || target ? '' : provider;
   const accountSelect = el<HTMLSelectElement>('filter-account'), previousAccount = accountSelect.value;
-  const accounts = new Map<string, string>(), choices = new Map<string, AccountChoice>();
-  const choice = (account: UsageAccount, title = account.email): AccountChoice => ({ provider: account.provider, title, info: account.organization || account.nativeAccountId || (title === account.email ? account.method : account.email) });
+  const accounts = new Map<string, AccountChoice>();
+  const choice = (account: UsageAccount, label?: string): AccountChoice => ({
+    provider: account.provider, title: label ?? account.email,
+    info: account.organization || account.nativeAccountId || (!label || label === account.email ? account.method : account.email),
+    sortLabel: `${label === undefined ? '' : `${label} · `}${usageAccountLabel(account)} · ${account.provider}`,
+  });
   for (const row of state.data?.days ?? []) if (!pickerProvider || row.provider === pickerProvider) {
     const id = row.account?.id ?? UNKNOWN_ACCOUNT;
-    accounts.set(id, row.account ? `${usageAccountLabel(row.account)} · ${row.provider}` : 'Unknown account');
-    choices.set(id, row.account ? choice(row.account) : { title: 'Unknown account', info: 'Unattributed history' });
+    accounts.set(id, row.account ? choice(row.account) : { title: 'Unknown account', info: 'Unattributed history', sortLabel: 'Unknown account' });
   }
   for (const agent of ['Codex', 'Claude'] as const) if (!pickerProvider || agent === pickerProvider) {
     const account = usageAccount(agent, state.accounts?.[agent]?.account);
-    if (account) { accounts.set(account.id, `${usageAccountLabel(account)} · ${agent}`); choices.set(account.id, choice(account)); }
+    if (account) accounts.set(account.id, choice(account));
   }
   for (const profile of state.managedAccounts ?? []) if (isChatAccount(profile.provider) && (!pickerProvider || profile.provider === pickerProvider)) {
     const account = usageAccount(profile.provider, profile.status?.account || profile.identity);
-    if (account) { accounts.set(account.id, `${profile.label} · ${usageAccountLabel(account)} · ${profile.provider}`); choices.set(account.id, choice(account, profile.label)); }
+    if (account) accounts.set(account.id, choice(account, profile.label));
   }
-  const accountOptions = [...accounts].sort((a, b) => a[1].localeCompare(b[1])), nextAccountSignature = JSON.stringify(accountOptions);
+  const accountOptions = [...accounts].sort((a, b) => a[1].sortLabel.localeCompare(b[1].sortLabel));
+  const nextAccountSignature = JSON.stringify(accountOptions);
   if (accountSignature !== nextAccountSignature) {
     accountSignature = nextAccountSignature;
-    const allAccounts = node('option', 'All accounts'); allAccounts.value = '';
-    accountSelect.replaceChildren(allAccounts, ...accountOptions.map(([id, label]) => { const option = node('option', label); option.value = id; return option; }));
+    accountSelect.replaceChildren(accountOption(''), ...accountOptions.map(([id, details]) => accountOption(id, details)));
     accountSelect.value = accounts.has(previousAccount) ? previousAccount : '';
   }
   if (target && accounts.has(target.id)) accountSelect.value = target.id;
   const accountId = accountSelect.value;
-  el('filter-provider').parentElement!.hidden = !!accountId && accountId !== UNKNOWN_ACCOUNT;
-  accountChoices = choices; renderAccountPicker(accountOptions.map(([id]) => id));
+  el('filter-provider').closest('label')!.hidden = !!accountId && accountId !== UNKNOWN_ACCOUNT;
   const models = [...new Set(state.data?.days.filter(row => (!provider || row.provider === provider) && (!accountId || (row.account?.id ?? UNKNOWN_ACCOUNT) === accountId)).map(row => row.model) ?? [])].sort();
   const signature = JSON.stringify(models);
   if (modelSignature !== signature) {
@@ -1224,6 +1245,7 @@ function renderUsage() {
     modelSelect.replaceChildren(all, ...models.map(model => { const option = node('option', model); option.value = model; return option; }));
     modelSelect.value = models.includes(previous) ? previous : '';
   }
+  dropdowns.sync();
   const range = localRange(), filters: UsageFilters = { ...range, provider: provider || undefined, accountId: accountId || undefined, model: modelSelect.value || undefined, grouping: usageGrouping() };
   renderApiActivity({ ...filters, ...dateRange() });
   renderCycleBar();
@@ -1319,6 +1341,7 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
   const visible = visibleHistory(storage), selected = groups.filter(group => selectedHistory.has(group.id));
   const rangeRows = visible.map(group => ({ key: group.id, disabled: locked }));
   projectFilter.disabled = kindFilter.disabled = locked; el<HTMLSelectElement>('storage-quick-select').disabled = locked || !visible.length;
+  dropdowns.sync();
   el<HTMLButtonElement>('storage-select-visible').disabled = locked || !visible.length;
   el<HTMLButtonElement>('storage-clear-selection').disabled = locked || !selected.length;
   el<HTMLButtonElement>('storage-history-preview').disabled = locked || !selected.length;
@@ -1343,9 +1366,9 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
     bytes.title = 'Space freed by deleting only this history. Data shared with other history or Review stays; deleting those together can free more.';
     row.append(checkbox, copy, bytes); list.append(row);
   }
-  const preview = storage?.historyPlan; el('storage-history-plan').hidden = !preview;
+  const preview = storage?.historyPlan;
   el<HTMLButtonElement>('storage-history-delete').disabled = blocked || !preview || (!!preview.reviewScope && !preview.files.length && !preview.records.length);
-  el<HTMLButtonElement>('storage-history-cancel').disabled = busy;
+  cancelHistory.disabled = busy;
   if (preview) {
     const kinds = preview.kinds, lost = kinds ? [kinds.includes('checkpoints') && 'every message checkpoint', kinds.includes('undo') && 'every restore backup'].filter((item): item is string => !!item) : [];
     const tracking = preview.histories.filter(group => group.kind === 'tracking').length;
@@ -1378,10 +1401,7 @@ function renderStorageHistories(storage: UsageDashboardState['storage']) {
       ? 'Nothing to clean yet. Remaining snapshots are protected or less than 10 minutes old.'
       : 'These snapshots are shared with retained history or Review. Only the selected restore points will be removed.'));
   }
-  if (preview && preview.token !== historyPreviewToken) {
-    el('storage-history-plan').scrollIntoView?.({ block: 'nearest' });
-    const heading = el('storage-history-plan-heading'); heading.tabIndex = -1; heading.focus({ preventScroll: true });
-  }
+  setModalOpen(historyDialog, !!preview);
   historyPreviewToken = preview?.token;
   const result = el('storage-history-result'); result.replaceChildren();
   if (storage?.historyResult) {
@@ -1543,6 +1563,8 @@ function renderNativeHistory(value: UsageDashboardState['conversationCleanup']) 
   const preset = el<HTMLInputElement>('native-history-before').value || el<HTMLSelectElement>('native-history-year').value ? '' : archive === 'archived' && age === '0' ? 'archived' : archive === '' && age === '30' ? 'old' : archive === '' && age === '0' ? 'all' : '';
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-native-preset]')) { button.disabled = locked; button.setAttribute('aria-pressed', String(button.dataset.nativePreset === preset)); }
   el('native-history-workspace').hidden = !scanned || !!value?.plan || value?.status === 'cleaning';
+  datePickers.sync();
+  dropdowns.sync();
   el('native-history-selection-bar').hidden = !scanned || !!value?.plan || value?.status === 'cleaning';
   el('native-history-list').hidden = !!value?.plan || value?.status === 'cleaning';
   el('native-history-overview').textContent = scanned ? `${plural(all.length, 'conversation')} · ${fileSize(all.reduce((sum, row) => sum + row.bytes, 0))} stored locally` : 'Your local Codex and Claude Code chats, across all projects.';
@@ -1681,7 +1703,7 @@ function renderDataPolicies(value: UsageDashboardState) {
   rows.push({
     key: 'review', title: 'Review snapshots', bytes: size('Review snapshots & tracking'),
     chip: auto?.error ? 'Cleanup blocked' : auto?.enabled ? 'Cleaned automatically' : 'Automatic cleanup off', tone: auto?.error ? 'protected' : auto?.enabled ? 'auto' : 'choice',
-    text: 'Copies of your files that let you review, accept and undo agent changes. Ones nothing needs any more, for example after you accept changes, are removed once they are an hour old. Pending changes, tracking baselines and Undo are always kept.',
+    text: 'When automatic cleanup is on, unused snapshots become eligible after one hour. Pending changes, tracking baselines and Undo stay protected.',
     facts: [
       unused ? (unused.bytes ? `${fileSize(unused.bytes)} unused right now` : 'Nothing unused right now') : 'Measuring…',
       total?.runs ? `${fileSize(total.bytes)} cleaned automatically so far${total.lastAt ? ` · last ${sinceLabel(total.lastAt)}` : ''}` : 'Nothing cleaned automatically yet',
@@ -1700,8 +1722,8 @@ function renderDataPolicies(value: UsageDashboardState) {
     key: 'restore', title: 'Restore points', bytes: size('Message checkpoints & Undo'),
     chip: limit?.error || limit?.blocked ? 'Limit not met' : cap ? `Oldest removed above ${fileSize(cap)}` : 'You decide', tone: limit?.error || limit?.blocked ? 'protected' : cap ? 'auto' : 'choice',
     text: cap
-      ? `A checkpoint is saved before each message so you can restore your code, plus the last restore backup. When AgentTandem data goes over ${fileSize(cap)}, the oldest checkpoints are removed first until it is back to about 90% of the limit. The last restore backup is kept. Set 0 to turn the limit off.`
-      : 'A checkpoint is saved before each message so you can restore your code, plus the last restore backup. The size limit is off, so they are never deleted automatically.',
+      ? `Above ${fileSize(cap)} of AgentTandem data, cleanup removes the oldest checkpoints as needed to reach about 90% of the limit. The last restore backup is kept. Set the limit to 0 to turn it off.`
+      : 'The size limit is off. Automatic cleanup keeps message checkpoints and the last restore backup.',
     facts: [
       ...(cap && used !== undefined ? [`AgentTandem data uses ${fileSize(used)} of ${fileSize(cap)}`] : []),
       ...(limitTotal?.runs ? [`${fileSize(limitTotal.bytes)} removed to stay under the limit${limitTotal.lastAt ? ` · last ${sinceLabel(limitTotal.lastAt)}` : ''}`] : []),
@@ -1814,7 +1836,8 @@ function render(value: UsageDashboardState) {
   el('dashboard-status').textContent = value.status === 'loading' ? 'Reading local CLI history…' : value.data ? `Updated ${new Date(value.data.updatedAt).toLocaleString()} · ${value.data.timezone}` : 'Usage history has not been loaded.';
   renderManagedAccounts(); renderAccountSwitch(); renderAttribution();
   const signature = JSON.stringify([value.status, value.data && { ...value.data, recent: undefined }, value.error,
-    value.accounts?.Codex?.account, value.accounts?.Claude?.account, value.conversationTitles, value.usageWindow && [value.usageWindow.from, value.usageWindow.to, value.usageWindow.days]]);
+    value.accounts?.Codex?.account, value.accounts?.Claude?.account, value.managedAccounts?.map(profile => [profile.provider, profile.label, profile.status?.account || profile.identity]),
+    value.conversationTitles, value.usageWindow && [value.usageWindow.from, value.usageWindow.to, value.usageWindow.days]]);
   // Account/quota updates need estimates, but leave history tables and filters intact.
   if (signature !== usageRenderSignature) { usageRenderSignature = signature; renderUsage(); }
   else renderApiActivity({ ...dateRange(), provider: el<HTMLSelectElement>('filter-provider').value as ConversationProvider || undefined,

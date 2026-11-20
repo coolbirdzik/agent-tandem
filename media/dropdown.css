@@ -1,0 +1,21 @@
+.tandem-dropdown{display:block;min-width:0;width:100%}
+.tandem-dropdown>select{display:none!important}
+.dropdown-trigger{display:flex;align-items:center;gap:8px;width:100%;min-width:0;min-height:28px;padding:6px 8px;text-align:left;border:1px solid transparent;border-radius:6px;background:var(--tandem-control);color:var(--vscode-foreground);font-size:12px;font-weight:400}
+.dropdown-caption{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dropdown-trigger>.codicon{flex:none;font-size:12px;color:var(--tandem-muted)}
+.dropdown-trigger:hover,.dropdown-trigger[aria-expanded=true]{background:var(--tandem-hover)}
+.dropdown-trigger:disabled{opacity:.5}
+.dropdown-menu{position:fixed;z-index:5;overflow:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--tandem-line);border-radius:8px;background:color-mix(in srgb,var(--vscode-menu-background,var(--tandem-surface)) var(--tandem-popover-opacity),transparent);backdrop-filter:var(--tandem-popover-filter);-webkit-backdrop-filter:var(--tandem-popover-filter);color:var(--vscode-foreground);font-size:12px;box-shadow:0 3px 12px #00000014}
+.dropdown-menu:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:1px}
+.dropdown-option{display:flex;align-items:center;gap:7px;min-height:29px;padding:5px 7px;border-radius:4px;cursor:pointer}
+.dropdown-option[data-active=true]{background:var(--tandem-hover)}
+.dropdown-option[aria-disabled=true]{opacity:.45;cursor:default}
+.dropdown-check{flex:none;width:12px;font-size:12px;visibility:hidden;color:inherit}
+.dropdown-option[aria-selected=true]>.dropdown-check{visibility:visible}
+.dropdown-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+.dropdown-copy>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dropdown-description{color:var(--tandem-muted);font-size:10px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+@media(forced-colors:active){.dropdown-menu,.dropdown-trigger{border:1px solid CanvasText}.dropdown-option[data-active=true]{background:Highlight;color:HighlightText}}
+.dropdown-option-icon{font-size:14px;flex:none;color:var(--vscode-textLink-foreground)}
+.dropdown-description[hidden]{display:none}
+.dropdown-image{width:17px;height:17px;object-fit:contain;flex:none}

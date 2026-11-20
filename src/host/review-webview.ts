@@ -18,24 +18,58 @@ export class ReviewWebview implements vscode.Disposable {
   private posted = '';
   private pending?: ReturnType<typeof setTimeout>;
   private acting = false;
+  private choosingFile = false;
   constructor(private extensionUri: vscode.Uri, private reviews: ReviewStore,
     private current: () => { project?: string; review?: ReviewState; busy: boolean; capturing?: Promise<void>; conversations?: readonly { key: string }[] },
     private invoke: (command: string, value?: unknown) => Promise<unknown>,
-    private native: (request: ReviewRequest) => Promise<void>) {}
+    private native: (request: ReviewRequest) => Promise<void>,
+    private edit: (request: ReviewRequest, text: string) => Promise<void>) {}
   get state(): ReviewEditorState { return this.model; }
+  get active(): boolean { return this.panel?.active ?? false; }
+  async chooseFile() {
+    if (this.active && this.model.files.length && !this.model.busy) await this.panel?.webview.postMessage({ type: 'chooseFile' });
+  }
+  private async showFilePicker(panel: vscode.WebviewPanel, revision: unknown) {
+    const model = this.model, scope = this.scope;
+    if (!panel.active || !scope || revision !== model.revision || !model.files.length || model.busy || this.acting || this.choosingFile) return;
+    this.choosingFile = true;
+    try {
+      const picked = await vscode.window.showQuickPick(model.files.map(file => ({ label: file.path, description: file.path === model.file?.path ? 'Current file' : file.kind })),
+        { title: 'AgentTandem · Changed files', placeHolder: 'Choose a file to review' });
+      if (!picked) return;
+      await this.current().capturing?.catch(() => undefined);
+      const latest = this.current();
+      if (this.panel !== panel || !panel.active || this.scope !== scope || this.acting || latest.busy || latest.project !== scope.project || latest.review?.busy || latest.review?.revision !== model.revision) return;
+      this.scope = { ...scope, file: picked.label };
+      await this.load('first');
+    } catch (error) { this.error(error); }
+    finally { this.choosingFile = false; }
+  }
+  runMenuAction(type: 'refresh' | 'native' | 'workspaceChanges' | 'conversation', value: unknown) {
+    if (!value || typeof value !== 'object') return;
+    const context = value as Record<string, unknown>;
+    const { project, group, revision, file } = this.model;
+    if (context.webview !== 'agentTandem.review' || context.webviewSection !== 'reviewActions' || context.reviewMenuEnabled !== true ||
+        context.project !== project || context.group !== group || context.revision !== revision || context.file !== file?.path) return;
+    return this.handle({ ...context, type });
+  }
   async open(request: ReviewRequest, current: () => boolean) {
     await this.reviews.editorFiles(request);
     if (!current()) return;
     this.scope = { ...request }; this.signature = ''; this.version++;
     if (!this.panel) {
       const panel = vscode.window.createWebviewPanel('agentTandem.review', 'AgentTandem · Review', vscode.ViewColumn.Active,
-        { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist'), vscode.Uri.joinPath(this.extensionUri, 'media')] });
+        { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist'), vscode.Uri.joinPath(this.extensionUri, 'media')] });
       this.panel = panel;
       const resource = (folder: string, file: string) => webviewResource(panel.webview, this.extensionUri, folder, file);
       panel.webview.html = reviewWebviewHtml({ script: resource('dist', 'review-webview.js'), monacoStyle: resource('dist', 'review-webview.css'), worker: resource('dist', 'review-editor-worker.js'), style: resource('media', 'review-editor.css'), icons: resource('media', 'codicons/codicon.css'), cspSource: panel.webview.cspSource, nonce: randomBytes(18).toString('base64') });
       this.listeners.push(panel.onDidDispose(() => { if (this.panel === panel) this.close(); }),
-        panel.onDidChangeViewState(() => { if (panel.visible) this.update(); }),
+        panel.onDidChangeViewState(() => {
+          void vscode.commands.executeCommand('setContext', 'agentTandem.reviewEditorActive', panel.active);
+          if (panel.visible) this.update();
+        }),
         panel.webview.onDidReceiveMessage(message => { void this.handle(message); }));
+      void vscode.commands.executeCommand('setContext', 'agentTandem.reviewEditorActive', panel.active);
     } else this.panel.reveal(vscode.ViewColumn.Active);
     await this.load();
   }
@@ -47,7 +81,7 @@ export class ReviewWebview implements vscode.Disposable {
       this.version++; this.signature = ''; this.model = { files: [], busy: false, notice: 'The workspace changed. Open its pending changes from Review.' }; this.post(); return;
     }
     const context = this.model.context;
-    this.model = { ...this.model, busy, undo: current.review?.undo, ...(context ? { context: { ...context, canOpenConversation: !!context.conversation && !!current.conversations?.some(item => item.key === context.conversation!.key) } } : {}) }; this.post();
+    this.model = { ...this.model, busy, ...(context ? { context: { ...context, canOpenConversation: !!context.conversation && !!current.conversations?.some(item => item.key === context.conversation!.key) } } : {}) }; this.post();
     if (busy) return;
     const signature = `${current.project}:${current.review?.revision}:${this.scope.group ?? ''}:${this.scope.file ?? ''}`;
     if (signature === this.signature) return;
@@ -70,7 +104,7 @@ export class ReviewWebview implements vscode.Disposable {
     this.signature = `${scope.project}:${revision}:${scope.group ?? ''}:${selected?.path ?? ''}`;
     const context = selected ? reviewContext(current.review!.files, selected) : undefined;
     if (context) context.canOpenConversation = !!context.conversation && !!latest.conversations?.some(item => item.key === context.conversation!.key);
-    this.model = { project: scope.project, revision, group: scope.group, files: files.map(({ path, kind, additions, deletions }) => ({ path, kind, additions, deletions })), file, busy: this.acting || latest.busy, undo: latest.review?.undo, navigation,
+    this.model = { project: scope.project, revision, group: scope.group, files: files.map(({ path, kind, additions, deletions }) => ({ path, kind, additions, deletions })), file, busy: this.acting || latest.busy, navigation,
       context,
       ...(!files.length ? { notice: 'All changes in this review have been reviewed.' } : {}) };
     this.panel.title = file ? `${file.path.split(/[\\/]/).pop()} · AgentTandem Review` : 'AgentTandem · Review';
@@ -81,20 +115,27 @@ export class ReviewWebview implements vscode.Disposable {
     if (!this.panel) return;
     // Snapshot text is immutable for a revision; unrelated chat/usage updates
     // must not resend megabytes of source or disturb the reading position.
-    const key = JSON.stringify([this.model.project, this.model.revision, this.model.group, this.model.file?.path, this.model.busy, this.model.error, this.model.notice, this.model.undo?.id, this.model.navigation, this.model.context?.canOpenConversation]);
+    const key = JSON.stringify([this.model.project, this.model.revision, this.model.group, this.model.file?.path, this.model.busy, this.model.error, this.model.notice, this.model.navigation, this.model.context?.canOpenConversation]);
     if (!force && key === this.posted) return;
     this.posted = key; void this.panel.webview.postMessage({ type: 'state', state: this.model });
   }
   private error(error: unknown) { this.model = { ...this.model, error: error instanceof Error ? error.message : String(error), busy: false }; this.post(); }
   private async handle(message: unknown) {
-    if (!message || typeof message !== 'object' || !this.panel) return;
+    const panel = this.panel;
+    if (!message || typeof message !== 'object' || !panel) return;
     const data = message as Record<string, unknown>;
     if (data.type === 'ready') { this.post(true); return; }
-    if (this.acting) return;
+    if (data.type === 'chooseFile') { await this.showFilePicker(panel, data.revision); return; }
+    const editing = data.type === 'saveEdit';
+    const reply = (saved: boolean) => {
+      if (editing && panel === this.panel) void panel.webview.postMessage({ type: 'editResult', saved });
+    };
+    if (this.acting) { reply(false); return; }
     // Background captures do not lock the editor; an action waits for one, and
     // a capture that changed the revision rejects it below as stale.
     await this.current().capturing?.catch(() => undefined);
-    if (this.acting || !this.panel) return;
+    if (this.acting || this.panel !== panel) { reply(false); return; }
+    let saved = false;
     try {
       const current = this.current(), scope = this.scope;
       if (!scope || scope.project !== current.project || data.revision !== this.model.revision || data.revision !== current.review?.revision) throw new Error('Changes updated. Review the refreshed diff before deciding.');
@@ -104,17 +145,23 @@ export class ReviewWebview implements vscode.Disposable {
         this.scope = { ...scope, file: data.file }; await this.load(data.navigation === 'last' ? 'last' : 'first'); return;
       }
       if (data.type === 'refresh') { await this.invoke('agentTandem.refreshReview'); await this.load(); return; }
-      if (data.type === 'undo') { if (this.model.undo) await this.invoke('agentTandem.undoRevert', { project: scope.project, id: this.model.undo.id }); await this.load(); return; }
+      if (data.type === 'workspaceChanges') { await this.invoke('agentTandem.open'); return; }
       const file = this.model.file;
       if (!file || data.file !== file.path) throw new Error('Choose the current file change.');
       const request: ReviewRequest = { project: scope.project, revision: this.model.revision!, group: scope.group, file: file.path };
-      if (data.type === 'workspaceChanges') { await this.invoke('agentTandem.open'); return; }
       if (data.type === 'conversation') {
         const conversation = this.model.context?.conversation;
         if (!conversation || !current.conversations?.some(item => item.key === conversation.key)) throw new Error('This review has no available conversation.');
         await this.invoke('agentTandem.openConversation', conversation.key); return;
       }
       if (data.type === 'native') { await this.native(request); return; }
+      if (editing) {
+        if (!file.editable || data.after !== file.after || typeof data.text !== 'string') throw new Error('The editable file changed. Your review draft was kept.');
+        this.acting = true; this.model = { ...this.model, busy: true, error: undefined }; this.post();
+        await this.edit(request, data.text);
+        saved = true;
+        return;
+      }
       if (data.type !== 'accept' && data.type !== 'reject') throw new Error('Unsupported review action.');
       if (data.hunk !== undefined && (typeof data.hunk !== 'string' || !file.hunks.some(hunk => hunk.id === data.hunk))) throw new Error('This block is no longer pending.');
       this.acting = true; this.model = { ...this.model, busy: true, error: undefined }; this.post();
@@ -129,9 +176,11 @@ export class ReviewWebview implements vscode.Disposable {
       this.acting = false;
       const error = this.model.error;
       try { await this.load(); if (error) this.error(error); } catch (error) { this.error(error); }
+      finally { reply(saved); }
     }
   }
   private close() {
+    void vscode.commands.executeCommand('setContext', 'agentTandem.reviewEditorActive', false);
     clearTimeout(this.pending); this.version++; this.panel = undefined; this.scope = undefined; this.signature = ''; this.posted = ''; this.model = { files: [], busy: false };
     for (const listener of this.listeners.splice(0)) listener.dispose();
   }

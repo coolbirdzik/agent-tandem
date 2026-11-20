@@ -86,8 +86,8 @@ export async function run() {
   await waitFor(() => api.conversation()?.messages.at(-1)?.text === 'Codex external update', 'automatic Codex history sync');
   await api.openConversation(claude.key);
   await appendFile(process.env.AGENT_TANDEM_CLAUDE_FIXTURE!, JSON.stringify({ uuid: '55555555-5555-4555-8555-555555555555', parentUuid: '44444444-4444-4444-8444-444444444444', type: 'user', sessionId: claude.id, cwd: claude.cwd, timestamp: new Date().toISOString(), isSidechain: false, message: { role: 'user', content: 'Claude external update' } }) + '\n');
-  // Explicit refresh also updates the open transcript.
-  await api.syncConversations();
+  // The Conversations header action refreshes the open transcript.
+  await vscode.commands.executeCommand('agentTandem.header.refresh');
   assert.equal(api.conversation()?.messages.at(-1)?.text, 'Claude external update');
   checks.push('External Codex writes auto-sync; Claude writes refresh the open transcript without switching sessions');
   await vscode.commands.executeCommand('agentTandem.newChat', 'Codex');
@@ -112,8 +112,8 @@ export async function run() {
   assert.equal(api.viewState().chat, undefined);
   await api.openConversation(claude.key);
   checks.push('Chat commands preserve a new compose screen through sync, accept typed text, expose provider failures and switch providers inside the tandem');
-  await vscode.commands.executeCommand('agentTandem.showSection', 'tools');
-  assert.equal(api.viewState().screen, 'tools');
+  await vscode.commands.executeCommand('agentTandem.showSection', 'cli');
+  assert.equal(api.viewState().screen, 'cli');
   await vscode.commands.executeCommand('agentTandem.showSection', 'conversations');
   const previousSessionId = api.sessions()[0]?.id;
   const execution = api.runDemo(250);
@@ -170,9 +170,9 @@ export async function run() {
   await api.openConversation(claude.key);
   checks.push('Current workspace root is automatic; switching editors in multi-root workspaces clears unrelated history');
   const pendingPreview = vscode.commands.executeCommand('agentTandem.openStep', { sessionId: session.id, stepId: second.id });
-  await vscode.commands.executeCommand('agentTandem.showSection', 'tools');
+  await vscode.commands.executeCommand('agentTandem.showSection', 'cli');
   await pendingPreview;
-  assert.equal(api.viewState().screen, 'tools', 'A slow snapshot read does not override later navigation');
+  assert.equal(api.viewState().screen, 'cli', 'A slow snapshot read does not override later navigation');
 
   await vscode.commands.executeCommand('agentTandem.openInTab');
   await waitFor(() => tabs().some(tab => tab.input instanceof vscode.TabInputWebview), 'explicit Open in tab');

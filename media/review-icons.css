@@ -1,0 +1,7 @@
+.codicon.codicon-discard-all {
+  width: 1em;
+  height: 1em;
+  background-color: currentColor;
+  mask: url("./discard-all.svg") center / contain no-repeat;
+  forced-color-adjust: none;
+}

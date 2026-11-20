@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, unlink } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, stat, writeFile, rm, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ReviewStore } from '../src/core/review';
@@ -58,6 +58,32 @@ describe('Webview snapshot data', () => {
     expect(file.hunks).toEqual(await reviews.hunks(request));
     await writeFile(path.join(request.project, request.file), 'newer edit');
     expect((await reviews.webviewFile(request)).afterText).toBe('sau\r\n');
+  });
+  it('saves review edits with the original encoding and permissions, then reviews the new hunks', async () => {
+    const encode = (text: string) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]);
+    const { reviews, request } = await fixture(encode('before\r\n'), encode('agent\r\n'));
+    const target = path.join(request.project, request.file);
+    if (process.platform !== 'win32') await chmod(target, 0o751);
+    const edited = await reviews.edit(request, 'edited\r\n', () => undefined);
+    expect(await readFile(target)).toEqual(encode('edited\r\n'));
+    if (process.platform !== 'win32') expect((await stat(target)).mode & 0o777).toBe(0o751);
+    const next = { ...request, revision: edited.revision };
+    const file = await reviews.webviewFile(next);
+    expect(file).toMatchObject({ editable: true, beforeText: 'before\r\n', afterText: 'edited\r\n' });
+    await reviews.decideHunk({ ...next, hunk: file.hunks[0]!.id }, true);
+    expect(await readFile(target)).toEqual(encode('before\r\n'));
+  });
+  it('keeps a newer disk edit and drops pending review when a saved draft matches the baseline', async () => {
+    const { reviews, request } = await fixture('old', 'agent');
+    const target = path.join(request.project, request.file);
+    await writeFile(target, 'newer');
+    await expect(reviews.edit(request, 'draft', () => undefined)).rejects.toThrow('changed on disk');
+    expect(await readFile(target, 'utf8')).toBe('newer');
+    await writeFile(target, 'agent');
+    await expect(reviews.edit(request, 'draft', () => { throw new Error('unsaved edits'); })).rejects.toThrow('unsaved edits');
+    expect(await readFile(target, 'utf8')).toBe('agent');
+    expect((await reviews.edit(request, 'old', () => undefined)).files).toEqual([]);
+    expect(await readFile(target, 'utf8')).toBe('old');
   });
   it('rejects stale revisions and requests outside the conversation group', async () => {
     const { reviews, request } = await fixture('old', 'new');

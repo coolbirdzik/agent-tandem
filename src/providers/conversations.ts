@@ -12,6 +12,7 @@ export type ConversationProvider = 'Codex' | 'Claude';
 export interface Conversation {
   key: string; id: string; provider: ConversationProvider; title: string;
   cwd: string; updatedAt: number; revision: string;
+  hiddenFromHistory?: true;
 }
 export interface ConversationMessage {
   id: string; role: 'user' | 'assistant' | 'tool'; text: string;
@@ -20,10 +21,15 @@ export interface ConversationMessage {
 }
 export interface ConversationContent { conversation: Conversation; messages: ConversationMessage[]; notice?: string; usage?: ContextUsage }
 export interface ConversationIndex { conversations: Conversation[]; errors: string[] }
+export interface ConversationSubagent { id: string; label: string }
+export type SubagentContent = Pick<ConversationContent, 'messages' | 'notice'>;
+type ClaudeRecord = { uuid: string; type: string; message: unknown; timestamp?: string };
 export interface ClaudeHistoryAPI {
   deleteSession?(id: string): Promise<void>;
   listSessions(options: { dir?: string; includeWorktrees: boolean }): Promise<Array<{ sessionId: string; summary: string; cwd?: string; lastModified: number; fileSize?: number }>>;
-  getSessionMessages(id: string, options: { dir: string }): Promise<Array<{ uuid: string; type: string; message: unknown }>>;
+  getSessionMessages(id: string, options: { dir: string }): Promise<ClaudeRecord[]>;
+  listSubagents?(sessionId: string, options: { dir: string }): Promise<string[]>;
+  getSubagentMessages?(sessionId: string, agentId: string, options: { dir: string }): Promise<ClaudeRecord[]>;
 }
 
 /** Match full directory boundaries, including Windows paths read on other hosts. */
@@ -78,7 +84,7 @@ function contentAttachments(blocks: unknown): ChatAttachment[] | undefined {
   try { return result.length ? chatAttachments(result) : undefined; } catch { return undefined; }
 }
 
-export function claudeMessages(records: Array<{ uuid: string; type: string; message: unknown }>): ConversationMessage[] {
+export function claudeMessages(records: ClaudeRecord[]): ConversationMessage[] {
   return records.flatMap(record => {
     const msg = object(record.message), blocks = msg.content;
     const result: ConversationMessage[] = [];
@@ -92,6 +98,7 @@ export function claudeMessages(records: Array<{ uuid: string; type: string; mess
       if (block.type === 'tool_use') result.push({ id: `${record.uuid}:${index}`, role: 'tool', toolName: String(block.name ?? 'Tool'), toolCallId: block.id, text: printable(block.input) });
       if (block.type === 'tool_result') result.push({ id: `${record.uuid}:${index}`, role: 'tool', toolName: 'Result', toolCallId: block.tool_use_id, text: contentText(block.content) || printable(block.content) });
     });
+    if (typeof record.timestamp === 'string') for (const message of result) message.timestamp = record.timestamp;
     return result;
   });
 }
@@ -231,9 +238,14 @@ export async function codexSessionMetadata(home: string): Promise<Map<string, { 
 
 interface NativeRecords { revision: string; edits: ConversationEdit[]; times: Map<string, string>; prompts: number[] }
 
+interface CodexRolloutMetadata extends Pick<Conversation, 'cwd' | 'id' | 'hiddenFromHistory'> {
+  spawn?: { parentId: string; label: string };
+}
+interface CodexRollout { file: string; conversation: Conversation; spawn?: CodexRolloutMetadata['spawn'] }
+
 export class ProjectConversations {
-  private metadata = new Map<string, { cwd: string; id: string }>();
-  private codex = new Map<string, { file: string; conversation: Conversation }>();
+  private metadata = new Map<string, CodexRolloutMetadata>();
+  private codex = new Map<string, CodexRollout>();
   private claudeDirs = new Map<string, string>();
   private titles = new Map<string, string>();
   private codexErrors: string[] = [];
@@ -275,13 +287,11 @@ export class ProjectConversations {
     const result: NativeRecords = { revision: conversation.revision, edits: conversationEdits(data.records, conversation, conversation.cwd, project), times: new Map(), prompts: [] };
     if (conversation.provider === 'Claude') {
       // Subagent and meta records are not prompts the user sent.
-      const main = data.records.filter(value => { const r = object(value); return typeof r.uuid === 'string' && r.isSidechain !== true && r.isMeta !== true; }) as Array<{ uuid: string; type: string; message: unknown; timestamp?: unknown }>;
-      const stamps = new Map(main.flatMap(r => typeof r.timestamp === 'string' ? [[r.uuid, r.timestamp] as const] : []));
+      const main = data.records.filter(value => { const r = object(value); return typeof r.uuid === 'string' && r.isSidechain !== true && r.isMeta !== true; }) as ClaudeRecord[];
       for (const message of claudeMessages(main)) {
-        const stamp = stamps.get(message.id);
-        if (!stamp) continue;
-        result.times.set(message.id, stamp);
-        if (message.role === 'user') result.prompts.push(Date.parse(stamp));
+        if (!message.timestamp) continue;
+        result.times.set(message.id, message.timestamp);
+        if (message.role === 'user') result.prompts.push(Date.parse(message.timestamp));
       }
     } else {
       for (const message of codexMessages(data.records)) if (message.role === 'user' && message.timestamp) result.prompts.push(Date.parse(message.timestamp));
@@ -323,7 +333,7 @@ export class ProjectConversations {
     this.codexErrors = [];
     const native = await codexSessionMetadata(this.codexHome);
     const files = await rolloutFiles(path.join(this.codexHome, 'sessions'));
-    const found = new Map<string, { file: string; conversation: Conversation }>();
+    const found = new Map<string, CodexRollout>();
     // Bound concurrent file handles for large session stores.
     for (let offset = 0; offset < files.length; offset += 24) await Promise.all(files.slice(offset, offset + 24).map(async file => {
       let metadata = this.metadata.get(file);
@@ -331,7 +341,18 @@ export class ProjectConversations {
         try {
           const first = await firstRecord(file), payload = object(first.payload);
           if (first.type !== 'session_meta' || typeof payload.cwd !== 'string' || typeof payload.id !== 'string') return;
-          metadata = { cwd: payload.cwd, id: payload.id }; this.metadata.set(file, metadata);
+          // Keep legacy rollouts without a source visible unless their thread type identifies an internal session.
+          const interactive = payload.source == null
+            ? payload.thread_source !== 'subagent' && payload.thread_source !== 'guardian_review'
+            : payload.source === 'cli' || payload.source === 'vscode';
+          const source = object(payload.source), spawn = object(object(source.subagent).thread_spawn);
+          metadata = { cwd: payload.cwd, id: payload.id, ...(interactive ? {} : { hiddenFromHistory: true }) };
+          if (typeof spawn.parent_thread_id === 'string' && spawn.parent_thread_id && spawn.parent_thread_id !== payload.id) {
+            const label = [spawn.agent_nickname, payload.agent_nickname, spawn.agent_role, payload.agent_role]
+              .find(value => typeof value === 'string' && value.trim()) ?? `Agent ${payload.id.slice(0, 8)}`;
+            metadata.spawn = { parentId: spawn.parent_thread_id, label };
+          }
+          this.metadata.set(file, metadata);
         } catch (error) {
           if (error instanceof SyntaxError || (error as Error).message === 'Missing complete session metadata.') return;
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.codexErrors.push(`Codex history: could not read ${path.basename(file)}. Other sessions remain available.`);
@@ -345,9 +366,10 @@ export class ProjectConversations {
         const revision = `${details.mtimeMs}:${details.size}`;
         if (!saved?.title && !this.titles.has(key)) this.titles.set(key, await codexTitle(file) || `Codex · ${metadata.id.slice(0, 8)}`);
         const title = saved?.title ?? this.titles.get(key)!;
-        const conversation: Conversation = { key, id: metadata.id, cwd, provider: 'Codex', title, updatedAt: details.mtimeMs, revision: `${revision}:${title}` };
+        const { spawn, ...session } = metadata;
+        const conversation: Conversation = { ...session, key, cwd, provider: 'Codex', title, updatedAt: details.mtimeMs, revision: `${revision}:${title}` };
         const previous = found.get(key);
-        if (!previous || previous.conversation.updatedAt < conversation.updatedAt) found.set(key, { file, conversation });
+        if (!previous || previous.conversation.updatedAt < conversation.updatedAt) found.set(key, { file, conversation, spawn });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.codexErrors.push(`Codex history: could not index ${metadata.id.slice(0, 8)}. Other sessions remain available.`);
       }
@@ -373,6 +395,37 @@ export class ProjectConversations {
       return { key, id: session.sessionId, provider: 'Claude', title: session.summary || `Claude · ${session.sessionId.slice(0, 8)}`, cwd: session.cwd!, updatedAt: session.lastModified, revision: `${session.lastModified}:${session.fileSize ?? 0}:${session.summary}` };
     });
   }
+  async listSubagents(parent: Conversation, project: string): Promise<ConversationSubagent[]> {
+    if (!parent.id || parent.hiddenFromHistory || !this.belongs(parent.cwd, project)) return [];
+    if (parent.provider === 'Codex') {
+      return [...this.codex.values()]
+        .filter((entry): entry is CodexRollout & { spawn: NonNullable<CodexRollout['spawn']> } =>
+          entry.spawn?.parentId === parent.id && this.belongs(entry.conversation.cwd, project))
+        .sort((a, b) => b.conversation.updatedAt - a.conversation.updatedAt || a.conversation.id.localeCompare(b.conversation.id))
+        .map(({ conversation, spawn }) => ({ id: conversation.id, label: spawn.label }));
+    }
+    const dir = this.claudeDirs.get(parent.key);
+    if (!dir) return [];
+    const sdk = await this.claude();
+    const ids = await sdk.listSubagents?.(parent.id, { dir }) ?? [];
+    return [...new Set(ids)].map(id => ({ id, label: `Agent ${id.slice(0, 8)}` }));
+  }
+  async readSubagent(parent: Conversation, id: string, project: string): Promise<SubagentContent> {
+    if (parent.provider === 'Codex') {
+      const child = this.codex.get(`Codex:${id}`);
+      if (parent.hiddenFromHistory || !this.belongs(parent.cwd, project) || child?.spawn?.parentId !== parent.id) {
+        throw new Error('This subagent is no longer available in this conversation.');
+      }
+      const { messages, notice } = await this.read(child.conversation, project);
+      return { messages, notice };
+    }
+    const dir = this.claudeDirs.get(parent.key), sdk = await this.claude();
+    if (!dir || !this.belongs(parent.cwd, project) || !sdk.getSubagentMessages ||
+      !(await sdk.listSubagents?.(parent.id, { dir }))?.includes(id)) {
+      throw new Error('This subagent is no longer available in this conversation.');
+    }
+    return { messages: claudeMessages(await sdk.getSubagentMessages(parent.id, id, { dir })) };
+  }
   async read(conversation: Conversation, project: string): Promise<ConversationContent> {
     if (!this.belongs(conversation.cwd, project)) throw new Error('Conversation does not belong to the selected project.');
     if (conversation.provider === 'Claude') {
@@ -381,7 +434,7 @@ export class ProjectConversations {
       const sdk = await this.claude();
       const records = await sdk.getSessionMessages(conversation.id, { dir });
       const messages = claudeMessages(records);
-      // The SDK omits timestamps; per-message restore needs when each prompt was sent.
+      // The SDK omits timestamps used by the transcript and per-message restore.
       const times = (await this.native(conversation, project).catch(() => undefined))?.times;
       if (times) for (const message of messages) message.timestamp ??= times.get(message.id);
       return { conversation, messages, usage: claudeHistoryUsage(records) };

@@ -8,10 +8,12 @@ const postMessage = vi.fn();
 const setState = vi.fn();
 const listeners: Array<{ type: string; listener: EventListenerOrEventListenerObject }> = [];
 const conversation = { key: 'Claude:c1', id: 'c1', provider: 'Claude' as const, title: 'Fix login', cwd: '/project', updatedAt: 1, revision: '1' };
+const currentConversationCaptures = [{ from: 1, to: 2, conversations: [conversation] }];
 const state: ViewState = { sessions: [], running: false, providers: [], project: '/project', projectName: 'project', screen: 'conversations',
   conversations: [conversation, { ...conversation, provider: 'Codex', key: 'Codex:c2', id: 'c2' }],
   conversation: { conversation, messages: [{ id: 'a1', role: 'assistant', text: 'Hello <script>bad()</script>' }, { id: 't1', role: 'tool', toolName: 'Edit', text: '{"file":"login.ts"}' }] } };
 const render = (value: ViewState) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'state', state: value } }));
+const headerAction = (action: string) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'headerAction', action } }));
 beforeEach(async () => {
   vi.resetModules(); postMessage.mockClear(); setState.mockClear();
   document.write(panelHtml(resources).replace(/<link[^>]+>/g, '').replace(/<script[^>]*>[\s\S]*?<\/script>/g, ''));
@@ -31,7 +33,7 @@ describe('Single tandem webview', () => {
     render(value);
     const row = document.querySelector<HTMLButtonElement>('.conversation-link')!;
     const message = document.querySelector('.message')!;
-    const heading = document.querySelector('#thread-heading h2')!;
+    const heading = document.querySelector('#panel-title')!;
     const filter = document.querySelector('.history-filters button span')!;
     const summary = document.querySelector<HTMLButtonElement>('.account-summary')!;
     summary.click();
@@ -58,7 +60,7 @@ describe('Single tandem webview', () => {
     expect(refresh.disabled).toBe(false);
     render({ ...value, conversation: { ...value.conversation!, conversation: { ...conversation, revision: 'metadata-only' } } });
     expect(document.querySelector('.message')).toBe(message);
-    expect(document.querySelector('#thread-heading h2')).toBe(heading);
+    expect(document.querySelector('#panel-title')).toBe(heading);
     expect(mutations.takeRecords()).toHaveLength(0);
     const ring = summary.querySelector('.quota-ring-value');
     render({ ...value, accounts: { Claude: { ...value.accounts!.Claude!, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 30 }] } } } });
@@ -81,6 +83,7 @@ describe('Single tandem webview', () => {
     render(updated);
     expect(document.querySelector('.conversation-link')).toBe(row);
     expect(row.textContent).toContain('Renamed conversation');
+    expect(row.querySelector<HTMLElement>('.conversation-title')?.title).toBe('Renamed conversation');
     expect(document.querySelector('[data-message-id="a1"]')!.textContent).toContain('Updated answer');
     expect(document.querySelector('[data-message-id="t1"]')).toBe(toolMessage);
     expect(tool.open).toBe(true);
@@ -91,19 +94,165 @@ describe('Single tandem webview', () => {
     expect(toolMessage!.isConnected).toBe(false);
   });
 
-  it('routes native title actions through the existing chat, history, review and refresh behavior', () => {
+  it('groups chat by local day, keeps tools within their day, and exposes recorded message times', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 20, 12));
+      const beforeMidnight = new Date(2026, 10, 19, 23, 59);
+      const afterMidnight = new Date(2026, 10, 20, 0, 1);
+      const content: NonNullable<ViewState['conversation']> = { conversation, messages: [
+        { id: 'u1', role: 'user', text: 'Fix login', timestamp: beforeMidnight.toISOString() },
+        { id: 't1', role: 'tool', text: 'Started', timestamp: beforeMidnight.toISOString() },
+        { id: 't2', role: 'tool', text: 'Finished', timestamp: afterMidnight.toISOString() },
+        { id: 'a1', role: 'assistant', text: 'Fixed', timestamp: afterMidnight.toISOString() },
+        { id: 'legacy', role: 'assistant', text: 'Legacy message', timestamp: 'invalid' },
+      ] };
+      const value = { ...state, conversation: content };
+      render(value);
+      const rows = () => [...document.querySelectorAll<HTMLElement>('#conversation > *')];
+      expect(rows().map(row => row.dataset.messageId ?? row.dataset.firstToolId ?? row.textContent)).toEqual([
+        'Yesterday', 'u1', 't1', 'Today', 'a1', 't2', 'legacy',
+      ]);
+      const [divider, user] = rows();
+      const format = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+      const userTime = user?.querySelector<HTMLTimeElement>('.message-actions > time');
+      expect(userTime?.textContent).toBe(format.format(beforeMidnight));
+      expect(userTime?.dateTime).toBe(beforeMidnight.toISOString());
+      expect(userTime?.nextElementSibling?.classList.contains('message-restore')).toBe(true);
+      expect(document.querySelector('[data-message-id="a1"] .message-author > time')?.textContent).toBe(format.format(afterMidnight));
+      expect(document.querySelector('[data-message-id="t2"] summary > time')?.textContent).toBe(format.format(afterMidnight));
+      expect(document.querySelector('[data-message-id="legacy"] time')).toBeNull();
+      expect(document.querySelector('#conversation .message[title]')).toBeNull();
+
+      vi.setSystemTime(new Date(2026, 10, 21, 0, 1));
+      render(value);
+      expect(rows()[0]).toBe(divider);
+      expect(rows()[0]?.textContent).toBe('2 days ago');
+      expect(rows()[1]).toBe(user);
+      expect(rows()[3]?.textContent).toBe('Yesterday');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('groups history by local day and restores section expansion after searching', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 20, 12));
+      const today = { ...conversation, updatedAt: new Date(2026, 10, 20, 0, 1).getTime() };
+      const recent = { ...state.conversations![1]!, title: 'Fix lint', updatedAt: new Date(2026, 10, 20, 9).getTime() };
+      const yesterday = { ...conversation, key: 'Claude:older', title: 'Review history', updatedAt: new Date(2026, 10, 19, 23, 59).getTime() };
+      const value = { ...state, conversations: [recent, today, yesterday] };
+      render(value);
+      headerAction('history');
+      const sections = () => [...document.querySelectorAll<HTMLDetailsElement>('#conversations > details')];
+      const [first, second] = sections();
+      expect(sections().map(section => section.querySelector('summary')!.getAttribute('aria-label'))).toEqual(['Today, 2 conversations', 'Yesterday, 1 conversation']);
+      expect(first!.open).toBe(true);
+      expect(second!.open).toBe(false);
+      expect([...first!.querySelectorAll('.conversation-title')].map(title => title.textContent)).toEqual(['Fix lint', 'Fix login']);
+
+      first!.open = false;
+      render(structuredClone(value));
+      expect(sections()[0]).toBe(first);
+      expect(first!.open).toBe(false);
+
+      const search = document.querySelector<HTMLInputElement>('#conversation-search')!;
+      search.value = 'Review history';
+      search.dispatchEvent(new Event('input'));
+      expect(sections()).toEqual([second]);
+      expect(second!.open).toBe(true);
+      search.value = '';
+      search.dispatchEvent(new Event('input'));
+      expect(sections().map(section => section.open)).toEqual([false, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('routes native title actions through the existing chat, history and review behavior', () => {
+    const selector = '#new-chat, #history-open, button[data-screen="changes"]';
+    expect(document.querySelectorAll(selector)).toHaveLength(0);
+    const tab = new DOMParser().parseFromString(panelHtml(resources, true), 'text/html');
+    expect(tab.querySelectorAll(selector)).toHaveLength(3);
+    render({ ...state, reviewBusy: true });
+    postMessage.mockClear();
+    headerAction('newChat');
+    expect(postMessage).not.toHaveBeenCalled();
     render(state);
-    const action = (name: string) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'headerAction', action: name } }));
-    action('newChat');
+    headerAction('newChat');
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'newChat', selection: 'Claude' });
-    action('history');
+    headerAction('history');
     expect(document.querySelector<HTMLElement>('#history-view')!.hidden).toBe(false);
-    action('review');
+    expect(document.activeElement?.id).toBe('conversation-search');
+    const originalDraft = document.querySelector<HTMLTextAreaElement>('#chat-input')!.value;
+    postMessage.mockClear();
+    headerAction('focusChat');
+    expect(document.querySelector<HTMLElement>('#history-view')!.hidden).toBe(true);
+    expect(document.activeElement?.id).toBe('chat-input');
+    expect(document.querySelector<HTMLTextAreaElement>('#chat-input')!.value).toBe(originalDraft);
+    expect(postMessage).not.toHaveBeenCalled();
+    render({ ...state, screen: 'changes' });
+    headerAction('focusChat');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'screen', selection: 'conversations' });
+    render(state);
+    expect(document.activeElement?.id).toBe('chat-input');
+    headerAction('review');
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'screen', selection: 'changes' });
-    action('refresh');
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'sync', selection: undefined });
+    expect(document.querySelector<HTMLButtonElement>('#history-refresh')?.hidden).toBe(true);
     expect(document.body.dataset.editorTab).toBe('false');
     expect(panelHtml(resources, true)).toContain('data-editor-tab="true"');
+  });
+
+  it('places refresh last in the Conversations, Review, and Manage CLIs headers', () => {
+    const header = document.querySelector('.header-actions')!;
+    const refresh = (id: string) => header.querySelector<HTMLButtonElement>(`#${id}-refresh`)!;
+    const visibleRefresh = () => Array.from(header.querySelectorAll('.header-refresh:not([hidden])'));
+    const lastAction = () => Array.from(header.querySelectorAll('button:not([hidden])')).at(-1);
+    render(state);
+    expect(visibleRefresh()).toEqual([]);
+    headerAction('history');
+    expect(visibleRefresh()).toEqual([refresh('history')]);
+    expect(lastAction()).toBe(refresh('history'));
+    refresh('history').click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'refreshConversations', selection: undefined });
+    render({ ...state, syncing: true });
+    expect(refresh('history').disabled).toBe(true);
+    render({ ...state, screen: 'changes' });
+    expect(visibleRefresh()).toEqual([refresh('review')]);
+    expect(lastAction()).toBe(refresh('review'));
+    render({ ...state, screen: 'cli' });
+    expect(visibleRefresh()).toEqual([refresh('cli')]);
+    expect(lastAction()).toBe(refresh('cli'));
+    refresh('cli').click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'refreshCLIs', selection: undefined });
+
+    const tab = new DOMParser().parseFromString(panelHtml(resources, true), 'text/html');
+    for (const [section, id] of [['history-view', 'history'], ['screen-changes', 'review'], ['screen-cli', 'cli']]) {
+      expect(tab.querySelector(`#${section} > .section-heading`)?.lastElementChild?.id).toBe(`${id}-refresh`);
+    }
+  });
+
+  it('shows the workspace pending-file count beside Review with a keyboard-accessible tooltip', () => {
+    const file = { path: 'source.ts', kind: 'modified' as const, binary: false };
+    const review = { revision: 'r1', busy: false, files: [
+      { ...file, captures: currentConversationCaptures },
+      { ...file, path: 'unassigned.ts' },
+    ] };
+    render({ ...state, review });
+    const count = document.querySelector<HTMLElement>('.sidebar-heading #review-count')!;
+    expect(count.hidden).toBe(true);
+    render({ ...state, screen: 'changes', review });
+    expect(count.hidden).toBe(false);
+    expect(count.textContent).toBe('2');
+    expect(count.title).toBe('Number of files with pending changes in this workspace');
+    expect(count.tabIndex).toBe(0);
+    expect(document.querySelector('#conversation-changes .changes-toolbar .meta')).toBeNull();
+    render({ ...state, screen: 'changes', review: { ...review, files: [] } });
+    expect(count.textContent).toBe('0');
+    render({ ...state, screen: 'conversations', review });
+    expect(count.hidden).toBe(true);
+
+    const tab = new DOMParser().parseFromString(panelHtml(resources, true), 'text/html');
+    expect(tab.querySelector('#screen-changes .section-heading h2 + #review-count')?.getAttribute('title')).toBe(count.title);
   });
 
   it('offers scoped conversation links for script and binary changes and labels removable manual links', () => {
@@ -148,17 +297,22 @@ describe('Single tandem webview', () => {
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewRevert', selection: { project: '/project', revision: 'r1', file: 'source.ts', group: 'unassigned' } });
     const revertPreview = { token: 'preview-token', request: { project: '/project', revision: 'r1', file: 'source.ts', group: 'unassigned' }, files: [file] };
     render({ ...state, screen: 'changes', review, revertPreview });
-    expect(document.querySelector<HTMLElement>('#revert-preview')!.hidden).toBe(false);
+    const dialog = document.querySelector<HTMLDialogElement>('dialog#revert-preview')!;
+    expect(dialog.open).toBe(true);
     expect(document.querySelectorAll('#revert-preview .revert-scope li')).toHaveLength(1);
     document.querySelector<HTMLButtonElement>('[data-focus-key="confirm-revert"]')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'confirmRevert', selection: { token: 'preview-token' } });
+    render({ ...state, screen: 'changes', review, revertPreview, error: 'Save or close the dirty editor before reverting.' });
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('dirty editor');
     render({ ...state, screen: 'changes', review: { ...review, revision: 'r2' }, revertPreview });
     expect(document.querySelector<HTMLButtonElement>('[data-focus-key="confirm-revert"]')!.disabled).toBe(true);
     expect(document.querySelector('#revert-preview')!.textContent).toContain('Changes updated');
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'cancelRevert', selection: undefined });
     render({ ...state, screen: 'changes', review: { ...review, files: [], undo: { id: 'undo', createdAt: 1, files: ['source.ts'] } } });
     document.querySelector<HTMLButtonElement>('[data-focus-key="undo-revert"]')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'undoRevert', selection: { project: '/project', id: 'undo' } });
-    expect(document.querySelector<HTMLElement>('#revert-preview')!.hidden).toBe(true);
+    expect(dialog.open).toBe(false);
     expect(document.querySelector<HTMLElement>('#chat-composer')!.hidden).toBe(true);
   });
   it('collapses conversation groups across passive updates and opens the latest native diff on demand', () => {
@@ -177,19 +331,29 @@ describe('Single tandem webview', () => {
   });
   it('shows conversation groups on Changes even when the chat review is collapsed, with scoped native diff actions', () => {
     const codex = state.conversations![1]!;
-    const capture = (source: typeof conversation) => [{ from: 1, to: 2, conversations: [source] }];
+    const capture = (...conversations: NonNullable<ViewState['conversations']>) => [{ from: 1, to: 2, conversations }];
     const review = { revision: 'groups', busy: false, externalTracking: true, files: [
       { path: 'claude.ts', kind: 'modified' as const, binary: false, captures: capture(conversation) },
-      { path: 'codex.ts', kind: 'added' as const, binary: false, captures: capture(codex as typeof conversation) },
+      { path: 'codex.ts', kind: 'added' as const, binary: false, captures: capture(codex) },
+      { path: 'shared.ts', kind: 'modified' as const, binary: false, captures: capture(conversation, codex) },
       { path: 'manual.ts', kind: 'modified' as const, binary: false },
     ] };
     render({ ...state, review });
     expect(document.querySelectorAll('#pending-changes .review-file-link')).toHaveLength(1);
     expect(document.querySelector('#pending-changes .review-file-link')!.textContent).toBe('claude.ts');
+    for (const [label, icon] of [['Accept', 'check'], ['Revert', 'discard']]) {
+      const action = document.querySelector<HTMLButtonElement>(`#pending-changes [aria-label="${label} claude.ts"]`)!;
+      expect(action.textContent).toBe('');
+      expect(action.title).toBe(`${label} claude.ts`);
+      expect(action.querySelector(`.codicon-${icon}`)).not.toBeNull();
+    }
     document.querySelector<HTMLButtonElement>('#review-toggle')!.click();
+    headerAction('history');
+    expect(document.querySelector<HTMLElement>('#history-view')!.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(true);
     render({ ...state, review, screen: 'changes' });
     expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(true);
-    expect(document.querySelectorAll('#conversation-changes .review-file-link')).toHaveLength(3);
+    expect(document.querySelectorAll('#conversation-changes .review-file-link')).toHaveLength(4);
     document.querySelector<HTMLButtonElement>('[data-focus-key="workspace-review:acceptChanges"]')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'groups' } });
     document.querySelector<HTMLButtonElement>('[data-focus-key="workspace-review:previewRevert"]')!.click();
@@ -201,20 +365,46 @@ describe('Single tandem webview', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-focus-key="workspace-review:previewRevert"]')!.disabled).toBe(true);
     render({ ...state, review, screen: 'changes' });
     const group = document.querySelector<HTMLElement>(`#conversation-changes [data-group="${conversation.key}"]`)!;
-    expect(group.textContent).toContain('Current conversation');
+    expect(group.querySelector('.conversation-change-caption')!.textContent).toBe('Current conversation');
+    expect(document.querySelector(`[data-group="${codex.key}"] .conversation-change-caption`)).toBeNull();
+    expect(document.querySelector('#conversation-changes [data-group="shared"]')!.textContent).toContain('shared.ts');
     expect(document.querySelector('#conversation-changes [data-group="unassigned"]')!.textContent).toContain('manual.ts');
     group.querySelector<HTMLButtonElement>('.review-file-link')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReview', selection: { project: '/project', revision: 'groups', file: 'claude.ts', group: conversation.key } });
+    for (const [label, icon, type] of [['Revert', 'discard', 'previewRevert'], ['Accept', 'check', 'acceptChanges']]) {
+      const action = group.querySelector<HTMLButtonElement>(`button[aria-label="${label} claude.ts"]`)!;
+      expect(action.title).toBe(`${label} claude.ts`);
+      expect(action.textContent).toBe('');
+      expect(action.querySelector(`.codicon-${icon}[aria-hidden="true"]`)).not.toBeNull();
+      action.click();
+      expect(postMessage).toHaveBeenLastCalledWith({ type, selection: { project: '/project', revision: 'groups', file: 'claude.ts', group: conversation.key } });
+    }
     [...group.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Accept group')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'groups', group: conversation.key } });
-    [...group.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Open conversation')!.click();
+    const heading = group.querySelector<HTMLButtonElement>('.conversation-change-heading')!;
+    const open = group.querySelector<HTMLButtonElement>('.conversation-change-header > button[aria-label="Open conversation"]')!;
+    expect(open.title).toBe('Open conversation');
+    expect(open.textContent).toBe('');
+    expect(open.querySelector('.codicon-comment-discussion[aria-hidden="true"]')).not.toBeNull();
+    heading.click();
+    open.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'conversation', selection: conversation.key });
-    render({ ...state, review, conversation: { conversation: codex, messages: [] } });
+    expect(heading.getAttribute('aria-expanded')).toBe('false');
+    const opened = { ...state, review, conversationOpenRevision: 1 };
+    render(opened);
+    expect(document.querySelector<HTMLElement>('#history-view')!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>('#thread-view')!.hidden).toBe(false);
+    expect(document.querySelector('#conversation')!.textContent).toContain('Hello');
+    headerAction('history');
+    render({ ...opened, syncing: true });
+    expect(document.querySelector<HTMLElement>('#history-view')!.hidden).toBe(false);
+    document.querySelector<HTMLButtonElement>('#sidebar-navigation')!.click();
+    render({ ...opened, conversation: { conversation: codex, messages: [] } });
     expect(document.querySelector('#pending-changes .review-file-link')!.textContent).toBe('codex.ts');
     document.querySelector<HTMLButtonElement>('#pending-changes [aria-label="Accept all pending changes"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'groups', file: undefined, group: codex.key } });
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'groups', group: codex.key } });
   });
-  it('shows a clear Changes empty state and exposes other conversations without accepting them from the current chat', () => {
+  it('shows a Review empty state and keeps other conversations out of chat', () => {
     render({ ...state, screen: 'changes', review: { revision: 'empty', busy: false, externalTracking: true, files: [] } });
     expect(document.querySelector('#conversation-changes')!.textContent).toContain('No pending changes');
     expect(document.querySelector('#conversation-changes')!.textContent).toContain('before tracking started');
@@ -223,10 +413,38 @@ describe('Single tandem webview', () => {
     const other = state.conversations![1]!;
     const review = { revision: 'other', busy: false, files: [{ path: 'other.ts', kind: 'modified' as const, binary: false, captures: [{ from: 1, to: 2, conversations: [other] }] }] };
     render({ ...state, review });
+    expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(false);
+    expect(document.querySelector<HTMLButtonElement>('#review-toggle')!.disabled).toBe(true);
     expect(document.querySelectorAll('#pending-changes .review-file')).toHaveLength(0);
-    expect(document.querySelector<HTMLButtonElement>('#pending-changes [aria-label="Accept all pending changes"]')!.disabled).toBe(true);
-    document.querySelector<HTMLButtonElement>('#pending-changes [aria-label="View all changes in the VS Code editor"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'screen', selection: 'changes' });
+    expect(document.querySelector('#pending-changes .review-actions button')).toBeNull();
+    render({ ...state, review, screen: 'changes' });
+    expect(document.querySelector('#conversation-changes .review-file-link')?.textContent).toBe('other.ts');
+  });
+  it('shows the accordion with the composer, including in new chats', () => {
+    const review = { revision: 'r1', busy: false, files: [{ path: 'source.ts', kind: 'modified' as const, binary: false, captures: [{ from: 1, to: 2, conversations: [conversation] }] }] };
+    const pending = document.querySelector<HTMLElement>('#pending-changes')!;
+    const toggle = document.querySelector<HTMLButtonElement>('#review-toggle')!;
+    expect(pending.hidden).toBe(false);
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.textContent).toBe('0 files pending review');
+    expect(pending.querySelector('.review-actions button')).toBeNull();
+    render({ ...state, review });
+    expect(pending.hidden).toBe(false);
+    expect(toggle.disabled).toBe(false);
+    render({ ...state, review, screen: 'cli' });
+    expect(pending.hidden).toBe(true);
+    render({ ...state, review });
+    expect(pending.hidden).toBe(false);
+    render({ ...state, review, conversation: undefined });
+    expect(pending.hidden).toBe(false);
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(pending.querySelector<HTMLElement>('#review-body')!.hidden).toBe(true);
+    expect(pending.querySelector('.review-actions button')).toBeNull();
+    render({ ...state, review });
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(pending.querySelectorAll('.review-actions button')).toHaveLength(3);
   });
   it('does not resurrect attachments when history is reopened during an asynchronous file read', async () => {
     const readers: Array<{ result: string; onload?: () => void }> = [];
@@ -234,7 +452,7 @@ describe('Single tandem webview', () => {
     render(state);
     const drop = new Event('drop', { bubbles: true, cancelable: true }); Object.defineProperty(drop, 'dataTransfer', { value: { files: [new File(['image'], 'old.png', { type: 'image/png' })] } });
     document.getElementById('chat-form')!.dispatchEvent(drop);
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+    headerAction('history');
     document.querySelector<HTMLButtonElement>('.conversation-link[data-focus-key="Claude:c1"]')!.click(); render(state);
     readers[0]!.onload?.(); await vi.waitFor(() => expect(document.getElementById('attachment-status')!.hidden).toBe(true));
     expect(document.querySelectorAll('#chat-attachments .attachment-card')).toHaveLength(0);
@@ -293,7 +511,7 @@ describe('Single tandem webview', () => {
     input.value = 'Current unsent text'; input.dispatchEvent(new Event('input'));
     expect(setState).toHaveBeenLastCalledWith({ reviewCollapsed: false, collapsedReviewGroups: [] });
     render({ ...state, syncing: true }); expect(input.value).toBe('Current unsent text');
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+    headerAction('history');
     document.querySelector<HTMLButtonElement>('.conversation-link[data-focus-key="Claude:c1"]')!.click();
     render(state); expect(input.value).toBe('');
   });
@@ -315,7 +533,7 @@ describe('Single tandem webview', () => {
     render({ ...updated, conversation: { ...updated.conversation, conversation: { ...conversation, revision: '3' }, messages: [...updated.conversation.messages, { id: 'a3', role: 'assistant', text: 'Streaming grows the conversation' }] } });
     expect(scrollTop).toBe(1000);
     render({ ...state, conversation: { conversation: state.conversations![1]!, messages: [] } }); expect(scrollTop).toBe(800);
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+    headerAction('history');
     document.querySelector<HTMLButtonElement>('.conversation-link[data-focus-key="Claude:c1"]')!.click();
     render(state); expect(scrollTop).toBe(800);
   });
@@ -385,7 +603,7 @@ describe('Single tandem webview', () => {
     expect(document.querySelector('[data-account-provider="Codex"]')).not.toBeNull();
     expect(document.querySelector('[data-account-provider="Claude"]')).toBeNull();
     document.querySelector<HTMLButtonElement>('[data-account-provider="Codex"]')!.click();
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+    headerAction('history');
     expect(popover.hidden).toBe(true);
     expect(document.querySelector<HTMLElement>('#provider-accounts')!.hidden).toBe(true);
   });
@@ -466,25 +684,36 @@ describe('Single tandem webview', () => {
     const value: ViewState = { ...state, conversation: undefined, composeProvider: 'Codex', codexFastMode: false };
     render(value); postMessage.mockClear();
     const toggle = document.querySelector<HTMLButtonElement>('#chat-fast-mode')!;
+    const chip = document.querySelector<HTMLButtonElement>('#fast-mode-chip')!;
     expect(document.querySelector<HTMLElement>('#fast-mode-field')!.hidden).toBe(false);
+    expect(chip.hidden).toBe(true);
     toggle.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'setFastMode', selection: { project: '/project', provider: 'Codex', enabled: true } });
     render({ ...value, syncing: true });
     expect(toggle.getAttribute('aria-checked')).toBe('true');
-    expect(document.querySelector('#model-trigger-label')!.textContent).toContain('Fast');
+    expect(document.querySelector('#model-trigger-label')!.textContent).toBe('Codex default');
+    expect(chip.hidden).toBe(false);
+    expect(chip.textContent).toBe('');
     const input = document.querySelector<HTMLTextAreaElement>('#chat-input')!;
     input.value = 'hello'; input.dispatchEvent(new Event('input'));
     document.querySelector<HTMLFormElement>('#chat-form')!.dispatchEvent(new Event('submit', { cancelable: true }));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'sendChat', selection: expect.objectContaining({ provider: 'Codex', fastMode: true }) });
     expect(toggle.disabled).toBe(true);
+    expect(chip.disabled).toBe(true);
   });
   it('restores Off, hides Fast mode for Claude and clears stale choices on project/error changes', () => {
     const value: ViewState = { ...state, conversation: undefined, composeProvider: 'Codex', codexFastMode: true };
     render(value);
     const toggle = document.querySelector<HTMLButtonElement>('#chat-fast-mode')!;
-    toggle.click(); expect(toggle.getAttribute('aria-checked')).toBe('false');
+    const chip = document.querySelector<HTMLButtonElement>('#fast-mode-chip')!;
+    expect(chip.hidden).toBe(false);
+    chip.focus(); chip.click(); expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'setFastMode', selection: { project: '/project', provider: 'Codex', enabled: false } });
+    expect(chip.hidden).toBe(true);
+    expect(document.activeElement?.id).toBe('model-trigger');
+    expect(document.querySelector<HTMLElement>('#model-popover')!.hidden).toBe(true);
     render({ ...value, codexFastMode: false });
-    expect(document.querySelector('#model-trigger-label')!.textContent).not.toContain('Fast');
+    expect(chip.hidden).toBe(true);
     toggle.click();
     render({ ...value, codexFastMode: false, error: 'Could not save' });
     expect(toggle.getAttribute('aria-checked')).toBe('false');
@@ -493,6 +722,7 @@ describe('Single tandem webview', () => {
     expect(toggle.getAttribute('aria-checked')).toBe('false');
     render(state);
     expect(document.querySelector<HTMLElement>('#fast-mode-field')!.hidden).toBe(true);
+    expect(chip.hidden).toBe(true);
     expect(toggle.disabled).toBe(true);
     postMessage.mockClear();
     const input = document.querySelector<HTMLTextAreaElement>('#chat-input')!;
@@ -507,7 +737,6 @@ describe('Single tandem webview', () => {
     postMessage.mockClear(); toggle.click(); expect(postMessage).not.toHaveBeenCalled();
   });
   it('keeps Restore visible on every user message, enables recorded checkpoints and previews exact targets', () => {
-    document.getElementById('checkpoint-preview')!.scrollIntoView = vi.fn();
     const value: ViewState = { ...state, conversation: { conversation, messages: [{ id: 'u1', role: 'user', text: 'User <script>bad()</script>\nSecond line' }, { id: 'u2', role: 'user', text: 'Older unrecorded message' }] }, checkpoints: [{ id: 'cp1', messageId: 'u1', createdAt: 100 }], checkpointUndo: { id: 'undo', createdAt: 200 } };
     render(value); postMessage.mockClear();
     expect(document.querySelectorAll('.message-restore')).toHaveLength(2);
@@ -524,13 +753,18 @@ describe('Single tandem webview', () => {
     const preview = { id: 'cp1', token: 'preview-token', createdAt: 100, undo: false, files: [{ path: 'new.ts', kind: 'deleted' as const, binary: false }, { path: 'removed.bin', kind: 'added' as const, binary: true }] };
     render({ ...value, checkpointPreview: preview });
     expect(document.querySelectorAll('.checkpoint-file')).toHaveLength(2);
-    expect(document.getElementById('checkpoint-preview')!.textContent).toContain('chat history stays available');
+    const dialog = document.querySelector<HTMLDialogElement>('dialog#checkpoint-preview')!;
+    expect(dialog.open).toBe(true);
+    expect(dialog.textContent).toContain('chat history stays available');
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'closeCheckpointPreview', selection: undefined });
     document.querySelector<HTMLButtonElement>('[data-focus-key="confirm-checkpoint"]')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'restoreCheckpoint', selection: { project: '/project', id: 'cp1', token: 'preview-token' } });
     render({ ...value, checkpointPreview: preview, reviewBusy: true });
     expect(document.querySelector<HTMLButtonElement>('.message-restore')!.disabled).toBe(true);
     expect(document.querySelector<HTMLButtonElement>('[data-focus-key="confirm-checkpoint"]')!.disabled).toBe(true);
     render({ ...value, checkpoints: [{ id: 'cp2', messageId: 'u2', createdAt: 300 }] });
+    expect(dialog.open).toBe(false);
     expect(document.querySelector('[data-focus-key="checkpoint:u2"]')).not.toBeNull();
     document.querySelector<HTMLButtonElement>('[data-focus-key="undo-checkpoint"]')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewCheckpoint', selection: { project: '/project', id: 'undo' } });
@@ -565,18 +799,41 @@ describe('Single tandem webview', () => {
       render(state); expect(document.querySelector('[data-cache-label]')!.textContent).toBe('TTL —');
     } finally { vi.useRealTimers(); }
   });
-  it('exposes reasoning as a slider outside the model picker and removes the footer row', () => {
-    render(effortState); postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#model-trigger')!.click();
+  it('opens the reasoning slider in its own popover and keeps the current level in the composer', () => {
+    render(effortState); postMessage.mockClear();
+    const trigger = document.querySelector<HTMLButtonElement>('#reasoning-trigger')!;
+    const popover = document.querySelector<HTMLElement>('#reasoning-popover')!;
+    const modelPopover = document.querySelector<HTMLElement>('#model-popover')!;
     const slider = document.querySelector<HTMLInputElement>('#reasoning-slider')!;
-    expect(slider.closest('#model-popover')).toBeNull();
+    expect(popover.hidden).toBe(true);
+    expect(popover.contains(slider)).toBe(true);
+    expect(trigger.textContent).toBe('High');
     expect(document.querySelector('.tandem-footer')).toBeNull();
+    document.querySelector<HTMLButtonElement>('#model-trigger')!.click();
+    expect(modelPopover.hidden).toBe(false);
+    trigger.click();
+    expect(modelPopover.hidden).toBe(true);
+    expect(popover.hidden).toBe(false);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(trigger);
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(slider);
     expect(slider.max).toBe('2'); expect(slider.value).toBe('2');
     slider.value = '1'; slider.dispatchEvent(new Event('input'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'setReasoningEffort', selection: expect.objectContaining({ effort: 'low' }) });
     expect(document.querySelector('#reasoning-value')!.textContent).toBe('Low');
+    expect(trigger.textContent).toBe('Low');
     expect(slider.getAttribute('aria-valuetext')).toBe('Low');
+    render({ ...effortState, syncing: true });
+    expect(popover.hidden).toBe(false);
+    expect(document.activeElement).toBe(slider);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(popover.hidden).toBe(true);
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(trigger);
+    trigger.click();
     document.querySelector<HTMLButtonElement>('#chat-access-trigger')!.click();
-    expect(document.querySelector<HTMLElement>('#model-popover')!.hidden).toBe(true);
+    expect(popover.hidden).toBe(true);
     expect(document.querySelector<HTMLElement>('#chat-access-options')!.hidden).toBe(false);
   });
   it('invalidates the previous model context/cache estimate before and after the host saves a new model', () => {
@@ -596,9 +853,16 @@ describe('Single tandem webview', () => {
     render(cliState); postMessage.mockClear();
     expect(document.getElementById('screen-cli')!.hidden).toBe(false); expect(document.getElementById('chat-composer')!.hidden).toBe(true);
     expect(document.querySelectorAll('.cli-entry')).toHaveLength(2);
+    expect([...document.querySelectorAll('select[id^="cli-default-"]')].map(select => select.getAttribute('aria-label'))).toEqual(['Default', 'Default']);
+    expect(document.querySelector('[data-cli-id="cx"] .cli-entry-heading > .meta')!.textContent).toBe('In use · Default · Enabled');
     const claude = document.querySelector<HTMLSelectElement>('#cli-project-Claude')!;
-    expect([...claude.options].find(option => option.value === 'cl')!.disabled).toBe(true);
+    for (const id of ['cli-default-Claude', 'cli-project-Claude']) {
+      expect(document.querySelector(`#${id} option[value="cl"]`)).toMatchObject({ textContent: 'My Claude', disabled: true });
+    }
+    expect(claude.selectedOptions[0]).toMatchObject({ value: 'path', textContent: 'Using terminal PATH', disabled: true });
+    expect(claude.options[0]).toMatchObject({ value: '', textContent: 'Use Default', disabled: false });
     const project = document.querySelector<HTMLSelectElement>('#cli-project-Codex')!;
+    expect(project.options[0]!.textContent).toBe('Use Default');
     project.value = ''; project.dispatchEvent(new Event('change'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ provider: 'Codex', action: 'use', id: '', revision: 'cli1', project: '/project' }) });
     render({ ...cliState, cliManager: { ...cliState.cliManager!, busy: true } }); render(cliState);
@@ -606,52 +870,152 @@ describe('Single tandem webview', () => {
     defaultSelect.value = ''; defaultSelect.dispatchEvent(new Event('change'));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ action: 'default', id: '' }) });
   });
-  it('shows automatic Codex fallback distinctly from an explicit terminal selection', () => {
-    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { executable: '/editor/bin/codex', version: 'codex-cli 0.162.0', source: 'extension' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
-    const machine = document.querySelector<HTMLSelectElement>('#cli-default-Codex')!;
+  it.each([
+    ['/usr/local/bin/codex', 'Global installation', 'terminal-compact'],
+    ['/home/user/.vscode/extensions/openai.chatgpt-1.0/bin/codex', 'VS Code extension', 'extensions'],
+    ['/home/user/.cursor/extensions/openai.chatgpt-1.0/bin/codex', 'Cursor extension', 'extensions'],
+    ['/custom/bin/codex', 'Local executable', undefined],
+  ])('shows the installation origin for %s in the CLI row heading', (executable, label, icon) => {
+    const manager = cliState.cliManager!;
+    const registry = { ...manager.registry, entries: [{ ...manager.registry.entries[0]!, executable }] };
+    render({ ...cliState, cliManager: { ...manager, registry } });
+    const identity = document.querySelector('[data-cli-id="cx"] .cli-entry-identity')!;
+    expect(identity.querySelector('.cli-entry-version')!.textContent).toBe('1.0');
+    expect(identity.querySelector('.meta')!.textContent).toBe(label);
+    const glyph = identity.querySelector('.codicon');
+    if (icon) {
+      expect(glyph).toBe(identity.firstElementChild);
+      expect(glyph!.classList.contains(`codicon-${icon}`)).toBe(true);
+      expect(glyph!.getAttribute('aria-hidden')).toBe('true');
+    } else {
+      expect(glyph).toBeNull();
+    }
+  });
+  it.each([
+    { provider: 'Codex', executable: '/editor/bin/codex', version: 'codex-cli 0.162.0' },
+    { provider: 'Claude', executable: '/editor/bin/claude', version: '2.1.10 (Claude Code)' },
+  ])('keeps $provider on Automatic without repeating the selected extension below the dropdowns', ({ provider, executable, version }) => {
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { [provider]: { executable, version, source: 'extension' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
+    const machine = document.querySelector<HTMLSelectElement>(`#cli-default-${provider}`)!;
     expect(machine.value).toBe('');
-    expect(machine.selectedOptions[0]!.textContent).toBe('Automatic (PATH, then current Codex extension)');
-    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex')!.value).toBe('');
-    expect(document.querySelector('.cli-active')!.textContent).toContain('Automatic → Codex extension · codex-cli 0.162.0');
-    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex option[value="path"]')!.textContent).toBe('Terminal CLI (PATH)');
+    expect(machine.selectedOptions[0]!.textContent).toBe('Automatic');
+    expect(document.querySelector<HTMLSelectElement>(`#cli-project-${provider}`)!.value).toBe('');
+    expect(machine.closest('.cli-selections')!.nextElementSibling!.matches('.cli-entry')).toBe(true);
+    expect(document.querySelector(`#cli-project-${provider} option[value="path"]`)).toBeNull();
   });
-  it('shows the automatic PATH source, version and path without a managed entry', () => {
+  it('keeps an automatic PATH selection in the dropdowns', () => {
     render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { executable: '/terminal/codex', version: 'codex-cli 0.150.0', source: 'automatic-path' } }, registry: { ...cliState.cliManager!.registry, defaults: { Codex: '', Claude: '' } } } });
-    expect(document.querySelector('.cli-active')!.textContent).toBe('Automatic → Terminal PATH · codex-cli 0.150.0');
-    expect(document.querySelector('.cli-selections')!.parentElement!.textContent).toContain('/terminal/codex');
+    expect(document.querySelector('.cli-selections')!.nextElementSibling!.matches('.cli-entry')).toBe(true);
     expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex')!.value).toBe('');
-    expect(document.querySelector<HTMLSelectElement>('#cli-default-Codex option[value="cx"]')!.textContent).toBe('Pinned: My Codex');
+    expect(document.querySelector<HTMLSelectElement>('#cli-default-Codex option[value="cx"]')!.textContent).toBe('My Codex');
+    expect(document.querySelector<HTMLSelectElement>('#cli-project-Codex option[value="cx"]')!.textContent).toBe('My Codex');
   });
-  it('preserves CLI input drafts across sync, edits entries inline and restores fields on Cancel', () => {
+  it('checks the selected CLIs and displays both results in Manage CLIs', () => {
+    render(cliState);
+    const probe = document.querySelector<HTMLButtonElement>('#screen-cli #probe')!;
+    expect(probe.textContent).toBe('Check providers');
+    expect(document.getElementById('screen-tools')).toBeNull();
+    probe.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'probe', selection: 'inline' });
+    render({ ...cliState, checkingProviders: true });
+    expect(probe.disabled).toBe(true);
+    expect(probe.textContent).toBe('Checking providers…');
+    render({ ...cliState, providers: [
+      { provider: 'Codex', available: true, executable: '/cli/codex', version: 'codex-cli 0.150.0', detail: 'App-server handshake succeeded.' },
+      { provider: 'Claude', available: false, detail: 'Executable unavailable.' },
+    ] });
+    expect(probe.disabled).toBe(false);
+    const results = document.querySelectorAll('#screen-cli #providers article');
+    expect(results).toHaveLength(2);
+    expect(results[0]!.textContent).toContain('Available · codex-cli 0.150.0');
+    expect(results[0]!.textContent).toContain('/cli/codex');
+    expect(results[1]!.textContent).toContain('Unavailable');
+    expect(results[1]!.textContent).toContain('Executable unavailable.');
+  });
+  it('keeps selection errors visible beneath the dropdowns', () => {
+    const error = 'Selected Codex executable is unavailable.';
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, active: { Codex: { id: 'cx', source: 'project', error } } } });
+    expect(document.querySelector('.cli-selections + .cli-entry-error')!.textContent).toBe(error);
+  });
+  it('keeps CLI rows independently expandable across updates and collapses them when reopening Manage CLIs', () => {
+    const executable = 'C:/cli/codex.exe';
+    render(cliState);
+    const row = (id: string) => document.querySelector<HTMLDetailsElement>(`details[data-cli-id="${id}"]`)!;
+    const toggle = (id: string) => row(id).querySelector('summary')!.click();
+    expect(row('cx').open).toBe(false);
+    expect(row('cl').open).toBe(false);
+    toggle('cx');
+    expect(row('cx').open).toBe(true);
+    expect(row('cl').open).toBe(false);
+    toggle('cl');
+    expect(row('cx').open).toBe(true);
+    expect(row('cl').open).toBe(true);
+    toggle('cl');
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, busy: true } });
+    expect(row('cx').open).toBe(true);
+    expect(row('cl').open).toBe(false);
+    postMessage.mockClear();
+    const button = row('cx').querySelector<HTMLButtonElement>('button.cli-path')!;
+    expect(button.title).toBe(executable);
+    expect(button.textContent).toBe(executable);
+    expect(button.getAttribute('aria-label')).toBe(`Copy executable path: ${executable}`);
+    button.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'copyCLIPath', selection: executable });
+    render({ ...cliState, screen: 'conversations' });
+    render(cliState);
+    expect(row('cx').open).toBe(false);
+    expect(row('cl').open).toBe(false);
+  });
+  it('requests the native Add wizard for the selected provider', () => {
     render(cliState); postMessage.mockClear();
-    const name = document.querySelector<HTMLInputElement>('[data-cli-draft="add:Codex:name"]')!; name.value = 'Portable'; name.focus();
-    render({ ...cliState, syncing: true }); expect(name.value).toBe('Portable'); expect(document.activeElement).toBe(name);
+    const codex = () => document.querySelector<HTMLElement>('[aria-label="Codex CLI installations"]')!;
+    expect([...document.querySelectorAll('.cli-group-heading button.primary')].map(button => button.textContent)).toEqual(['Add', 'Add']);
+    expect([...codex().querySelectorAll('.cli-group-heading button')].map(button => button.textContent)).toEqual(['Scan', 'Check versions', 'Add']);
+    codex().querySelector<HTMLButtonElement>('button.primary')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: { provider: 'Codex', action: 'add', revision: 'cli1', project: '/project' } });
+    expect(codex().querySelector('form')).toBeNull();
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, busy: true } });
+    render(cliState);
+    const claude = document.querySelector<HTMLElement>('[aria-label="Claude CLI installations"]')!;
+    claude.querySelector<HTMLButtonElement>('button.primary')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: { provider: 'Claude', action: 'add', revision: 'cli1', project: '/project' } });
+    render({ ...cliState, cliManager: { ...cliState.cliManager!, busy: true } });
+    render(cliState);
+  });
+  it('replaces CLI entry details during editing and restores them on Cancel', () => {
+    render(cliState); postMessage.mockClear();
     const row = document.querySelector<HTMLElement>('[data-cli-id="cx"]')!;
+    row.querySelector('summary')!.click();
     [...row.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Edit')!.click();
+    const editingRow = document.querySelector<HTMLDetailsElement>('[data-cli-id="cx"]')!;
+    expect(editingRow.open).toBe(true);
+    expect(editingRow.querySelector('summary')!.textContent).toContain('In use · Default · Enabled');
+    expect(editingRow.querySelector('.cli-path')).toBeNull();
+    expect([...editingRow.querySelectorAll('button')].map(button => button.textContent)).toEqual(['Save', 'Cancel']);
     const editName = document.querySelector<HTMLInputElement>('[data-cli-draft="cx:name"]')!; expect(editName.value).toBe('My Codex'); editName.value = 'Changed';
     document.querySelector<HTMLFormElement>('.cli-edit-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ action: 'edit', id: 'cx', name: 'Changed', executable: 'C:/cli/codex.exe' }) });
     render({ ...cliState, error: 'Check failed' });
+    expect(document.querySelector<HTMLInputElement>('[data-cli-draft="cx:name"]')!.value).toBe('Changed');
     [...document.querySelectorAll<HTMLButtonElement>('.cli-edit-form button')].find(button => button.textContent === 'Cancel')!.click();
     expect(document.querySelector('.cli-edit-form')).toBeNull();
+    expect(document.querySelector('[data-cli-id="cx"] .cli-path')!.textContent).toBe('C:/cli/codex.exe');
     [...document.querySelectorAll<HTMLButtonElement>('[data-cli-id="cx"] button')].find(button => button.textContent === 'Edit')!.click();
     expect(document.querySelector<HTMLInputElement>('[data-cli-draft="cx:name"]')!.value).toBe('My Codex');
   });
   it('locks management during active runs and sends removal as a registry operation', () => {
     render({ ...cliState, chat: { requestId: 'r', provider: 'Codex', status: 'running', prompts: [] } });
-    expect([...document.querySelectorAll<HTMLButtonElement>('#cli-manager button')].every(button => button.disabled)).toBe(true);
+    expect([...document.querySelectorAll<HTMLButtonElement>('#cli-manager button:not(.cli-path)')].every(button => button.disabled)).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-cli-id="cx"] button.cli-path')!.disabled).toBe(false);
     render(cliState); postMessage.mockClear();
+    document.querySelector<HTMLElement>('[data-cli-id="cl"] summary')!.click();
     [...document.querySelectorAll<HTMLButtonElement>('[data-cli-id="cl"] button')].find(button => button.textContent === 'Remove')!.click();
     expect(postMessage).toHaveBeenLastCalledWith({ type: 'cliAction', selection: expect.objectContaining({ action: 'remove', provider: 'Claude', id: 'cl' }) });
   });
-  it('exposes the CLI behind the model list and routes explicit CLI selection from Diagnostics', () => {
+  it('exposes the CLI behind the model list', () => {
     render({ ...state, modelCatalogs: { Claude: { status: 'ready', choices: [{ id: 'sonnet', label: 'Sonnet' }], cli: { executable: 'C:/cli/claude.exe', version: '2.1.220' } } } });
     expect(document.querySelector<HTMLSelectElement>('#chat-model')!.title).toContain('C:/cli/claude.exe');
     expect(document.querySelector<HTMLButtonElement>('#models-refresh')!.title).toContain('2.1.220');
-    document.querySelector<HTMLButtonElement>('#choose-codex-cli')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'chooseCLI', selection: 'Codex' });
-    render({ ...state, chat: { requestId: 'r', provider: 'Claude', status: 'running', prompts: [] } });
-    expect(document.querySelector<HTMLButtonElement>('#choose-codex-cli')!.disabled).toBe(true);
   });
   const modelState: ViewState = { ...state, selectedModels: { Codex: 'codex-a', Claude: 'sonnet' }, modelCatalogs: {
     Codex: { status: 'ready', choices: [{ id: 'codex-a', label: 'Codex A' }, { id: 'codex-b', label: 'Codex B' }] },
@@ -663,7 +1027,7 @@ describe('Single tandem webview', () => {
       { id: 'opus', label: 'Opus', reasoningEfforts: [{ id: 'max', label: 'Max' }] },
     ] },
   } };
-  it('opens model/reasoning from the compact trigger, keeps it open on sync and restores focus on Escape', () => {
+  it('opens the model picker from the compact trigger, keeps it open on sync and restores focus on Escape', () => {
     render(effortState);
     const trigger = document.querySelector<HTMLButtonElement>('#model-trigger')!, popover = document.querySelector<HTMLElement>('#model-popover')!;
     expect(popover.hidden).toBe(true); expect(trigger.textContent).toContain('Sonnet');
@@ -698,8 +1062,13 @@ describe('Single tandem webview', () => {
     const model = document.querySelector<HTMLSelectElement>('#chat-model')!, effort = document.querySelector<HTMLSelectElement>('#chat-effort')!;
     model.value = 'opus'; model.dispatchEvent(new Event('change'));
     expect(effort.value).toBe('max'); expect([...effort.options].map(row => row.value)).toEqual(['', 'max']);
+    const trigger = document.querySelector<HTMLButtonElement>('#reasoning-trigger')!;
+    const popover = document.querySelector<HTMLElement>('#reasoning-popover')!;
+    trigger.click();
+    expect(popover.hidden).toBe(false);
     render({ ...effortState, chat: { requestId: 'r', provider: 'Claude', model: 'sonnet', reasoningEffort: 'low', status: 'running', prompts: [] } });
     expect(effort.value).toBe('low'); expect(effort.disabled).toBe(true);
+    expect(popover.hidden).toBe(true); expect(trigger.disabled).toBe(true);
     const slider = document.querySelector<HTMLInputElement>('#reasoning-slider')!;
     expect(slider.disabled).toBe(true); expect(slider.getAttribute('aria-valuetext')).toBe('Low');
     postMessage.mockClear(); effort.dispatchEvent(new Event('change')); expect(postMessage).not.toHaveBeenCalled();
@@ -903,43 +1272,46 @@ describe('Single tandem webview', () => {
     render({ ...state, project: '/other', conversation: undefined, chat: undefined });
     expect(document.querySelector<HTMLElement>('#agent-activity')!.hidden).toBe(true);
   });
-  it('keeps applied changes pending across refresh/new chat and sends explicit file or all decisions', () => {
-    const review = { revision: 'review-1', busy: false, files: [{ path: 'source.ts', kind: 'modified' as const, binary: false, additions: 2, deletions: 1 }, { path: 'new.ts', kind: 'added' as const, binary: false }] };
+  it('sends chat review decisions scoped to the current conversation and keeps its files available in Review', () => {
+    const captures = currentConversationCaptures;
+    const review = { revision: 'review-1', busy: false, files: [{ path: 'source.ts', kind: 'modified' as const, binary: false, captures }, { path: 'new.ts', kind: 'added' as const, binary: false, captures }] };
     render({ ...state, review });
     expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(false);
     expect(document.querySelector('#pending-changes')?.textContent).toContain('2 files pending review');
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Accept all pending changes"]')!.textContent).toBe('Accept all');
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Revert all pending changes"]')!.textContent).toBe('Revert all');
-    expect(document.querySelector<HTMLButtonElement>('#pending-changes [aria-label="Accept source.ts"]')!.textContent).toBe('Accept');
-    expect(document.querySelector('#pending-changes')?.textContent).toContain('pending review');
-    render({ ...state, conversation: undefined, review, syncing: true });
+    render({ ...state, review, syncing: true });
     expect(document.querySelectorAll('#pending-changes .review-file')).toHaveLength(2);
     postMessage.mockClear(); document.querySelector<HTMLButtonElement>('#pending-changes [aria-label="Accept source.ts"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'review-1', file: 'source.ts' } });
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'review-1', file: 'source.ts', group: conversation.key } });
     document.querySelector<HTMLButtonElement>('[aria-label="Revert all pending changes"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewRevert', selection: { project: '/project', revision: 'review-1', file: undefined } });
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewRevert', selection: { project: '/project', revision: 'review-1', group: conversation.key } });
     document.querySelector<HTMLButtonElement>('[aria-label="Accept all pending changes"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'review-1', file: undefined } });
-    render({ ...state, review: { ...review, files: [] } });
-    expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(true);
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'review-1', group: conversation.key } });
+    render({ ...state, conversation: undefined, screen: 'changes', review });
+    expect(document.querySelectorAll('#conversation-changes .review-file')).toHaveLength(2);
   });
   it('removes only the accepted file and keeps the remaining review actions bound to the new revision', () => {
-    const review = { revision: 'r1', busy: false, files: [{ path: 'one.ts', kind: 'modified' as const, binary: false }, { path: 'two.ts', kind: 'modified' as const, binary: false }] };
+    const captures = currentConversationCaptures;
+    const review = { revision: 'r1', busy: false, files: [{ path: 'one.ts', kind: 'modified' as const, binary: false, captures }, { path: 'two.ts', kind: 'modified' as const, binary: false, captures }] };
     render({ ...state, review });
     document.querySelector<HTMLButtonElement>('#pending-changes [aria-label="Accept one.ts"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'r1', file: 'one.ts' } });
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'r1', file: 'one.ts', group: conversation.key } });
     render({ ...state, review: { ...review, revision: 'r2', files: [review.files[1]!] } });
     expect(document.querySelectorAll('#pending-changes .review-file')).toHaveLength(1);
-    expect(document.querySelector('[aria-label="Accept one.ts"]')).toBeNull();
+    expect(document.querySelector('#pending-changes [aria-label="Accept one.ts"]')).toBeNull();
     expect(document.querySelector('#pending-changes')?.textContent).toContain('1 file pending review');
     document.querySelector<HTMLButtonElement>('#pending-changes [aria-label="Accept two.ts"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'r2', file: 'two.ts' } });
-    render({ ...state, review: { ...review, revision: 'r3', files: [] } });
-    expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(true);
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'acceptChanges', selection: { project: '/project', revision: 'r2', file: 'two.ts', group: conversation.key } });
+    const unassigned = { path: 'unassigned.ts', kind: 'modified' as const, binary: false };
+    render({ ...state, review: { ...review, revision: 'r3', files: [unassigned] } });
+    expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(false);
+    expect(document.querySelector<HTMLButtonElement>('#review-toggle')!.disabled).toBe(true);
     expect(document.querySelectorAll('#pending-changes .review-file')).toHaveLength(0);
   });
   it('collapses the pending changes box to its heading and keeps the choice across renders', () => {
-    const review = { revision: 'review-1', busy: false, files: [{ path: 'source.ts', kind: 'modified' as const, binary: false, additions: 2, deletions: 1 }, { path: 'new.ts', kind: 'added' as const, binary: false, additions: 4, deletions: 0 }] };
+    const captures = currentConversationCaptures;
+    const review = { revision: 'review-1', busy: false, files: [{ path: 'source.ts', kind: 'modified' as const, binary: false, additions: 2, deletions: 1, captures }, { path: 'new.ts', kind: 'added' as const, binary: false, additions: 4, deletions: 0, captures }] };
     render({ ...state, review });
     const pending = document.querySelector<HTMLElement>('#pending-changes')!;
     const toggle = document.querySelector<HTMLButtonElement>('#review-toggle')!;
@@ -997,7 +1369,7 @@ describe('Single tandem webview', () => {
     render({ ...state, conversation: { conversation: { ...conversation, revision: '2' }, messages: messages.slice(0, 2) } });
     expect(document.querySelector<HTMLElement>('#message-nav')!.hidden).toBe(true);
     render({ ...state, conversation: { conversation: { ...conversation, revision: '3' }, messages } });
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+    headerAction('history');
     expect(document.querySelector<HTMLElement>('#message-nav')!.hidden).toBe(true);
   });
   it('reaches the last message when scrolling is clamped and retains focus during streaming', async () => {
@@ -1034,16 +1406,16 @@ describe('Single tandem webview', () => {
     expect(document.querySelector('.message-focused')).toBeNull();
   });
   it('opens review changes in the editor and disables decisions until capture finishes', () => {
-    const review = { revision: 'r1', busy: true, files: [{ path: 'source.ts', kind: 'modified' as const, binary: false }] };
+    const review = { revision: 'r1', busy: true, files: [{ path: 'source.ts', kind: 'modified' as const, binary: false, captures: currentConversationCaptures }] };
     render({ ...state, review });
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Accept all pending changes"]')!.disabled).toBe(true);
     expect(document.querySelector<HTMLButtonElement>('#pending-changes [aria-label="Revert source.ts"]')!.disabled).toBe(true);
     document.querySelector<HTMLButtonElement>('#pending-changes .review-file-link')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReview', selection: { project: '/project', revision: 'r1', file: 'source.ts' } });
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReview', selection: { project: '/project', revision: 'r1', file: 'source.ts', group: conversation.key } });
     render({ ...state, review: { ...review, busy: false }, reviewPreview: { path: 'source.ts', before: 'old', after: 'new', patch: '@@ -1 +1 @@\n-old\n+new' } });
     expect(document.querySelector<HTMLElement>('#review-preview')!.hidden).toBe(true);
     document.querySelector<HTMLButtonElement>('[aria-label="View all changes in the VS Code editor"]')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReview', selection: { project: '/project', revision: 'r1', file: undefined } });
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'previewReview', selection: { project: '/project', revision: 'r1', group: conversation.key } });
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Accept all pending changes"]')!.disabled).toBe(false);
   });
   it('sends the typed message to the selected provider/session with Enter and rejects duplicate submits', () => {
@@ -1108,33 +1480,152 @@ describe('Single tandem webview', () => {
   });
   it('shows explicit permission buttons and sends only the selected decision', () => {
     render({ ...state, chat: { requestId: 'r1', provider: 'Claude', status: 'running', prompts: [{ id: 'p1', title: 'Allow terminal?', detail: 'echo test' }] } });
-    expect(document.querySelector('#agent-prompts')?.textContent).toContain('echo test');
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>('#agent-prompts button')];
+    const dialog = document.querySelector<HTMLDialogElement>('dialog#agent-approval')!;
+    expect(dialog.open).toBe(true);
+    expect(dialog.textContent).toContain('echo test');
+    expect(document.querySelector('#agent-prompts')?.childElementCount).toBe(0);
+    postMessage.mockClear();
+    expect(dialog.dispatchEvent(new Event('cancel', { cancelable: true }))).toBe(false);
+    expect(postMessage).not.toHaveBeenCalled();
+    const buttons = [...dialog.querySelectorAll<HTMLButtonElement>('#agent-approval-prompts button')];
     buttons[0]!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'answerAgent', selection: { id: 'p1', allow: false } });
     buttons[1]!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'answerAgent', selection: { id: 'p1', allow: true } });
+    dialog.querySelector<HTMLButtonElement>('#agent-approval-stop')!.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'stopChat', selection: undefined });
+    render(state);
+    expect(dialog.open).toBe(false);
   });
   it('shows Always allow with its scope and sends a distinct remembered permission answer', () => {
     render({ ...state, chat: { requestId: 'r1', provider: 'Claude', status: 'running', prompts: [{ id: 'p1', title: 'Allow terminal?', detail: 'echo test', allowOptions: [
       { scope: 'always', label: 'Always allow', description: 'Remember in this project.' },
       { scope: 'session', label: 'Allow for this run', description: 'Current run only.' },
     ] }] } });
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>('#agent-prompts button')];
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('#agent-approval-prompts button')];
     expect(buttons.map(button => button.textContent)).toEqual(['Decline', 'Allow once', 'Always allow', 'Allow for this run']);
-    expect(document.querySelector('#agent-prompts')?.textContent).toContain('Remember in this project.');
+    expect(document.querySelector('#agent-approval')?.textContent).toContain('Remember in this project.');
     buttons[2]!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'answerAgent', selection: { id: 'p1', allow: true, allowScope: 'always' } });
     buttons[3]!.click(); expect(postMessage).toHaveBeenLastCalledWith({ type: 'answerAgent', selection: { id: 'p1', allow: true, allowScope: 'session' } });
   });
-  it('labels provider icons, renders safe Markdown and preserves tool expansion on sync', () => {
-    render(state);
+  it('renders compact history rows, safe Markdown and Tools beneath agent messages', () => {
+    const [firstReply, firstTool] = state.conversation!.messages;
+    const pending = { ...state.conversation!, messages: [
+      { id: 'u1', role: 'user' as const, text: 'Fix login' }, firstTool!,
+      { id: 't1-result', role: 'tool' as const, toolName: 'Result', text: 'Updated login.ts' },
+    ] };
+    render({ ...state, conversation: pending });
+    const pendingTools = document.querySelector<HTMLDetailsElement>('.conversation-tools')!;
+    expect(pendingTools.previousElementSibling?.getAttribute('data-message-id')).toBe('u1');
+    pendingTools.open = true;
+    const content = { ...pending, messages: [...pending.messages,
+      firstReply!,
+      { id: 't2', role: 'tool' as const, toolName: 'Read', text: 'login.ts' },
+    ] };
+    render({ ...state, conversation: content });
     const links = [...document.querySelectorAll<HTMLButtonElement>('.conversation-link')];
-    expect(links[0]?.textContent).toContain('Claude Code'); expect(links[1]?.textContent).toContain('Codex');
+    expect(links.map(link => [...link.children].map(child => child.className))).toEqual([
+      ['provider-icon', 'conversation-title', 'conversation-time'],
+      ['provider-icon', 'conversation-title', 'conversation-time'],
+    ]);
+    expect(links[0]?.querySelector<HTMLElement>('.conversation-title')?.title).toBe(conversation.title);
+    expect(links[0]?.querySelector<HTMLElement>('.conversation-time')?.title).toBe(new Date(conversation.updatedAt).toLocaleString());
     expect(links[0]?.querySelector('img')?.src).toContain('claude.svg'); expect(links[1]?.querySelector('img')?.src).toContain('codex.svg');
-    expect(document.querySelector('.message-text')?.textContent).toContain('<script>bad()</script>');
+    expect(document.querySelector('.assistant .message-text')?.textContent).toContain('<script>bad()</script>');
     expect(document.querySelector('.message-text script')).toBeNull();
-    expect(document.querySelector('.message.tool .provider-badge')?.textContent).toBe('Claude Code');
-    document.querySelector<HTMLDetailsElement>('.message.tool details')!.open = true;
-    render({ ...state, conversation: { ...state.conversation!, conversation: { ...conversation, revision: '2' } } });
-    expect(document.querySelector<HTMLDetailsElement>('.message.tool details')!.open).toBe(true);
+    const groups = [...document.querySelectorAll<HTMLDetailsElement>('#conversation > .conversation-tools')];
+    expect(groups).toHaveLength(2);
+    const [first, second] = [groups[0]!, groups[1]!];
+    expect(first).toBe(pendingTools);
+    expect(first.open).toBe(true);
+    expect(second.open).toBe(false);
+    expect(first.querySelector('summary .conversation-accordion-title')?.textContent).toBe('Tools');
+    expect(first.querySelector('summary .codicon-tools')).not.toBeNull();
+    expect(first.querySelector('summary .meta')?.textContent).toBe('2');
+    expect([...first.querySelectorAll('.tool-name')].map(name => name.textContent)).toEqual(['Edit', 'Result']);
+    expect(first.querySelector('#tool-t1 summary .codicon-terminal')).not.toBeNull();
+    expect(first.querySelector('#tool-t1-result summary .codicon-output')).not.toBeNull();
+    expect(first.previousElementSibling?.getAttribute('data-message-id')).toBe('a1');
+    expect(first.nextElementSibling).toBe(second);
+    expect(document.querySelector('.message.tool .provider-badge')).toBeNull();
+    second.open = true;
+    const tool = first.querySelector<HTMLDetailsElement>('#tool-t1')!;
+    tool.open = true;
+    render({ ...state, conversation: { ...content, conversation: { ...conversation, revision: '2' }, messages: [...content.messages,
+      { id: 't2-result', role: 'tool', toolName: 'Result', text: 'File read' },
+      { id: 'a2', role: 'assistant', text: 'Checking the change' },
+    ] } });
+    expect(document.querySelector('.conversation-tools')).toBe(first);
+    expect(first.open).toBe(true);
+    expect(first.querySelector('#tool-t1')).toBe(tool);
+    expect(tool.open).toBe(true);
+    expect(first.nextElementSibling?.getAttribute('data-message-id')).toBe('a2');
+    expect(first.nextElementSibling?.nextElementSibling).toBe(second);
+    expect(second.open).toBe(true);
+    expect(second.querySelector('summary .meta')?.textContent).toBe('2');
+    expect(second.querySelector('#tool-t2-result pre')?.textContent).toBe('File read');
+  });
+  it('opens a read-only subagent transcript in chat and restores the parent on Back', () => {
+    const group = { parentKey: conversation.key, entries: [{ id: 'agent1', label: 'Scout' }] };
+    const parent = { ...state, subagents: group };
+    render(parent);
+    const section = document.querySelector<HTMLDetailsElement>('#conversation-subagents')!;
+    expect(section.hidden).toBe(false);
+    expect(section.open).toBe(true);
+    expect(section.querySelector('summary .conversation-accordion-title')?.textContent).toBe('Subagents');
+    expect(section.querySelector('summary .codicon-robot')).not.toBeNull();
+    expect(section.querySelector('summary .codicon-chevron-down')?.previousElementSibling?.textContent).toBe('1');
+    section.querySelector('summary')!.click();
+    expect(section.open).toBe(false);
+    render(parent);
+    expect(section.open).toBe(false);
+    render({ ...state, conversation: undefined, subagents: group });
+    expect(section.hidden).toBe(true);
+    expect(section.open).toBe(false);
+    render(state);
+    expect(section.hidden).toBe(true);
+    render(parent);
+    expect(section.hidden).toBe(false);
+    expect(section.open).toBe(true);
+
+    const input = document.querySelector<HTMLTextAreaElement>('#chat-input')!;
+    input.value = 'Parent draft';
+    input.dispatchEvent(new Event('input'));
+    const open = section.querySelector<HTMLButtonElement>('button')!;
+    const scroller = document.querySelector<HTMLElement>('.scroll-body')!;
+    scroller.scrollTop = 80;
+    open.click();
+    const requestId = postMessage.mock.lastCall![0].selection.requestId;
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'selectSubagent', selection: { project: '/project', parentKey: conversation.key, agentId: 'agent1', requestId: expect.any(String) } });
+    expect(document.getElementById('panel-title')?.textContent).toBe('Scout');
+    for (const id of ['thread-view', 'chat-composer', 'pending-changes']) expect(document.getElementById(id)?.hidden).toBe(true);
+    expect(document.getElementById('subagent-thread')?.hidden).toBe(false);
+    const transcript = document.getElementById('subagent-conversation')!;
+    expect(transcript.textContent).toContain('Loading transcript');
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'subagentTranscript', requestId, transcript: { status: 'ready', messages: [
+      { id: 'child-message', role: 'user', text: '**Task** <script>bad()</script>' },
+      { id: 'child-tool', role: 'tool', toolName: 'Read', text: 'login.ts' },
+      { id: 'reply', role: 'assistant', text: 'Done' },
+    ] } } }));
+    expect(transcript.querySelector('strong')?.textContent).toBe('Task');
+    expect(transcript.querySelector('.assistant')?.textContent).toContain('Done');
+    expect(transcript.querySelector('.conversation-tools')?.previousElementSibling?.getAttribute('data-message-id')).toBe('reply');
+    expect(transcript.querySelector('script, button')).toBeNull();
+    render({ ...parent, syncing: true });
+    expect(transcript.querySelector('strong')?.textContent).toBe('Task');
+
+    const back = document.querySelector<HTMLButtonElement>('#sidebar-navigation')!;
+    expect(back.getAttribute('aria-label')).toBe('Back to parent chat');
+    back.click();
+    expect(document.getElementById('panel-title')?.textContent).toBe(conversation.title);
+    for (const id of ['thread-view', 'chat-composer', 'pending-changes']) expect(document.getElementById(id)?.hidden).toBe(false);
+    expect(document.getElementById('subagent-thread')?.hidden).toBe(true);
+    expect(scroller.scrollTop).toBe(80);
+    expect(input.value).toBe('Parent draft');
+    expect(document.activeElement).toBe(open);
+
+    open.click();
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'subagentTranscript', requestId, transcript: { status: 'error', message: 'Stale transcript' } } }));
+    expect(transcript.textContent).toContain('Loading transcript');
+    expect(transcript.textContent).not.toContain('Stale transcript');
   });
   it('selects a conversation inside the tandem; tab commands require a separate click', () => {
     render(state); postMessage.mockClear();
@@ -1148,19 +1639,34 @@ describe('Single tandem webview', () => {
   it('filters sessions by provider without changing the opened conversation', () => {
     render(state); document.querySelector<HTMLButtonElement>('[data-provider="Codex"]')!.click();
     expect(document.querySelectorAll('.conversation-link')).toHaveLength(1);
-    expect(document.querySelector('.conversation-link')?.textContent).toContain('Codex');
+    expect(document.querySelector('.conversation-link')?.getAttribute('data-focus-key')).toBe('Codex:c2');
     expect(document.querySelector('#thread-heading .provider-badge')?.textContent).toBe('Claude Code');
   });
-  it('moves tracking controls to the status bar and keeps chat available while tracking', () => {
-    render({ ...state, review: { revision: 'watch', files: [], busy: false, externalTracking: true } });
+  it('keeps the Review header free of tracking controls and keeps chat available while tracking', () => {
+    const review = { revision: 'watch', files: [], busy: false, externalTracking: true };
+    render({ ...state, review });
     expect(document.querySelector<HTMLElement>('#pending-changes')!.hidden).toBe(false);
-    expect(document.querySelector('#review-toggle')!.textContent).toContain('Watching external changes');
+    expect(document.querySelector<HTMLButtonElement>('#review-toggle')!.disabled).toBe(true);
     expect(document.querySelector('#external-review-toggle')).toBeNull();
-    expect(document.querySelector('#external-review-hint')!.textContent).toContain('Chat in Codex or Claude');
-    document.querySelector<HTMLButtonElement>('#review-tracking')!.click();
-    expect(postMessage).toHaveBeenLastCalledWith({ type: 'trackingControls', selection: undefined });
     const input = document.querySelector<HTMLTextAreaElement>('#chat-input')!; input.value = 'Work'; input.dispatchEvent(new Event('input'));
     expect(document.querySelector<HTMLButtonElement>('#chat-send')!.disabled).toBe(false);
+    render({ ...state, review, screen: 'changes' });
+    const trackingStatus = document.querySelector<HTMLElement>('#review-tracking-status')!;
+    expect(trackingStatus.hidden).toBe(true);
+    render({ ...state, review: { ...review, externalTracking: false }, screen: 'changes' });
+    expect(trackingStatus.hidden).toBe(false);
+    expect(trackingStatus.textContent).toContain('Tracking paused');
+    expect(document.querySelector('button[aria-label="Change tracking controls"]')).toBeNull();
+    expect(panelHtml(resources, true)).not.toContain('aria-label="Change tracking controls"');
+    const refresh = document.querySelector<HTMLButtonElement>('.header-actions #review-refresh')!;
+    expect(refresh.getAttribute('aria-label')).toBe('Refresh review');
+    expect(document.querySelector('.changes-toolbar button')).toBeNull();
+    render({ ...state, review: { ...review, busy: true }, screen: 'changes' });
+    expect(refresh.getAttribute('aria-label')).toBe('Retry change capture');
+    refresh.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'refreshReview', selection: undefined });
+    render({ ...state, review, reviewBusy: true, screen: 'changes' });
+    expect(refresh.disabled).toBe(true);
   });
   it('defaults history to the current workspace and scopes provider totals to the chosen folder', () => {
     const value: ViewState = { ...state, conversations: [
@@ -1177,45 +1683,89 @@ describe('Single tandem webview', () => {
     render({ ...value, syncing: true }); expect(picker.value).toBe('/project/app');
     render({ ...value, project: '/other', projectName: 'other', conversations: [] }); expect(picker.value).toBe('');
   });
-  it('shows provider totals and the history root even when a filter hides Claude sessions', () => {
-    render(state);
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+  it('excludes internal Codex sessions from history and keeps totals for other providers', () => {
+    render({ ...state, conversations: [
+      ...state.conversations!,
+      { ...conversation, provider: 'Codex', key: 'Codex:child', id: 'child', cwd: '/project/child', title: 'Internal agent', hiddenFromHistory: true },
+    ] });
+    headerAction('history');
     document.querySelector<HTMLButtonElement>('.history-filters [data-provider="Codex"]')!.click();
     expect(document.querySelectorAll('.conversation-link')).toHaveLength(1);
     expect(document.querySelector('.history-filters [data-provider="Claude"]')?.getAttribute('aria-label')).toBe('Claude Code: 1 conversations');
+    expect(document.querySelector('.history-filters [data-provider="Codex"]')?.getAttribute('aria-label')).toBe('Codex: 1 conversations');
     expect(document.querySelector('.history-filters [data-provider="all"]')?.getAttribute('aria-label')).toBe('All: 2 conversations');
-    expect(document.querySelector('#history-root')?.textContent).toBe('/project');
+    expect(document.querySelector('#history-workspace option[value="/project/child"]')).toBeNull();
     document.querySelector<HTMLButtonElement>('.history-filters [data-provider="Claude"]')!.click();
     expect(document.querySelector('.conversation-link')?.getAttribute('data-focus-key')).toBe('Claude:c1');
   });
   it('reopens History with all providers and an empty search instead of hiding Claude behind old filters', () => {
     render(state);
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+    headerAction('history');
     document.querySelector<HTMLButtonElement>('.history-filters [data-provider="Codex"]')!.click();
     const search = document.querySelector<HTMLInputElement>('#conversation-search')!;
     search.value = 'missing'; search.dispatchEvent(new Event('input'));
     expect(document.querySelectorAll('.conversation-link')).toHaveLength(0);
-    document.querySelector<HTMLButtonElement>('#history-close')!.click();
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+    document.querySelector<HTMLButtonElement>('#sidebar-navigation')!.click();
+    headerAction('history');
     expect(search.value).toBe('');
     expect(document.querySelector('.history-filters [data-provider="all"]')?.getAttribute('aria-pressed')).toBe('true');
     expect(document.querySelectorAll('.conversation-link')).toHaveLength(2);
     expect(document.querySelector('.conversation-link[data-focus-key="Claude:c1"]')).not.toBeNull();
   });
-  it('uses the workspace root label and opens history without sending a project or tab command', () => {
+  it('shows the chat title in the sidebar and opens history without a host command', () => {
     render(state); postMessage.mockClear();
-    expect(document.querySelector('#root-name')?.textContent).toBe('project');
+    expect(document.querySelector('#panel-title')?.textContent).toBe('Fix login');
+    expect(document.querySelector('#thread-heading h2')).toBeNull();
+    const navigation = document.querySelector<HTMLButtonElement>('#sidebar-navigation')!;
+    expect(navigation.hidden).toBe(true);
     expect(document.querySelector('#project')).toBeNull();
     expect(document.querySelector<HTMLElement>('#history-view')!.hidden).toBe(true);
-    document.querySelector<HTMLButtonElement>('#history-open')!.click();
+    headerAction('history');
     expect(document.querySelector<HTMLElement>('#history-view')!.hidden).toBe(false);
     expect(document.querySelector<HTMLElement>('#thread-view')!.hidden).toBe(true);
+    expect(document.querySelector('#panel-title')?.textContent).toBe('Conversations');
+    expect(navigation.hidden).toBe(false);
+    expect(navigation.getAttribute('aria-label')).toBe('Back to chat');
     expect(postMessage).not.toHaveBeenCalled();
     const search = document.querySelector<HTMLInputElement>('#conversation-search')!;
     search.value = 'no match'; search.dispatchEvent(new Event('input'));
     expect(document.querySelectorAll('.conversation-link')).toHaveLength(0);
-    document.querySelector<HTMLButtonElement>('#history-close')!.click();
+    navigation.focus();
+    navigation.click();
     expect(document.querySelector<HTMLElement>('#thread-view')!.hidden).toBe(false);
+    expect(navigation.hidden).toBe(true);
+    expect(document.activeElement).toBe(document.getElementById('panel-title'));
+  });
+  it('returns from Manage CLIs to chat and from a selected chat to its filtered history', () => {
+    const blank = { ...state, conversation: undefined };
+    render(blank);
+    const title = document.getElementById('panel-title')!;
+    const navigation = document.querySelector<HTMLButtonElement>('#sidebar-navigation')!;
+    expect(title.textContent).toBe('New chat');
+
+    render({ ...blank, screen: 'cli' });
+    expect(title.textContent).toBe('Manage CLIs');
+    expect(navigation.getAttribute('aria-label')).toBe('Back to chat');
+    navigation.click();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: 'screen', selection: 'conversations' });
+    render(blank);
+
+    headerAction('history');
+    const search = document.querySelector<HTMLInputElement>('#conversation-search')!;
+    search.value = 'login';
+    search.dispatchEvent(new Event('input'));
+    document.querySelector<HTMLButtonElement>('.conversation-link')!.click();
+    render(state);
+    const opened = { ...state, conversationOpenRevision: 1 };
+    render(opened);
+    expect(title.textContent).toBe('Fix login');
+    expect(navigation.getAttribute('aria-label')).toBe('Back to Conversations');
+    navigation.click();
+    expect(title.textContent).toBe('Conversations');
+    expect(search.value).toBe('login');
+    navigation.click();
+    expect(title.textContent).toBe('Fix login');
+    expect(navigation.hidden).toBe(true);
   });
   it.each(['assistant', 'user'] as const)('formats %s code, headings and lists while removing active and command links', role => {
     render({ ...state, conversation: { conversation, messages: [{ id: 'md', role, text: '## Changes\n\n- **Fixed** login\n\n```ts\nconst ok = true;\n```\n\n[bad](command:workbench.action.closeWindow) [web](https://example.com)\n\n<img src=x onerror=bad()>' }] } });
@@ -1232,10 +1782,25 @@ describe('Single tandem webview', () => {
     vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
       return this.id === 'message-content-long' ? height : 80;
     });
-    const messages = [{ id: 'long', role: 'user' as const, text: 'Long message' }, { id: 'short', role: 'user' as const, text: 'Short message' }, { id: 'reply', role: 'assistant' as const, text: 'Reply' }];
+    const messages = [
+      { id: 'long', role: 'user' as const, text: 'Long message', attachments: [{ name: 'screen.png', mimeType: 'image/png', data: 'AQID' }] },
+      { id: 'short', role: 'user' as const, text: 'Short message' },
+      { id: 'reply', role: 'assistant' as const, text: 'Reply' },
+    ];
     const show = (revision: string, key = conversation.key) => render({ ...state, conversation: { conversation: { ...conversation, key, revision }, messages } });
     const toggle = () => document.querySelector<HTMLButtonElement>('[data-message-id="long"] .message-toggle')!;
     show('fold-1');
+    const bubble = document.querySelector('[data-message-id="long"] > .message-bubble')!;
+    const author = bubble.parentElement!.querySelector(':scope > .message-author');
+    expect(author?.textContent).toBe('You');
+    expect(bubble.previousElementSibling).toBe(author);
+    const actions = bubble.nextElementSibling!;
+    expect([...bubble.querySelectorAll('button')]).toEqual([toggle()]);
+    expect(bubble.querySelector('.message-text')!.nextElementSibling).toBe(toggle());
+    expect(toggle().nextElementSibling).toBe(bubble.querySelector('.message-attachments'));
+    expect(bubble.querySelector('.message-attachments img')?.getAttribute('alt')).toBe('screen.png');
+    expect(actions).toBe(bubble.parentElement!.lastElementChild);
+    expect([...actions.querySelectorAll('button')]).toEqual([actions.querySelector('.message-restore'), actions.querySelector('.message-edit')]);
     expect(toggle().hidden).toBe(false);
     expect(toggle().textContent).toBe('Show more');
     expect(toggle().getAttribute('aria-expanded')).toBe('false');
