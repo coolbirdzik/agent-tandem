@@ -298,6 +298,33 @@ export class UsageHistory {
     const roots: Array<[ConversationProvider, string]> = [['Codex', path.join(this.homes.codex, 'sessions')], ['Codex', path.join(this.homes.codex, 'archived_sessions')], ['Claude', path.join(this.homes.claude, 'projects')]];
     return Promise.all(roots.map(async ([provider, root]) => ({ provider, ...await historyFiles(root, signal) })));
   }
+  private async readTranscript(file: string, provider: ConversationProvider, signal?: AbortSignal, stats?: UsageReadStats) {
+    signal?.throwIfAborted();
+    const info = await stat(file), signature = `${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+    let data = this.cache.get(file);
+    if (data?.signature === signature) {
+      if (stats) stats.memoryHits++;
+    } else {
+      data = await this.diskCache(file, provider, signature);
+      if (data) { if (stats) stats.diskHits++; }
+      else {
+        data = await parseFile(file, provider, signature, signal);
+        if (stats) stats.parsedFiles++;
+        await this.saveCache(file, provider, data);
+      }
+      signal?.throwIfAborted();
+      this.cache.set(file, data);
+    }
+    return data;
+  }
+  /** Cache the usage of checked transcripts that are about to be removed. */
+  async retainTranscripts(provider: ConversationProvider, files: readonly string[], signal?: AbortSignal): Promise<void> {
+    if (!this.cacheDirectory) return;
+    const transcripts = files.filter(file => /\.jsonl(?:\.zst)?$/.test(file));
+    for (let offset = 0; offset < transcripts.length; offset += 4) {
+      await Promise.all(transcripts.slice(offset, offset + 4).map(file => this.readTranscript(file, provider, signal).catch(() => signal?.throwIfAborted())));
+    }
+  }
   /** Cache files whose transcript has left the disk: the user's cleanup, or a CLI's own retention. */
   private async retainedFiles(sources: Array<{ provider: ConversationProvider; files: string[] }>) {
     if (!this.cacheDirectory) return [];
@@ -397,16 +424,7 @@ export class UsageHistory {
     for (let offset = 0; offset < files.length; offset += 4) {
       const parsed = await Promise.all(files.slice(offset, offset + 4).map(async ({ file, provider }) => {
         try {
-          signal?.throwIfAborted(); const info = await stat(file), signature = `${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
-          let data = this.cache.get(file);
-          if (data?.signature === signature) stats.memoryHits++;
-          else {
-            data = await this.diskCache(file, provider, signature);
-            if (data) stats.diskHits++;
-            else { data = await parseFile(file, provider, signature, signal); stats.parsedFiles++; await this.saveCache(file, provider, data); }
-            signal?.throwIfAborted(); this.cache.set(file, data);
-          }
-          return data;
+          return await this.readTranscript(file, provider, signal, stats);
         } catch { signal?.throwIfAborted(); unreadableFiles++; return undefined; }
       }));
       for (const file of parsed) {

@@ -1625,6 +1625,14 @@ function renderNativeDialog(value: UsageDashboardState['conversationCleanup']) {
   el('native-cleanup-note').textContent = finished ? `Finished in ${Math.max(0.1, (nativeDialog.finishedAt! - nativeDialog.startedAt) / 1000).toFixed(1)}s` : 'You can hide this window while cleanup continues.';
   el('native-cleanup-close').textContent = finished ? 'Done' : 'Hide';
 }
+function renderNativeProgress(value: UsageDashboardState['conversationCleanup'], busy: boolean) {
+  el('native-history-status').textContent = value?.status === 'cleaning' ? value.dates ? `Reading message dates · ${value.dates.done} / ${value.dates.total}…` : value.total ? `Deleting conversations · ${value.done ?? 0} / ${value.total}…` : 'Preparing cleanup…' : busy ? 'Reading local conversations…' : `${selectedNativeHistory.size} selected`;
+  el('native-history-status').classList.toggle('native-sr-only', !busy);
+  el('native-history-running').hidden = value?.status !== 'cleaning';
+  const progress = el<HTMLProgressElement>('native-history-progress');
+  if (value?.dates?.total) progress.value = 100 * value.dates.done / value.dates.total; else if (value?.total) progress.value = 100 * (value.done ?? 0) / value.total; else progress.removeAttribute('value');
+  renderNativeDialog(value);
+}
 function renderNativeHistory(value: UsageDashboardState['conversationCleanup']) {
   const busy = value?.status === 'loading' || value?.status === 'cleaning' || nativeDeletePending, locked = busy || !!value?.plan;
   const scanned = !!value?.conversations, all = value?.conversations ?? [], rows = visibleNativeHistory(value), visible = rows.slice(0, nativeHistoryLimit);
@@ -1659,11 +1667,6 @@ function renderNativeHistory(value: UsageDashboardState['conversationCleanup']) 
   el('native-history-selection').textContent = selectedNativeHistory.size ? `${plural(selectedNativeHistory.size, 'conversation')} selected` : 'Choose conversations to remove';
   el('native-history-selection-size').textContent = selectedNativeHistory.size ? `${fileSize(selected().reduce((sum, row) => sum + row.bytes, 0))} to remove` : 'Shift-click to select several in a row.';
   el('native-history-roots').textContent = value ? `Codex: ${value.roots.Codex} · Claude Code: ${value.roots.Claude}` : '';
-  el('native-history-status').textContent = value?.status === 'cleaning' ? value.dates ? `Reading message dates · ${value.dates.done} / ${value.dates.total}…` : value.total ? `Deleting conversations · ${value.done ?? 0} / ${value.total}…` : 'Preparing cleanup…' : busy ? 'Reading local conversations…' : `${selectedNativeHistory.size} selected`;
-  el('native-history-status').classList.toggle('native-sr-only', !busy);
-  el('native-history-running').hidden = value?.status !== 'cleaning';
-  const progress = el<HTMLProgressElement>('native-history-progress');
-  if (value?.dates?.total) progress.value = 100 * value.dates.done / value.dates.total; else if (value?.total) progress.value = 100 * (value.done ?? 0) / value.total; else progress.removeAttribute('value');
   const errors = el('native-history-errors'); errors.replaceChildren();
   const issues = [...(value?.errors ?? []), ...(value?.error ? [value.error] : [])]; errors.hidden = !issues.length;
   for (const error of issues) errors.append(node('p', error));
@@ -1703,7 +1706,7 @@ function renderNativeHistory(value: UsageDashboardState['conversationCleanup']) 
     nativeHistoryPreviewToken = plan?.token;
     if (plan) { const heading = el('native-history-plan-heading'); heading.tabIndex = -1; el('native-history-plan').scrollIntoView?.({ block: 'nearest' }); heading.focus({ preventScroll: true }); }
   }
-  renderNativeDialog(value);
+  renderNativeProgress(value, busy);
 }
 /**
  * A preview scans the whole data folder and checks every snapshot, which takes seconds on a large one. Until it
@@ -1977,6 +1980,15 @@ function render(value: UsageDashboardState) {
 }
 window.addEventListener('message', event => {
   if (event.data?.type === 'state') render(event.data.state);
+  if (event.data?.type === 'conversationCleanupProgress') {
+    const cleanup = state?.conversationCleanup, { runId, progress } = event.data;
+    if (cleanup?.status === 'cleaning' && typeof runId === 'string' && cleanup.runId === runId) {
+      cleanup.dates = progress.dates;
+      if (progress.done !== undefined) cleanup.done = progress.done;
+      if (progress.total !== undefined) cleanup.total = progress.total;
+      renderNativeProgress(cleanup, true);
+    }
+  }
   if (event.data?.type === 'storageProgress') {
     const storage = state?.storage, { token, progress } = event.data;
     const history = storage?.historyPlan?.token === token;

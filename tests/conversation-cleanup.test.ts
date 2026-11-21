@@ -34,7 +34,8 @@ describe('Native conversation cleanup', () => {
     const f = await fixture(); await f.session('Codex', ids[0]!); await f.session('Codex', ids[1]!, false, ids[0]);
     let answer!: (confirmed: boolean) => void;
     const confirm = vi.fn((_plan: ConversationCleanupPlan) => new Promise<boolean>(resolve => { answer = resolve; }));
-    const job = f.cleaner.deleteMatching({ before: Date.now(), provider: 'Codex' }, { confirm });
+    const beforeRemove = vi.fn(async () => {});
+    const job = f.cleaner.deleteMatching({ before: Date.now(), provider: 'Codex' }, { confirm, beforeRemove });
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
     expect(confirm.mock.calls[0]![0].conversations).toHaveLength(2);
     expect(f.remove).not.toHaveBeenCalled();
@@ -42,12 +43,21 @@ describe('Native conversation cleanup', () => {
     const state = await job;
     expect(state.result).toMatchObject({ removed: [], cancelled: true });
     expect(state.conversations).toHaveLength(2); expect(f.remove).not.toHaveBeenCalled();
+    expect(beforeRemove).not.toHaveBeenCalled();
   });
   it('revalidates transcripts after confirmation before deleting', async () => {
     const f = await fixture(), file = await f.session('Codex', ids[0]!);
     await expect(f.cleaner.deleteSelected([`Codex:${ids[0]}`], Date.now(), { confirm: async () => {
       await writeFile(file, await readFile(file, 'utf8') + '{}\n'); await age(file); return true;
     } })).rejects.toThrow('changed');
+    expect(f.remove).not.toHaveBeenCalled();
+  });
+  it('keeps a transcript that changes while retaining its usage', async () => {
+    const f = await fixture(), file = await f.session('Codex', ids[0]!), key = `Codex:${ids[0]}`;
+    const result = await f.cleaner.deleteSelected([key], Date.now(), { beforeRemove: async () => {
+      await writeFile(file, await readFile(file, 'utf8') + '{}\n'); await age(file);
+    } });
+    expect(result.result).toMatchObject({ removed: [], skipped: [key] });
     expect(f.remove).not.toHaveBeenCalled();
   });
   it('pauses immediately on an error until Skip is chosen', async () => {

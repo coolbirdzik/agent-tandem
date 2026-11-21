@@ -140,10 +140,16 @@ describe('Settings usage dashboard', () => {
     expect(postMessage.mock.lastCall![0].value.filter).toMatchObject({ provider: 'Codex', before: expect.any(Number) });
     const dialog = document.querySelector<HTMLDialogElement>('#native-cleanup-dialog')!;
     expect(dialog.open).toBe(true); expect(document.querySelector('#native-cleanup-scope')!.textContent).toBe('All matching · Codex · last message 30+ days ago');
-    render({ ...value, conversationCleanup: { ...base, status: 'cleaning', dates: { done: 3, total: 10 } } });
+    render({ ...value, conversationCleanup: { ...base, status: 'cleaning', runId: 'cleanup-1' } });
+    const coverage = document.querySelector('#usage-coverage details');
+    const tick = (progress: object, runId = 'cleanup-1') => window.dispatchEvent(new MessageEvent('message', { data: { type: 'conversationCleanupProgress', progress, runId } }));
+    tick({ dates: { done: 3, total: 10 } });
     expect(document.querySelector('#native-cleanup-summary')!.textContent).toContain('Reading message dates · 3 / 10');
-    render({ ...value, conversationCleanup: { ...base, status: 'cleaning', done: 1, total: 2 } });
+    tick({ done: 9, total: 9 }, 'previous-run');
+    expect(document.querySelector('#native-cleanup-summary')!.textContent).toContain('Reading message dates · 3 / 10');
+    tick({ done: 1, total: 2 });
     expect(document.querySelector('#native-cleanup-summary')!.textContent).toContain('Deleting conversations · 1 / 2');
+    expect(document.querySelector('#usage-coverage details')).toBe(coverage);
     expect(document.querySelector('#native-cleanup-close')!.textContent).toBe('Hide');
     render({ ...value, conversationCleanup: { ...base, conversations: [], result: { removed: ['Codex:a'], bytes: 2048, skipped: [], failures: [], titles: { 'Codex:a': 'Old chat' },
       kept: [{ key: 'Codex:b', title: 'Parent chat', reason: 'Has subagent history newer than the cutoff.' }] } } });

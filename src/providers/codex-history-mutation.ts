@@ -3,8 +3,8 @@ import { createInterface } from 'node:readline';
 import os from 'node:os';
 import { terminateProcessTree } from './process';
 
-/** Keep native indexes consistent; unsupported CLIs fail without a filesystem fallback. */
-export async function deleteCodexThread(executable: string, threadId: string,
+/** Keep one native connection for a cleanup run. Only the provider mutates its indexes. */
+export async function openCodexThreadDeletion(executable: string,
   launch: () => ChildProcessWithoutNullStreams = () => spawn(executable, ['app-server'], { cwd: os.homedir(), windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] })) {
   const child = launch(), lines = createInterface({ input: child.stdout });
   child.stderr.on('data', () => undefined);
@@ -27,12 +27,26 @@ export async function deleteCodexThread(executable: string, threadId: string,
   });
   const call = (method: string, params: unknown) => new Promise<void>((resolve, reject) => {
     if (failure) { reject(failure); return; }
-    const id = ++next, timer = setTimeout(() => { pending.delete(id); reject(new Error(`Codex ${method} timed out. Refresh before retrying.`)); }, 30_000);
+    const id = ++next, timer = setTimeout(() => fail(new Error(`Codex ${method} timed out. Refresh before retrying.`)), 30_000);
     pending.set(id, { resolve, reject, timer }); child.stdin.write(JSON.stringify({ id, method, params }) + '\n');
   });
+  const close = async () => { fail(new Error('Deletion transport closed.')); lines.close(); await terminateProcessTree(child); };
   try {
     await call('initialize', { clientInfo: { name: 'agent_tandem', version: '1.0.0' }, capabilities: { experimentalApi: true } });
     child.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
-    await call('thread/delete', { threadId });
-  } finally { fail(new Error('Deletion transport closed.')); lines.close(); await terminateProcessTree(child); }
+    return {
+      get failed() { return !!failure; },
+      delete: (threadId: string) => call('thread/delete', { threadId }),
+      close,
+    };
+  } catch (error) {
+    await close().catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function deleteCodexThread(executable: string, threadId: string, launch?: () => ChildProcessWithoutNullStreams) {
+  const client = await openCodexThreadDeletion(executable, launch);
+  try { await client.delete(threadId); }
+  finally { await client.close(); }
 }

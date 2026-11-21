@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
+import type { ConversationCleanupProgress } from '../core/conversation-cleanup';
 import type { StorageProgress } from '../core/storage';
 import type { UsageDashboardState } from '../core/usage-dashboard';
 import { settingsHtml } from './settings-html';
@@ -54,6 +55,9 @@ export class SettingsView implements vscode.Disposable {
   }
   updateStorageProgress(token: string, progress: StorageProgress) {
     void this.panel?.webview.postMessage({ type: 'storageProgress', token, progress });
+  }
+  updateConversationCleanupProgress(runId: string, progress: ConversationCleanupProgress) {
+    void this.panel?.webview.postMessage({ type: 'conversationCleanupProgress', runId, progress });
   }
   dispose() { this.panel?.dispose(); for (const item of this.subscriptions.splice(0)) item.dispose(); }
 }

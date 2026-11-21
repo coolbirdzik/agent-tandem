@@ -74,6 +74,21 @@ describe('Keeping tokens of deleted transcripts', () => {
     return { root, homes, cache, sessions: path.join(homes.codex, 'sessions') };
   };
   const total = (data: Awaited<ReturnType<UsageHistory['read']>>) => usageBreakdown(data.days, { grouping: 'day' }).totals.total;
+  it('retains an approved transcript without aggregating unrelated history', async () => {
+    const f = await setup(), kept = path.join(f.sessions, 'kept.jsonl'), other = path.join(f.sessions, 'other.jsonl');
+    try {
+      await writeFile(kept, rollout('kept', 'r-kept', 100, 20));
+      await writeFile(other, rollout('other', 'r-other', 200, 40));
+      const history = new UsageHistory(f.homes, undefined, f.cache);
+      await history.retainTranscripts('Codex', [kept]);
+      expect(history.readStats).toBeUndefined();
+      expect(await history.cacheStats()).toMatchObject({ files: 1, retainedFiles: 0 });
+      await rm(kept);
+      const data = await new UsageHistory(f.homes, undefined, f.cache).read();
+      expect(total(data)).toBe(360);
+      expect(data.retained).toEqual({ conversations: 1, tokens: 120 });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
   it('keeps counting a deleted transcript across reloads until the kept counts are purged', async () => {
     const f = await setup();
     try {

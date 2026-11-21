@@ -72,9 +72,9 @@ import { DesktopAccounts, desktopExecutable, windowsAntigravityCredential } from
 import { spawn as launchDesktopProcess } from 'node:child_process';
 import { withStorageLock } from './core/storage-lock';
 import { StorageManager, storageView, type StorageState, type CleanupPlan, type HistoryDeletionPlan, type StorageProgress } from './core/storage';
-import { ConversationCleanup, type ConversationCleanupState, type DeletionProgress } from './core/conversation-cleanup';
+import { ConversationCleanup, type ConversationCleanupProgress, type ConversationCleanupState, type DeletionProgress } from './core/conversation-cleanup';
 import { conversationCleanupPrompts } from './host/conversation-cleanup-prompts';
-import { deleteCodexThread } from './providers/codex-history-mutation';
+import { openCodexThreadDeletion } from './providers/codex-history-mutation';
 import { addFreed, storageFreed } from './core/storage-freed';
 import { configureDiffWorker, disposeDiffWorker } from './core/diff-async';
 import { antivirusExclusionCommand, antivirusTip, antivirusTipActions, windowsSecurityUrl, type AntivirusTipAction } from './core/antivirus';
@@ -262,12 +262,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before deleting native conversation history.');
     if (chatAbort || reviewing || externalSwitching || state.running || cliManaging) throw new Error('Wait for the active agent to finish before deleting conversations.');
   };
+  let codexDeletion: Awaited<ReturnType<typeof openCodexThreadDeletion>> | undefined;
   const conversationCleanup = new ConversationCleanup(async row => {
     assertConversationCleanupIdle();
     if (row.provider === 'Codex') {
-      const selection = await managedCLI('Codex', state.project);
+      if (codexDeletion?.failed) { await codexDeletion.close(); codexDeletion = undefined; }
+      if (!codexDeletion) {
+        const selection = await managedCLI('Codex', state.project);
+        assertConversationCleanupIdle();
+        codexDeletion = await openCodexThreadDeletion(selection.cli.executable);
+      }
       assertConversationCleanupIdle();
-      await deleteCodexThread(selection.cli.executable, row.id);
+      await codexDeletion.delete(row.id);
     } else {
       const sdk = await nativeImport(pathToFileURL(path.join(context.extensionUri.fsPath, 'dist/claude-history.mjs')).href);
       if (!sdk.deleteSession) throw new Error('The Claude SDK does not support session deletion.');
@@ -936,14 +942,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     })();
     return storageUsageJob;
   }
-  const conversationCleanupAction = async (operation: () => Promise<ConversationCleanupState>, cleaning = false) => {
+  const conversationCleanupAction = async (operation: () => Promise<ConversationCleanupState>, runId?: string) => {
     if (conversationCleanupJob) throw new Error('Wait for conversation cleanup to finish.');
     conversationCleanupJob = true;
-    conversationCleanupState = { ...conversationCleanupState, status: cleaning ? 'cleaning' : 'loading', error: undefined, plan: undefined, dates: undefined, done: 0, total: conversationCleanupState.plan?.conversations.length };
+    conversationCleanupState = { ...conversationCleanupState, status: runId ? 'cleaning' : 'loading', runId, error: undefined, plan: undefined, dates: undefined, done: 0, total: undefined };
     settings.update();
     try {
       await stopConversationDates();
-      if (cleaning) {
+      if (runId) {
         // Let a sync already in flight finish; no new one starts until deletion ends.
         conversationDeleting = true; await syncJob?.catch(() => undefined);
         assertConversationCleanupIdle();
@@ -960,23 +966,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.previewConversationCleanup', value => conversationCleanupAction(() => conversationCleanup.preview((value as { keys?: unknown } | undefined)?.keys)));
   register('agentTandem.deleteConversations', async value => {
     const request = value as { token?: unknown; keys?: unknown; before?: unknown; filter?: unknown } | undefined;
-    // Token counts outlive the transcripts, so cache the latest turns before they go.
-    await usageHistory.read().catch(() => undefined);
+    const runId = randomUUID();
+    let progressAt = 0;
+    const sendProgress = (tick: ConversationCleanupProgress, force = false) => {
+      Object.assign(conversationCleanupState, tick);
+      const now = performance.now();
+      if (force || now - progressAt >= 200) { progressAt = now; settings.updateConversationCleanupProgress(runId, tick); }
+    };
     const progress: DeletionProgress = {
       ...conversationCleanupPrompts(request ?? {}),
       signal: conversationCleanupDisposed.signal,
-      dates: dates => { conversationCleanupState = { ...conversationCleanupState, dates }; settings.update(); },
-      deleting: (done, total) => { conversationCleanupState = { ...conversationCleanupState, dates: undefined, done, total }; settings.update(); }
+      beforeRemove: row => usageHistory.retainTranscripts(row.provider, row.files.map(file => file.path), conversationCleanupDisposed.signal),
+      dates: dates => sendProgress({ dates }),
+      deleting: (done, total) => sendProgress({ dates: undefined, done, total }, done === 0 || done === total),
     };
-    await conversationCleanupAction(() => withStorageLock(storage.root, () => request?.filter !== undefined
-      ? conversationCleanup.deleteMatching(request.filter, progress)
-      : request?.keys !== undefined
-        ? conversationCleanup.deleteSelected(request.keys, request.before, progress)
-        : conversationCleanup.delete(request?.token, progress)), true);
+    await conversationCleanupAction(() => withStorageLock(storage.root, async () => {
+      try {
+        if (request?.filter !== undefined) return await conversationCleanup.deleteMatching(request.filter, progress);
+        if (request?.keys !== undefined) return await conversationCleanup.deleteSelected(request.keys, request.before, progress);
+        return await conversationCleanup.delete(request?.token, progress);
+      } finally {
+        const client = codexDeletion; codexDeletion = undefined;
+        await client?.close().catch(report);
+      }
+    }), runId);
     const deleted = conversationCleanupState.result;
-    if (deleted) await recordFreed({ bytes: deleted.bytes, conversations: deleted.removed.length });
-    await syncConversations().catch(report);
-    await vscode.commands.executeCommand('agentTandem.refreshUsageDashboard');
+    if (deleted && (deleted.removed.length || deleted.failures.length)) {
+      // A usage read that started before deletion can still contain the old transcript list.
+      const refreshAfterDeletion = async () => { await usageJob; await refreshUsageDashboard(); };
+      await Promise.all([
+        recordFreed({ bytes: deleted.bytes, conversations: deleted.removed.length }),
+        syncConversations(true).catch(report),
+        refreshAfterDeletion(),
+      ]);
+    }
   });
   // Keep frequent ticks off the full dashboard render. The latest tick is also in state for a reopened webview.
   let storageProgressAt = 0;
