@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, utimes, rm, lstat, symlink, readdir, link } from 'node:fs/promises';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, readFile, writeFile, utimes, rm, lstat, symlink, readdir, link, unlink } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,6 +9,11 @@ import { ReviewStore } from '../src/core/review';
 import { HistoryStore } from '../src/core/history';
 import { CheckpointStore } from '../src/core/checkpoints';
 import { withStorageLock } from '../src/core/storage-lock';
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, unlink: vi.fn(fs.unlink) };
+});
 
 const folders: string[] = [];
 afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
@@ -527,6 +533,41 @@ describe('Automatic review cleanup', () => {
     expect((await f.checkpoints.undo(f.project))?.id).toBeTruthy();
     expect(await readFile(path.join(f.root, 'attachments', 'note.txt'), 'utf8')).toBe('attached');
     expect(await exists(path.join(f.reviews.history.directory, 'snapshots', `${backup.id}.json`))).toBe(true);
+  });
+  it('removes unlocked files before retrying temporarily locked files in a large cleanup', async () => {
+    const f = await fixture();
+    const dir = path.join(f.reviews.history.directory, 'blobs');
+    await mkdir(dir, { recursive: true });
+    const files = Array.from({ length: 18 }, (_, index) => path.join(dir, index.toString(16).padStart(64, '0')));
+    await Promise.all(files.map(file => writeFile(file, 'blob')));
+    await f.age();
+    const plan = await f.manager.preview(), locked = new Set(files.slice(0, 16)), stuck = files[0]!, changed = files.at(-1)!;
+    const original = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const attempts = new Map<string, number>();
+    let unlockedRemoved = false, retriedEarly = false;
+    vi.mocked(unlink).mockImplementation(async target => {
+      const file = String(target);
+      if (locked.has(file)) {
+        const count = (attempts.get(file) ?? 0) + 1;
+        attempts.set(file, count);
+        if (count > 1 && !unlockedRemoved) retriedEarly = true;
+        if (count === 1 || file === stuck) throw Object.assign(new Error('file is in use'), { code: 'EBUSY' });
+      }
+      await original.unlink(target);
+      if (file === files[16]) unlockedRemoved = true;
+    });
+    try {
+      const result = await f.manager.cleanup(plan, progress => {
+        if (progress.phase === 'removing' && progress.done === 0) writeFileSync(changed, 'new contents after reference check');
+      });
+      expect(result).toMatchObject({ removed: 16, skipped: 1, bytes: 64 });
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain('file is in use');
+      expect(retriedEarly).toBe(false);
+      expect(attempts.get(stuck)).toBe(3);
+      expect(await readFile(changed, 'utf8')).toBe('new contents after reference check');
+      expect((await readdir(dir)).sort()).toEqual([path.basename(stuck), path.basename(changed)]);
+    } finally { vi.mocked(unlink).mockRestore(); }
   });
   it('works in passes of a bounded size and never ages below the safety margin', async () => {
     const f = await fixture(); for (const text of ['one', 'two']) await f.orphan(f.reviews.history, text); await f.age();

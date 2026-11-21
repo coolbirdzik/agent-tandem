@@ -48,6 +48,9 @@ export interface AutoCleanResult extends CleanupResult { remaining: number }
 export interface StorageLimitResult extends HistoryDeletionResult { total: number; limitReached: boolean; remaining: boolean }
 // Automatic cleanup waits far longer than the manual one: it runs unattended.
 const autoCleanAge = 60 * 60 * 1000, autoCleanBatch = 3000, removeConcurrency = 16, scanConcurrency = 32;
+const retryRemoval = (error: unknown) => ['EBUSY', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '');
+const sameStoredFile = (current: StoredFile | undefined, file: StoredFile) => current?.bytes === file.bytes &&
+  current.modified === file.modified && current.changed === file.changed && current.inode === file.inode;
 /** Deletion progress: reference checks and history edits are indeterminate; removal counts approved files. */
 export interface StorageProgress { phase: 'checking' | 'history' | 'removing' | 'refreshing'; done: number; total: number; bytes: number; totalBytes: number }
 export type StorageProgressListener = (progress: StorageProgress) => void;
@@ -447,10 +450,7 @@ export class StorageManager {
         updates.push({ relative: edit.relative, value: records, removed: saved.length - records.length, untracked: false });
       }
       const overrides = new Map(updates.map(edit => [edit.relative, edit.value]));
-      const released = new Set(plan.files.filter(file => {
-        const current = byPath.get(file.relative);
-        return current && ['bytes', 'modified', 'changed', 'inode'].every(key => current[key as keyof StoredFile] === file[key as keyof StoredFile]);
-      }).map(file => file.relative));
+      const released = new Set(plan.files.filter(file => sameStoredFile(byPath.get(file.relative), file)).map(file => file.relative));
       // Validate every reference before removing any checkpoint. Shared blobs stay protected.
       await this.candidates(inventory, Date.now(), overrides, released, true);
       const result: HistoryDeletionResult = { removed: 0, bytes: 0, skipped: 0, failures: [], checkpointsRemoved: 0, trackingStopped: 0 };
@@ -617,41 +617,63 @@ export class StorageManager {
       const report = () => onProgress?.({ phase: 'removing', done: result.removed + result.skipped + result.failures.length, total: approved.length, bytes: result.bytes, totalBytes });
       report();
       let unsafe = false;
-      const folders = new Map<string, Promise<void>>();
-      const realFolder = async (full: string) => { const info = await lstat(full); if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('Linked path was kept.'); };
-      const removeOne = async (file: StoredFile) => {
+      const folders = new Map<string, Promise<string>>();
+      const checkedFolder = (relative: string): Promise<string> => {
+        let checked = folders.get(relative);
+        if (!checked) {
+          checked = (async () => {
+            const full = relative === '.' ? this.root : path.join(await checkedFolder(path.posix.dirname(relative)), path.posix.basename(relative));
+            const info = await lstat(full);
+            if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('Linked path was kept.');
+            return full;
+          })();
+          folders.set(relative, checked);
+        }
+        return checked;
+      };
+      const removeOne = async (file: StoredFile, isBlob: boolean, retry?: StoredFile[]) => {
         // A manifest (or other non-blob file) that could not be removed may still name these blobs, so then no blob
         // goes. A blob that fails names nothing: the other blobs still go, so one locked file cannot keep gigabytes.
-        const isBlob = file.relative.includes('blobs/');
         if (unsafe && isBlob) { result.skipped++; report(); return; }
-        const current = fresh.get(file.relative);
-        if (!current || ['bytes', 'modified', 'changed', 'inode'].some(key => current[key as keyof StoredFile] !== file[key as keyof StoredFile])) { result.skipped++; report(); return; }
+        if (!sameStoredFile(fresh.get(file.relative), file)) { result.skipped++; report(); return; }
         try {
           assertPath(file.relative);
-          // Every folder on the way must be a real folder, not a link. 160,000 blobs share the same three, so each
-          // folder is checked once per run (the storage lock is held); the file itself is checked every time.
-          const parts = file.relative.split('/'), name = parts.pop()!;
-          let full = this.root;
-          for (const part of parts) { full = path.join(full, part); await (folders.get(full) ?? folders.set(full, realFolder(full)).get(full)); }
-          full = path.join(full, name);
-          const info = await lstat(full); if (info.isSymbolicLink() || (info.isFile() && info.nlink > 1)) throw new Error('Linked path was kept.');
-          // Antivirus scanners and indexers briefly hold files open on Windows; retry those before giving up.
-          for (let attempt = 0; ; attempt++) {
-            try { await unlink(full); break; }
-            catch (error) { if (attempt >= 2 || !['EBUSY', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1))); }
+          // Shared parent folders are checked once per pass while the storage lock is held.
+          const directory = await checkedFolder(path.posix.dirname(file.relative));
+          const full = path.join(directory, path.posix.basename(file.relative));
+          const info = await lstat(full);
+          if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1) throw new Error('Unsafe path was kept.');
+          if (info.size !== file.bytes || info.mtimeMs !== file.modified || info.ctimeMs !== file.changed || info.ino !== file.inode) {
+            if (!isBlob) unsafe = true;
+            result.skipped++;
+          } else {
+            await unlink(full);
+            result.removed++; result.bytes += file.bytes;
           }
-          result.removed++; result.bytes += file.bytes;
-        } catch (error) { if (!isBlob) unsafe = true; result.failures.push(`${file.relative}: ${error instanceof Error ? error.message : String(error)}`); }
+        } catch (error) {
+          if (retry && retryRemoval(error)) { retry.push(file); return; }
+          if (!isBlob) unsafe = true;
+          result.failures.push(`${file.relative}: ${error instanceof Error ? error.message : String(error)}`);
+        }
         report();
       };
       // A full review cleanup removes 100,000+ files; one at a time that takes minutes. Manifests and other files go
       // first and must all finish before any blob is touched.
-      const pool = async (files: StoredFile[]) => {
-        let next = 0;
-        await Promise.all(Array.from({ length: Math.min(removeConcurrency, files.length) }, async () => { while (next < files.length) await removeOne(files[next++]!); }));
+      const pool = async (files: StoredFile[], isBlob: boolean) => {
+        for (let attempt = 0; files.length; attempt++) {
+          // Retry after the first pass so antivirus locks don't tie up all deletion slots.
+          if (attempt) { await new Promise(resolve => setTimeout(resolve, 100 * attempt)); folders.clear(); }
+          const retries: StoredFile[] = [];
+          let next = 0;
+          await Promise.all(Array.from({ length: Math.min(removeConcurrency, files.length) }, async () => {
+            while (next < files.length) await removeOne(files[next++]!, isBlob, attempt < 2 ? retries : undefined);
+          }));
+          files = retries;
+        }
       };
       const blob = (file: StoredFile) => file.relative.includes('blobs/');
-      await pool(approved.filter(file => !blob(file))); await pool(approved.filter(blob));
+      await pool(approved.filter(file => !blob(file)), false);
+      await pool(approved.filter(blob), true);
       return result;
   }
 }

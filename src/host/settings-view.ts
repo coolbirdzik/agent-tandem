@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
+import type { StorageProgress } from '../core/storage';
 import type { UsageDashboardState } from '../core/usage-dashboard';
 import { settingsHtml } from './settings-html';
 import { webviewResource } from './webview-resource';
@@ -50,6 +51,9 @@ export class SettingsView implements vscode.Disposable {
     if (!force && signature === this.lastUpdate && state.data === this.lastData) return;
     this.lastUpdate = signature; this.lastData = state.data;
     void this.panel.webview.postMessage({ type: 'state', state });
+  }
+  updateStorageProgress(token: string, progress: StorageProgress) {
+    void this.panel?.webview.postMessage({ type: 'storageProgress', token, progress });
   }
   dispose() { this.panel?.dispose(); for (const item of this.subscriptions.splice(0)) item.dispose(); }
 }

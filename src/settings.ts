@@ -1441,7 +1441,8 @@ const storageStepHints: Partial<Record<StoragePhase, string>> = {
   refreshing: 'Measuring what is left.',
 };
 /** One deletion as the user sees it. Steps never move backwards: deletion checks references again after editing history. */
-interface StorageRun { token: string; reached: number; phase: string; phaseAt: number; removingAt?: number; progress: StorageTick }
+interface RemovalSample { at: number; done: number }
+interface StorageRun { token: string; reached: number; phase: string; phaseAt: number; samples: RemovalSample[]; progress: StorageTick }
 const storageRuns: Partial<Record<StoragePrefix, StorageRun>> = {};
 /** The pending-review choice made in a "Clean all" preview whose replacement is still being prepared. */
 let pendingDiscard: { token: string; checked: boolean } | undefined;
@@ -1465,8 +1466,12 @@ function renderStorageCounts(prefix: StoragePrefix) {
   let text: string;
   if (counted) {
     text = `${Math.round(progress.done / progress.total * 100)}% · ${progress.done.toLocaleString()} / ${progress.total.toLocaleString()} files · ${fileSize(progress.bytes)} of ${fileSize(progress.totalBytes)} freed`;
-    const elapsed = now - (run.removingAt ?? run.phaseAt);
-    if (progress.phase === 'removing' && progress.done > 0 && progress.done < progress.total && elapsed > 3000) text += ` · about ${duration((progress.total - progress.done) * elapsed / progress.done)} left`;
+    const first = run.samples[0], latest = run.samples.at(-1);
+    if (progress.phase === 'removing' && progress.done < progress.total && first && latest) {
+      const elapsed = latest.at - first.at, processed = latest.done - first.done;
+      if (now - latest.at >= 8000) text += ` · no new files processed for ${duration(now - latest.at)}`;
+      else if (elapsed >= 3000 && processed > 0) text += ` · about ${duration((progress.total - progress.done) * elapsed / processed)} left`;
+    }
   } else text = `${progress.total ? `${progress.total.toLocaleString()} files · ${fileSize(progress.totalBytes)} · ` : ''}${duration(now - run.phaseAt)}`;
   const count = el(`${prefix}-progress-count`); if (count.textContent !== text) count.textContent = text;
 }
@@ -1478,12 +1483,16 @@ function renderStorageProgress(prefix: StoragePrefix, storage: UsageDashboardSta
   if (!progress || !plan) { delete storageRuns[prefix]; syncStorageTicker(); return; }
   const steps = storageSteps[prefix], index = Math.max(0, steps.indexOf(progress.phase)), now = Date.now();
   let run = storageRuns[prefix];
-  if (!run || run.token !== plan.token) run = storageRuns[prefix] = { token: plan.token, reached: 0, phase: '', phaseAt: now, progress };
+  if (!run || run.token !== plan.token) run = storageRuns[prefix] = { token: plan.token, reached: 0, phase: '', phaseAt: now, samples: [], progress };
   const again = index < run.reached;
   run.reached = Math.max(run.reached, index); run.progress = progress;
   const key = `${progress.phase}:${again}`;
   if (run.phase !== key) { run.phase = key; run.phaseAt = now; }
-  if (progress.phase === 'removing') run.removingAt ??= now;
+  if (progress.phase === 'removing' && progress.done !== run.samples.at(-1)?.done) {
+    if (now - (run.samples.at(-1)?.at ?? now) >= 8000) run.samples = [];
+    run.samples.push({ at: now, done: progress.done });
+    while (run.samples.length > 1 && run.samples[0]!.at < now - 12000) run.samples.shift();
+  }
   const list = el(`${prefix}-progress-steps`);
   if (list.childElementCount !== steps.length) list.replaceChildren(...steps.map(step => { const item = node('li'); item.append(node('span', undefined, 'storage-step-mark'), node('span', storageStepLabels[step])); return item; }));
   [...list.children].forEach((item, i) => { (item as HTMLElement).dataset.state = i < run.reached ? 'done' : i === run.reached ? 'active' : 'pending'; });
@@ -1727,6 +1736,10 @@ function renderPreviewWait(storage: UsageDashboardState['storage']) {
   tick(); previewWaitTicker ??= setInterval(tick, 1000);
   if (shown) box.scrollIntoView?.({ block: 'nearest' });
 }
+function renderStorageStatus(storage: UsageDashboardState['storage']) {
+  const removing = storage?.status === 'cleaning' && storage.progress?.phase === 'removing' ? storage.progress : undefined;
+  el('storage-status').textContent = removing ? `Removing selected storage data · ${removing.done} / ${removing.total} files…` : storage?.status === 'cleaning' ? 'Removing selected storage data…' : !storage || ['idle', 'loading'].includes(storage.status) ? 'Reading AgentTandem storage…' : 'Stored locally on this machine.';
+}
 function renderStorage(storage: UsageDashboardState['storage']) {
   renderPreviewWait(storage);
   if (storage?.historyPlan && storage.historyPlan.token !== historyPreviewToken) storagePage('restore');
@@ -1736,8 +1749,7 @@ function renderStorage(storage: UsageDashboardState['storage']) {
   const busy = !storage || ['idle', 'loading', 'cleaning'].includes(storage.status);
   el('storage').setAttribute('aria-busy', String(busy));
   el('storage-path').textContent = storage?.root ?? 'Available when connected to the extension';
-  const removing = storage?.status === 'cleaning' && storage.progress?.phase === 'removing' ? storage.progress : undefined;
-  el('storage-status').textContent = removing ? `Removing selected storage data · ${removing.done} / ${removing.total} files…` : storage?.status === 'cleaning' ? 'Removing selected storage data…' : busy ? 'Reading AgentTandem storage…' : 'Stored locally on this machine.';
+  renderStorageStatus(storage);
   const error = storage?.error ?? storage?.cleanupBlocked;
   el('storage-error').hidden = !error; el('storage-error').textContent = error ?? '';
   el<HTMLButtonElement>('storage-refresh').disabled = !!storage && ['loading', 'cleaning'].includes(storage.status);
@@ -1965,6 +1977,15 @@ function render(value: UsageDashboardState) {
 }
 window.addEventListener('message', event => {
   if (event.data?.type === 'state') render(event.data.state);
+  if (event.data?.type === 'storageProgress') {
+    const storage = state?.storage, { token, progress } = event.data;
+    const history = storage?.historyPlan?.token === token;
+    if (storage?.status === 'cleaning' && typeof token === 'string' && (history || storage.plan?.token === token)) {
+      storage.progress = progress;
+      renderStorageProgress(history ? 'storage-history' : 'storage-cleanup', storage, true);
+      renderStorageStatus(storage);
+    }
+  }
   if (event.data?.type === 'dashboard') page('dashboard');
   if (event.data?.type === 'page' && ['storage', 'accounts'].includes(event.data.page)) {
     if (event.data.page === 'storage' && ['unused', 'restore'].includes(event.data.storagePage)) currentStoragePage = event.data.storagePage;

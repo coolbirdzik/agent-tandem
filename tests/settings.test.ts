@@ -1037,6 +1037,37 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector<HTMLElement>('#storage-history-progress')!.hidden).toBe(true);
     expect(document.querySelector('#storage-result .storage-done')!.textContent).toBe('4.0 KB freed');
   });
+  it('uses recent storage progress for the ETA without rerendering usage', () => {
+    vi.useFakeTimers();
+    try {
+      const plan = { token: 'approved', createdAt: Date.now(), files: [], bytes: 100 };
+      render({ ...value, storage: { status: 'cleaning', root: 'root', plan } });
+      const count = document.querySelector('#storage-cleanup-progress-count')!;
+      const coverage = document.querySelector('#usage-coverage details');
+      const tick = (done: number, token = plan.token) => window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'storageProgress', token, progress: { phase: 'removing', done, total: 100, bytes: done, totalBytes: 100 },
+      } }));
+      tick(0);
+      vi.advanceTimersByTime(4000);
+      tick(20);
+      expect(count.textContent).toContain('20 / 100 files');
+      expect(count.textContent).toContain('about 16 s left');
+      tick(99, 'old-preview');
+      expect(count.textContent).toContain('20 / 100 files');
+      expect(document.querySelector('#usage-coverage details')).toBe(coverage);
+      vi.advanceTimersByTime(8000);
+      expect(count.textContent).toContain('no new files processed for 8 s');
+      expect(count.textContent).not.toContain('left');
+      tick(30);
+      expect(count.textContent).not.toContain('left');
+      vi.advanceTimersByTime(4000);
+      tick(70);
+      expect(count.textContent).toContain('about 3 s left');
+      render(value);
+      tick(100);
+      expect(document.querySelector<HTMLElement>('#storage-cleanup-progress')!.hidden).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
   it('renders untrusted history labels as text and disables history deletion on unreadable metadata', () => {
     const histories = [{ id: 'one', projectId: 'one', project: 'project', label: '<img src=x onerror=alert(1)>', kind: 'checkpoints' as const, count: 1, bytes: 1, reclaimable: 1, createdAt: 1, updatedAt: 2 }];
     render({ ...value, storage: { status: 'ready', root: 'root', histories } });

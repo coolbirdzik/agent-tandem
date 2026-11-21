@@ -11,6 +11,17 @@ vi.mock('vscode', () => ({
 import { SettingsView } from '../src/host/settings-view';
 
 describe('Settings host updates', () => {
+  it('posts storage progress without reading or serializing the dashboard state', () => {
+    const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } };
+    const getState = vi.fn(() => state);
+    const view = new SettingsView({} as any, getState, vi.fn(), vi.fn()); view.open('storage');
+    const progress = { phase: 'removing' as const, done: 1, total: 10, bytes: 512, totalBytes: 4096 };
+    host.post.mockClear(); getState.mockClear();
+    view.updateStorageProgress('approved', progress);
+    expect(host.post).toHaveBeenCalledExactlyOnceWith({ type: 'storageProgress', token: 'approved', progress });
+    expect(getState).not.toHaveBeenCalled();
+    view.dispose();
+  });
   it('routes native conversation cleanup and publishes preview and progress changes', async () => {
     const state: UsageDashboardState = { status: 'ready', preferences: { grouping: 'day', showQuotaInStatusBar: true } }, invoke = vi.fn();
     const view = new SettingsView({} as any, () => state, invoke, vi.fn()); view.open();

@@ -978,12 +978,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
     await syncConversations().catch(report);
     await vscode.commands.executeCommand('agentTandem.refreshUsageDashboard');
   });
-  // Each update posts the whole dashboard state, so per-file ticks are throttled; phase changes and the last file always render.
+  // Keep frequent ticks off the full dashboard render. The latest tick is also in state for a reopened webview.
   let storageProgressAt = 0;
   const storageProgress = (progress: StorageProgress) => {
-    storageState = { ...storageState, progress };
-    if (progress.phase === 'removing' && progress.done && progress.done < progress.total && Date.now() - storageProgressAt < 200) return;
-    storageProgressAt = Date.now(); settings.update();
+    storageState.progress = progress;
+    const now = performance.now();
+    if (progress.phase === 'removing' && progress.done && progress.done < progress.total && now - storageProgressAt < 200) return;
+    storageProgressAt = now;
+    const token = storageState.historyPlan?.token ?? storageState.plan?.token;
+    if (token) settings.updateStorageProgress(token, progress);
   };
   // Review data nothing refers to any more (for example after changes were accepted) is removed without asking.
   // Token usage history, restore points, accounts and attachments are never part of it.
