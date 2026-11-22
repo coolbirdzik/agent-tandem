@@ -13,6 +13,7 @@ Historical release dates and boundaries are reconstructed from package version c
 - Open saved Codex and Claude Code transcripts from the expanded **Subagents** section. Select **Back** to return to the parent chat.
 - Use keyboard shortcuts to focus chat, start a conversation, search history, pick a changed file, or open Quick Accounts. Chat, Review, and account picker hints show platform-specific keycaps.
 - Edit changed text in Review and select **Save edits** to write it to the workspace. You can still accept or reject the saved edits.
+- The dashboard's breakdown by model has a **Weekly quota (est.)** column showing about how much quota each model and period used. In a 5-hour or weekly cycle it shows that window, and hovering a value also shows the other window. It converts tokens with the account's observed tokens per 1%, so it is an estimate that treats every model alike. It shows `—` when several accounts share the history or no quota rate has been measured yet, and `≥` when some models in a period cannot be counted.
 
 ### Changed
 

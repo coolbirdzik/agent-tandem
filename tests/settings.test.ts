@@ -802,6 +802,49 @@ describe('Settings usage dashboard', () => {
     expect(document.querySelector('.quota-estimate-note details[open]')).toBeNull();
     expect(document.querySelector('.quota-estimate-note')?.tagName).toBe('DETAILS');
   });
+  describe('quota estimate in the model breakdown', () => {
+    const now = Date.parse('2026-10-13T06:00:00Z');
+    const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };
+    const accountId = usageAccount('Codex', identity)!.id;
+    const setup = (days: UsageDay[], attributed = false) => {
+      vi.spyOn(Date, 'now').mockReturnValue(now);
+      const account = { status: 'ready' as const, account: identity, updatedAt: now,
+        quota: { status: 'available' as const, windows: [{ id: 'weekly', label: '7d', usedPercent: 20, resetsAt: now + 86400000 }] } };
+      const sample: QuotaObservation = { provider: 'Codex', accountId, plan: 'plus', label: 'Weekly', source: 'Device', deviceVersion: 2,
+        from: now - 13 * 86400000, resetsAt: now - 6 * 86400000, to: now - 7 * 86400000, observedTokens: 500000, usedPercent: 20 };
+      // Natively attributed tokens give a Local rate (1,000,000 over 20 points); unattributed ones only a Device rate.
+      render({ ...value, data: { ...value.data!, days, updatedAt: now, recent: [{ provider: 'Codex', timestamp: now - 60000, total: 1000000, ...(attributed ? { accountId } : {}) }] },
+        accounts: { Codex: account }, ...(attributed ? {} : { quotaHistory: [sample] }) });
+      choose('filter-range', 'all');
+    };
+    const cells = () => [...document.querySelectorAll<HTMLElement>('#period-breakdown tr.model-row .quota-share-cell')].map(cell => cell.textContent);
+    it('shows the quota percentage each model burned, at the account\'s tokens per 1%', () => {
+      setup([row('2026-10-13', 'Codex', 'codex-model', 375000), row('2026-10-13', 'Codex', 'codex-small', 75000)]);
+      // 1,500,000 tokens over 40 quota points = 37,500 tokens per 1%.
+      expect(document.querySelector('#period-breakdown thead')!.textContent).toContain('Weekly quota (est.)');
+      expect(cells()).toEqual(['10%', '2%']);
+      expect(document.querySelector('#period-breakdown tr.period-row .quota-share-cell')!.textContent).toBe('12%');
+      expect(document.querySelector('#period-breakdown tr.model-row .quota-share-cell')!.getAttribute('title')).toContain('not measured per model');
+    });
+    it('marks models without a usable rate and tiny shares', () => {
+      setup([row('2026-10-13', 'Codex', 'codex-model', 375), row('2026-10-13', 'Claude', 'claude-model', 100000)]);
+      expect(cells().sort()).toEqual(['<0.1%', '—'].sort());
+      expect(document.querySelector('#period-breakdown tr.period-row .quota-share-cell')!.textContent).toBe('≥ <0.1%');
+    });
+    it('estimates from one natively attributed account, but not once attribution is inferred', () => {
+      const mine = usageAccount('Codex', identity)!;
+      setup([{ ...row('2026-10-13', 'Codex', 'codex-model', 375000), account: mine }], true);
+      expect(cells()).toEqual(['7.5%']);
+      expect(document.querySelector('#period-breakdown tr.model-row .quota-share-cell')!.getAttribute('title')).toContain('Local estimate');
+      setup([{ ...row('2026-10-13', 'Codex', 'codex-model', 375000), account: mine, accountSource: 'inferred' }], true);
+      expect(cells()).toEqual(['—']);
+    });
+    it('hides the estimate when another known account shares the history', () => {
+      const other = usageAccount('Codex', { ...identity, email: 'other@test.invalid' })!;
+      setup([row('2026-10-13', 'Codex', 'codex-model', 375000), { ...row('2026-10-13', 'Codex', 'codex-model', 375000), account: other }]);
+      expect(cells()).toEqual(['—']);
+    });
+  });
   it('plots recent cycles with their figures underneath and lets users show earlier resets', () => {
     const now = Date.parse('2026-10-13T06:00:00Z'); vi.spyOn(Date, 'now').mockReturnValue(now);
     const identity = { signedIn: true, email: 'codex@test.invalid', method: 'ChatGPT', plan: 'plus' };

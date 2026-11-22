@@ -1,12 +1,12 @@
 import { hoverHints } from './ui/hover-hints';
 import { autoHideScrollbars } from './ui/scrollbars';
-import { dashboardAccountGroups, emptyTotals, localDay, modelColorSlots, periodKey, usageBreakdown, type TokenTotals, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
+import { dashboardAccountGroups, emptyTotals, localDay, modelColorSlots, periodKey, usageBreakdown, type TokenTotals, type UsageDay, type UsageDashboardState, type UsageFilters, type UsageGrouping } from './core/usage-dashboard';
 import { emptyApiCost } from './core/api-pricing';
 import { quotaCycleRanges, type QuotaCycleRange, type QuotaCycleWindow } from './core/quota-cycle-ranges';
 import type { ProviderAccountStatus } from './providers/account-status';
 import type { ConversationProvider } from './providers/conversations';
 import { PRICING_CHECKED_AT, PRICING_SOURCES, type ApiCost } from './core/api-pricing';
-import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates, quotaMeters, sameQuotaCycle, quotaObservations, quotaTrends } from './core/quota-estimate';
+import { mergeQuotaObservations, observeQuotaMeters, quotaCycles, quotaEstimates, quotaMeters, sameQuotaCycle, quotaObservations, quotaTrends, type QuotaTrend } from './core/quota-estimate';
 import { UNKNOWN_ACCOUNT, usageAccount, usageAccountLabel, type UsageAccount } from './core/usage-account';
 import { apiActivityBreakdown } from './core/api-token-activity';
 import { quotaBurnDown, quotaPace, quotaTicks, quotaWindowDuration } from './core/quota-pace';
@@ -958,6 +958,19 @@ function renderQuotaPace() {
 function usageFilters(): UsageFilters {
   return { ...localRange(), provider: el<HTMLSelectElement>('filter-provider').value as ConversationProvider || undefined, accountId: el<HTMLSelectElement>('filter-account').value || undefined, model: el<HTMLSelectElement>('filter-model').value || undefined, grouping: usageGrouping() };
 }
+/**
+ * Quota windows whose tokens-per-1% can fairly turn these days' tokens into a quota percentage: the days belong to
+ * one matched account, or the trend is a Device one and no other known account used them.
+ */
+function usableQuotaTrends(provider: ConversationProvider, days: UsageDay[], filters: UsageFilters): QuotaTrend[] {
+  const accountStatus = dashboardAccountStatus(provider), identity = usageAccount(provider, accountStatus?.account);
+  const scoped = { ...filters, provider }, accounts = usageBreakdown(days, scoped).accounts;
+  const matched = accounts.length === 1 && accounts[0]?.account?.id === identity?.id && !!identity;
+  const otherKnownAccount = accounts.some(row => row.account && row.account.id !== identity?.id);
+  const uncertain = usageBreakdown(days.filter(row => !!row.accountSource), scoped).totals.total > 0;
+  return quotaTrends(provider, accountStatus, mergeQuotaObservations(state?.quotaHistory ?? [], scopedQuotaObservations(provider, accountStatus)))
+    .filter(trend => !!trend.tokensPerPercent && ((matched && !uncertain) || (trend.source === 'Device' && !otherKnownAccount)));
+}
 function renderConversations(filters: UsageFilters) {
   const root = el('conversation-breakdown'), query = el<HTMLInputElement>('conversation-search').value.trim().toLowerCase();
   const rows = usageConversations().map(conversation => ({ conversation, result: usageBreakdown(conversation.days, filters), title: state?.conversationTitles?.[conversation.key] || `${conversation.provider} · ${conversation.id === 'unknown' ? 'Unknown conversation' : conversation.id.slice(0, 8)}` }))
@@ -987,18 +1000,11 @@ function renderConversations(filters: UsageFilters) {
   const elapsed = conversation.lastAt - conversation.firstAt;
   const lifetime = usageBreakdown(conversation.days, { grouping: 'day' }).totals.total;
   if (elapsed >= 60000) { const pace = node('span', `≈ ${compact(lifetime / elapsed * 60000)} tokens / min`, 'muted'); pace.title = 'Lifetime average across the full recorded conversation span, including idle time.'; quotaRoot.append(pace); }
-  const accountStatus = dashboardAccountStatus(conversation.provider);
-  for (const trend of quotaTrends(conversation.provider, accountStatus, mergeQuotaObservations(state?.quotaHistory ?? [], scopedQuotaObservations(conversation.provider, accountStatus)))) {
-    const identity = usageAccount(conversation.provider, accountStatus?.account);
-    const matched = result.accounts.length === 1 && result.accounts[0]?.account?.id === identity?.id && !!identity;
-    const otherKnownAccount = result.accounts.some(row => row.account && row.account.id !== identity?.id);
-    const uncertain = conversation.days.some(row => !!row.accountSource && usageBreakdown([row], filters).totals.total > 0);
-    if (trend.tokensPerPercent && ((matched && !uncertain) || (trend.source === 'Device' && !otherKnownAccount))) {
-      const estimate = quotaWindowLabel(`≈ ${number(Math.round(t.total / trend.tokensPerPercent * 10) / 10)}% ${trend.label} equivalent`, 'span', 'muted');
-      estimate.title = `${trend.source} estimate from tokens per 1%. This is not measured per-conversation quota consumption.${trend.source === 'API' ? '' : ' If this account is also used on another device, this percentage reads too high.'}`;
-      if (trend.source !== 'API') estimate.append(node('span', ' · this device only', 'quota-local-flag'));
-      quotaRoot.append(estimate);
-    }
+  for (const trend of usableQuotaTrends(conversation.provider, conversation.days, filters)) {
+    const estimate = quotaWindowLabel(`≈ ${number(Math.round(t.total / trend.tokensPerPercent! * 10) / 10)}% ${trend.label} equivalent`, 'span', 'muted');
+    estimate.title = `${trend.source} estimate from tokens per 1%. This is not measured per-conversation quota consumption.${trend.source === 'API' ? '' : ' If this account is also used on another device, this percentage reads too high.'}`;
+    if (trend.source !== 'API') estimate.append(node('span', ' · this device only', 'quota-local-flag'));
+    quotaRoot.append(estimate);
   }
   table(el('conversation-models'), ['Model', 'Input', 'Output', 'Cache read', 'Tokens', 'API USD'], result.models.map(row => [row.model, row.totals.input, row.totals.output, row.totals.cacheRead, row.totals.total, costLabel(row.cost)]));
   table(el('conversation-days'), ['Period', 'Tokens', 'Requests', 'API USD'], result.periods.map(row => [row.key, row.totals.total, row.totals.requests, costLabel(row.cost)]));
@@ -1152,18 +1158,42 @@ function renderModelLegend(models: ModelRow[], total: number) {
   }
 }
 const periodExpanded = (key: string) => periodsCollapsed ? collapsedPeriods.has(key) : !collapsedPeriods.has(key);
-function renderPeriods(periods: UsageResult['periods']) {
+/** Quota windows the breakdown can convert tokens to, per provider. A provider without an entry has no trustworthy rate. */
+type QuotaRates = Map<ConversationProvider, QuotaTrend[]>;
+const quotaShare = (value: number) => value > 0 && value < 0.05 ? '<0.1%' : percent(value);
+/** One window per table keeps every row to a single value: the cycle's own, otherwise Weekly (5h when no Weekly rate exists). */
+const quotaColumn = (rates: QuotaRates, window: QuotaCycleWindow | undefined): QuotaCycleWindow => window ?? ([...rates.values()].some(trends => trends.some(trend => trend.label === 'Weekly')) ? 'Weekly' : '5h');
+/** Estimated quota percentage burned by these models, using each provider's observed tokens per 1% (never a measured figure). */
+function quotaCell(models: ModelRow[], rates: QuotaRates, label: QuotaCycleWindow) {
+  const cell = node('td', undefined, 'numeric quota-share-cell');
+  const rate = (row: ModelRow, window: QuotaCycleWindow) => rates.get(row.provider)?.find(trend => trend.label === window);
+  const used = models.filter(row => row.totals.total > 0), known = used.filter(row => rate(row, label));
+  if (!known.length) {
+    cell.textContent = '—'; cell.classList.add('quota-none');
+    cell.title = 'No reliable quota rate for this history: it mixes accounts, its account is inferred rather than recorded, or no tokens per 1% has been measured yet.'; return cell;
+  }
+  const burned = (window: QuotaCycleWindow) => known.reduce((sum, row) => sum + row.totals.total / rate(row, window)!.tokensPerPercent!, 0);
+  const partial = known.length < used.length;
+  cell.textContent = `${partial ? '≥ ' : ''}${quotaShare(burned(label))}`;
+  const lines = (['5h', 'Weekly'] as const).filter(window => known.every(row => rate(row, window))).map(window => `${window}: ${quotaShare(burned(window))}`);
+  cell.title = [lines.join(' · '), partial ? 'At least this much: models without a measured rate are not counted.' : '',
+    "Estimated from the account's average tokens per 1% of quota, not measured per model: models can burn quota at different rates per token.",
+    known.some(row => rate(row, label)!.source !== 'API') ? 'Local estimate · if this account is also used on another device, the percentage reads too high.' : ''].filter(Boolean).join('\n');
+  return cell;
+}
+function renderPeriods(periods: UsageResult['periods'], rates: QuotaRates, window: QuotaCycleWindow | undefined) {
+  const quotaLabel = quotaColumn(rates, window);
   const root = el('period-breakdown'); root.replaceChildren();
   const toggleAll = el('period-toggle-all'); toggleAll.textContent = periodsCollapsed ? 'Expand all' : 'Collapse all'; toggleAll.hidden = !periods.length;
   if (!periods.length) { root.append(node('p', 'No recorded usage matches these filters.', 'empty')); return; }
   const table = node('table', undefined, 'period-table'), head = node('thead'), heading = node('tr'), body = node('tbody');
-  ['Period / model', 'Model mix', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD'].forEach((text, index) => { const cell = node('th', text, index >= 2 ? 'numeric' : ''); cell.scope = 'col'; heading.append(cell); });
+  ['Period / model', 'Model mix', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Requests', 'API USD', `${quotaLabel} quota (est.)`].forEach((text, index) => { const cell = node('th', text, index >= 2 ? 'numeric' : ''); cell.scope = 'col'; heading.append(cell); });
   head.append(heading);
-  const numbers = (line: HTMLElement, totals: TokenTotals, cost: ApiCost) => {
+  const numbers = (line: HTMLElement, totals: TokenTotals, cost: ApiCost, models: ModelRow[]) => {
     for (const [value, total] of [[totals.input], [totals.output], [totals.cacheRead], [totals.cacheWrite], [totals.total, true], [totals.requests]] as Array<[number, boolean?]>) {
       const cell = node('td', compact(value), `numeric${total ? ' total-cell' : ''}`); cell.title = number(value); line.append(cell);
     }
-    line.append(node('td', costLabel(cost), 'numeric'));
+    line.append(node('td', costLabel(cost), 'numeric'), quotaCell(models, rates, quotaLabel));
   };
   for (const period of periods) {
     const expanded = periodExpanded(period.key), line = node('tr', undefined, 'period-row'), name = node('td', undefined, 'period-name');
@@ -1174,13 +1204,13 @@ function renderPeriods(periods: UsageResult['periods']) {
     name.append(toggle); line.append(name);
     const mix = node('td', undefined, 'model-mix-cell'), bar = node('div', undefined, 'model-mix'); bar.title = modelLines(period.models);
     for (const row of period.models.slice().sort(bySlot)) { const segment = node('span'); segment.style.background = modelColor(row.key); segment.style.flexGrow = String(row.totals.total); bar.append(segment); }
-    mix.append(bar); line.append(mix); numbers(line, period.totals, period.cost); body.append(line);
+    mix.append(bar); line.append(mix); numbers(line, period.totals, period.cost, period.models); body.append(line);
     if (expanded) for (const row of period.models) {
       const detail = node('tr', undefined, 'model-row'), model = node('td', undefined, 'model-name'), share = period.totals.total ? row.totals.total / period.totals.total * 100 : 0;
       const label = node('div', undefined, 'model-label'); label.append(swatch(row.key), providerIcon(row.provider), node('span', row.model)); model.append(label); model.title = `${row.model} · ${providerName(row.provider)}`;
       const shareCell = node('td', undefined, 'model-share-cell'), wrap = node('div', undefined, 'model-share-wrap'), meter = node('div', undefined, 'model-share'), fill = node('span');
       fill.style.width = `${share}%`; fill.style.background = modelColor(row.key); meter.append(fill); wrap.append(meter, node('small', `${Math.round(share)}%`, 'muted')); shareCell.append(wrap);
-      detail.append(model, shareCell); numbers(detail, row.totals, row.cost); body.append(detail);
+      detail.append(model, shareCell); numbers(detail, row.totals, row.cost, [row]); body.append(detail);
     }
   }
   table.append(head, body); root.append(table);
@@ -1306,7 +1336,9 @@ function renderUsage() {
   const periodsDescending = result.periods.slice().reverse();
   el('period-title').textContent = `${cycleData?.bucket === 'hour' ? 'Hourly' : { day: 'Daily', week: 'Weekly', month: 'Monthly' }[filters.grouping]} breakdown by model`;
   el('period-caption').textContent = cycleData ? `${cycleData.bucket === 'hour' ? 'Hours' : 'Days'} of the selected ${window} cycle in your local timezone · select a period to show or hide its models` : `${filters.grouping === 'week' ? 'Weeks start Monday' : `Calendar ${filters.grouping === 'day' ? 'days' : 'months'} in your local timezone`} · select a period to show or hide its models`;
-  renderPeriods(periodsDescending.slice(0, periodLimit));
+  const quotaRates: QuotaRates = new Map();
+  for (const provider of ['Codex', 'Claude'] as const) if (!filters.provider || filters.provider === provider) { const trends = usableQuotaTrends(provider, usageDays(), filters); if (trends.length) quotaRates.set(provider, trends); }
+  renderPeriods(periodsDescending.slice(0, periodLimit), quotaRates, window);
   if (periodsDescending.length > periodLimit) {
     const more = node('button', `Show ${Math.min(60, periodsDescending.length - periodLimit)} more`, 'quiet'); more.onclick = () => { periodLimit += 60; renderUsage(); }; el('period-breakdown').append(more);
   }

@@ -491,6 +491,8 @@ body.vscode-dark .provider-icon[data-provider=Codex], body.vscode-high-contrast 
 .period-toggle { background: transparent; color: inherit; padding: 2px 4px 2px 0; gap: 6px; font-weight: 600; white-space: nowrap; }
 .period-toggle:hover { background: transparent; text-decoration: underline; }
 .period-toggle small { font-weight: 400; margin-left: 4px; }
+.period-table .quota-share-cell { border-left: 1px solid var(--line); min-width: 96px; }
+.period-table .quota-none { color: var(--muted); opacity: .5; }
 .model-row td { border-bottom-color: color-mix(in srgb, var(--line) 50%, transparent); }
 .model-row td.model-name { padding-left: 34px; min-width: 220px; }
 .model-label { display: flex; align-items: center; gap: 8px; }
