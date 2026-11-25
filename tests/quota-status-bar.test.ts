@@ -30,7 +30,10 @@ it('does not duplicate a window or retain its obsolete exhausted tone', () => {
   bar.update({ ...state, accounts: { Codex: { status: 'ready', quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }, { id: '5h', label: '5h', usedPercent: 46 }] } } } });
   const codex = host.items.find(item => item.id.endsWith('codex'));
   expect(codex.text).toBe('$(agent-tandem-codex) $(agent-tandem-quota-window-5h) 54%'); expect(codex.backgroundColor).toBeUndefined();
-  expect(codex.tooltip.value.match(/<strong>\$\(agent-tandem-quota-window-5h\)<\/strong>/g)).toHaveLength(1); bar.dispose();
+  expect(codex.tooltip.value.match(/&nbsp;5h&nbsp;/g)).toHaveLength(1);
+  expect(codex.tooltip.value).toContain('<strong>54%</strong>');
+  expect(codex.tooltip.value).not.toContain('<strong>0%</strong>');
+  bar.dispose();
 });
 it('keeps cached quota visible and identifies its timestamp and refresh error in the tooltip', () => {
   const bar = new QuotaStatusBar();
@@ -48,7 +51,15 @@ it('keeps separate agent items with independent quota colors, commands and full 
   expect(claude.text).toBe('$(agent-tandem-claude) $(agent-tandem-quota-window-5h) 80%'); expect(claude.command).toEqual({ command: 'agentTandem.quickAccounts', title: 'Quota & quick account switch', arguments: ['Claude'] });
   expect(codex.accessibilityInformation.label).toContain('5h: 0% remaining');
   expect(codex.tooltip.value).toContain('<strong>0%</strong>');
-  expect(codex.tooltip.value).not.toContain('command:');
+  for (const [item, provider] of [[codex, 'Codex'], [claude, 'Claude']] as const) {
+    expect(Array.from(item.tooltip.value.matchAll(/href="(command:[^"]+)"/g), (match: RegExpMatchArray) => match[1])).toEqual([
+      `command:agentTandem.quickAccounts?${encodeURIComponent(JSON.stringify([provider]))}`,
+      'command:agentTandem.manageAccounts?%5B%5D',
+    ]);
+    expect(item.tooltip.isTrusted).toEqual({ enabledCommands: [
+      'agentTandem.quickAccounts', 'agentTandem.quickSwitchAccount', 'agentTandem.resetCodexUsage', 'agentTandem.manageAccounts',
+    ] });
+  }
   bar.dispose(); expect(host.items.every(item => item.disposed)).toBe(true);
 });
 it('applies provider selection and the master visibility switch immediately without leaving old items visible', () => {
