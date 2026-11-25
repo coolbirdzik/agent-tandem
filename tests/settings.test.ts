@@ -485,9 +485,10 @@ describe('Settings usage dashboard', () => {
       expect(hint.hidden).toBe(false);
       expect(item.getAttribute('aria-describedby')).toBe(hint.id);
       expect(hint.querySelector('svg rect')).not.toBeNull();
-      expect(hint.querySelector('.quota-window-badge')?.getAttribute('aria-label')).toBe('5h');
+      expect([...hint.querySelectorAll('.quota-hover-plan')].some(e => e.textContent?.trim() === '5h')).toBe(true);
       expect(hint.querySelector('.codicon-zap')).toBeNull();
-      for (const text of ['codex@example.test', 'Active', '36%', 'resets in 3h', '1 earned reset available', 'Full reset', 'SAVED ACCOUNTS', 'Work <acct> $(zap)', 'Refreshing…']) expect(hint.textContent).toContain(text);
+      for (const text of ['codex@example.test', 'Active', '36%', 'resets in 3h', '1 earned reset available', 'Full reset', 'SWITCH ACCOUNT', 'Work <acct> $(zap)', 'Refreshing…', 'Use 1 reset', 'Quick Accounts']) expect(hint.textContent).toContain(text);
+      expect(hint.querySelector('a')).toBeNull();
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
       expect(hint.hidden).toBe(true);
     } finally { vi.useRealTimers(); }

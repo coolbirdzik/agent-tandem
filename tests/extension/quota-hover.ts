@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { QuotaStatusBar } from '../../src/host/quota-status-bar';
 import { QuickAccounts } from '../../src/host/quick-accounts';
 import type { UsageDashboardState } from '../../src/core/usage-dashboard';
+import { profileIdentityKey } from '../../src/core/account-identity';
 
 /** Synthetic sign-ins and callbacks; this UI fixture never touches native credentials. */
 export async function activate(context: vscode.ExtensionContext) {
@@ -33,8 +34,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const reset = async () => { status.quota.bankedResets.availableCount--; state.accountsNotice = 'Codex usage reset. One earned reset was used.'; update(); await record('reset'); };
   const popup = new QuickAccounts({ state: () => state, publish: async () => {}, refresh: async () => {}, switch: id => record(`switch:${id}`), resetUsage: reset, open: page => record(page), report: error => { void record(`error:${String(error)}`); } });
   for (const [id, callback] of Object.entries({
-    'agentTandem.quickAccounts': () => popup.show('Codex'), 'agentTandem.quickSwitchAccount': (id: string) => record(`switch:${id}`),
-    'agentTandem.resetCodexUsage': reset, 'agentTandem.openSettings': () => record('dashboard'),
+    'agentTandem.quickAccounts': (provider: string) => provider === 'Codex' ? popup.show('Codex') : record(`error:unexpected provider ${provider}`), 'agentTandem.quickSwitchAccount': (id: string) => record(`switch:${id}`),
+    'agentTandem.resetCodexUsage': (key: string) => key === profileIdentityKey('Codex', identity) ? reset() : record('error:unexpected reset account'), 'agentTandem.openSettings': () => record('dashboard'),
     'agentTandem.manageAccounts': () => record('accounts'), 'agentTandem.refreshQuotaAccounts': () => record('refresh'),
     'agentTandem.openExtensionStorage': () => record('storage'),
     'agentTandem.previewReviewCleanup': (value: { scope: string }) => record(`review-preview:${value.scope}`),

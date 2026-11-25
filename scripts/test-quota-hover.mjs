@@ -41,7 +41,7 @@ try {
     await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 200, y: 100 }); await pause(250);
     const point = await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(statusSelector)});if(!e)return;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
     assert.ok(point, 'Codex quota status visible'); await call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
-    await until(() => evaluate(`document.querySelector('.monaco-hover')?.textContent?.includes('Open settings')`), 'hover menu');
+    await until(() => evaluate(`document.querySelector('.monaco-hover')?.textContent?.includes('Quick Accounts')`), 'hover menu');
   };
   const clickLink = async name => {
     const point = await evaluate(`(()=>{const e=[...document.querySelectorAll('.monaco-hover a')].find(e=>e.textContent.includes(${JSON.stringify(name)}));if(!e)return;const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
@@ -50,41 +50,36 @@ try {
   };
   await hover();
   await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('hover-check'), 'lazy hover quota check');
-  const text = await evaluate(`document.querySelector('.monaco-hover').innerText`); assert.match(text, /Reset usage/); assert.match(text, /Work/); assert.match(text, /24% left/);
+  const text = await evaluate(`document.querySelector('.monaco-hover').innerText`); assert.match(text, /Use 1 reset/); assert.match(text, /Work/); assert.match(text, /24% left/);
   assert.match(text, /84% left/, 'Hover renders the updated saved-account quota');
-  assert.equal(await evaluate(`document.querySelectorAll('.monaco-hover .codicon-agent-tandem-quota-window-5h').length`), 2, 'Current and saved five-hour windows use badges');
-  assert.equal(await evaluate(`document.querySelectorAll('.monaco-hover .codicon-agent-tandem-quota-window-7d').length`), 1, 'Weekly hover window uses its badge');
+  assert.equal(await evaluate(`[...document.querySelectorAll('.monaco-hover span')].filter(e=>e.textContent.trim()==='5h').length`), 2, 'Current and saved five-hour windows have readable badges');
+  assert.equal(await evaluate(`[...document.querySelectorAll('.monaco-hover span')].filter(e=>e.textContent.trim()==='7d').length`), 1, 'Weekly hover window has a readable badge');
   assert.equal(text.match(/24% left/g)?.length, 1, 'Current quota appears once');
   assert.doesNotMatch(text, /Work old copy|0% left/, 'Stale duplicate quota and saved profile are omitted');
-  assert.match(text, /Extension storage/i); assert.match(text, /1.4 GB/); assert.match(text, /Above 1 GB/);
+  assert.doesNotMatch(text, /Extension storage/i);
   const palette = await evaluate(`([...document.querySelectorAll('.monaco-hover span[style*="color"]')].map(e=>({text:e.textContent,color:getComputedStyle(e).color})))`);
   assert.ok(new Set(palette.map(row=>row.color)).size >= 3, 'Native hover renders theme colors');
   const layout = await evaluate(`(()=>{const hover=document.querySelector('.monaco-hover');return {bars:[...hover.querySelectorAll('td img')].map(e=>({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,loaded:e.complete&&e.naturalWidth>0})),sections:[...hover.querySelectorAll('h5')].map(e=>e.textContent),overflow:[...hover.querySelectorAll('table')].some(e=>e.scrollWidth>e.clientWidth+1)}})()`);
   assert.equal(layout.bars.length, 2, 'Both quota meters survive native HTML sanitization');
   assert.ok(layout.bars.every(bar => bar.loaded && bar.width === 132 && bar.height === 6), 'Quota meters render as thin SVG bars');
   assert.equal(layout.overflow, false, 'Hover tables fit without horizontal overflow');
-  assert.deepEqual(layout.sections, ['SWITCH ACCOUNT', 'EXTENSION STORAGE'], 'Switching and storage have section labels');
+  assert.deepEqual(layout.sections, ['BANKED RESETS', 'SWITCH ACCOUNT'], 'Reset and switch actions have section labels');
   const anchor = await evaluate(`(()=>{const r=document.querySelector('.monaco-hover').getBoundingClientRect();return{x:r.x+20,y:r.y+20}})()`);
   await call('Input.dispatchMouseEvent', { type: 'mouseMoved', ...anchor });
   const shot = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(path.join(root, 'artifacts', `quota-hover-native${suffix}.png`), Buffer.from(shot.data, 'base64'));
   const hoverRect = await evaluate(`(()=>{const r=document.querySelector('.monaco-hover').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,scale:1}})()`);
   const crop = await call('Page.captureScreenshot', { format: 'png', clip: hoverRect }); await mkdir(path.join(root, 'media', 'screenshots'), { recursive: true });
   await writeFile(path.join(root, 'artifacts', `account-hover${suffix}.png`), Buffer.from(crop.data, 'base64'));
-  await clickLink('Open settings'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('dashboard'), 'dashboard link');
-  await hover(); await clickLink('Manage storage'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('storage'), 'storage link');
-  for (const [label, scope] of [['Clean accepted', 'accepted'], ['Clean all', 'all']]) {
-    await hover(); await clickLink(label);
-    await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes(`review-preview:${scope}`), `${label} preview link`);
-  }
+  await clickLink('Manage accounts'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('accounts'), 'manage accounts link');
   await hover(); await clickLink('Switch'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('switch:two'), 'switch link');
-  await hover(); await clickLink('Reset usage'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('reset'), 'reset link');
+  await hover(); await clickLink('Use 1 reset'); await until(async () => JSON.parse(await readFile(report, 'utf8')).actions.includes('reset'), 'reset link');
   await hover(); assert.match(await evaluate(`document.querySelector('.monaco-hover').innerText`), /1 earned reset/);
-  await clickLink('Search');
-  await until(() => evaluate(`document.querySelector('.quick-input-widget')?.innerText.includes('Open settings')`), 'search popup with dashboard action');
+  await clickLink('Quick Accounts');
+  await until(() => evaluate(`document.querySelector('.quick-input-widget')?.innerText.includes('Open Dashboard')`), 'search popup with dashboard action');
   assert.ok(await evaluate(`document.querySelectorAll('.quick-input-widget .codicon-agent-tandem-quota-window-5h').length > 0`), 'Native account picker renders quota badges');
   assert.doesNotMatch(await evaluate(`document.querySelector('.quick-input-widget').innerText`), /Work old copy/, 'Search popup also deduplicates saved identities');
   const popup = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(path.join(root, 'artifacts', `quick-accounts-native${suffix}.png`), Buffer.from(popup.data, 'base64'));
-  const result = { ...(JSON.parse(await readFile(report, 'utf8'))), nativeHoverVerified: true, storageWarningVerified: true, colors: palette, realCreditsConsumed: false };
+  const result = { ...(JSON.parse(await readFile(report, 'utf8'))), nativeHoverVerified: true, colors: palette, realCreditsConsumed: false };
   await writeFile(path.join(root, 'artifacts', `quota-hover-native${suffix}.json`), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
   ws.send(JSON.stringify({ id: ++id, method: 'Browser.close' }));
 } finally { ws?.close(); child.kill(); }

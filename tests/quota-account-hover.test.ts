@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { UsageDashboardState } from '../src/core/usage-dashboard';
 vi.mock('vscode', () => ({ MarkdownString: class { value: string; isTrusted = false; supportHtml?: boolean; constructor(value = '') { this.value = value; } appendMarkdown(text: string) { this.value += text; return this; } } }));
 import { quotaAccountHover } from '../src/host/quota-account-hover';
+import { quotaAccountHoverHtml, quotaHoverCommands } from '../src/core/quota-account-hover';
 const identity = { signedIn: true, email: 'one@example.test', method: 'ChatGPT' };
 function fixture(): UsageDashboardState {
   return { status: 'ready', preferences: { showQuotaInStatusBar: true, grouping: 'day' }, accounts: { Codex: { status: 'ready', account: identity,
@@ -16,7 +17,8 @@ describe('Account status hover', () => {
     const state = fixture();
     state.accounts!.Codex!.quota!.windows.push({ id: 'model', label: 'Sonnet <model> $(zap) · 7d', usedPercent: 50 });
     const text = quotaAccountHover('Codex', state).value;
-    expect(text).toContain('Sonnet &#60;model&#62; &#36;&#40;zap&#41; · $(agent-tandem-quota-window-7d)');
+    expect(text).toContain('Sonnet &#60;model&#62; &#36;&#40;zap&#41; · <span');
+    expect(text).toContain('&nbsp;7d&nbsp;');
     expect(text).not.toContain('$(zap)');
   });
   it('never puts a personal Plus plan or cached quota under a saved Pro Lite account label', () => {
@@ -26,7 +28,7 @@ describe('Account status hover', () => {
       quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }, { id: '7d', label: '7d', usedPercent: 16 }] } };
     const text = quotaAccountHover('Codex', state).value;
     expect(text).toContain('prolite'); expect(text).toContain('identity mismatch');
-    expect(text).not.toContain('personal@example.test'); expect(text).not.toContain('$(agent-tandem-quota-window-7d) 84%');
+    expect(text).not.toContain('personal@example.test'); expect(text).not.toContain('<strong>84%</strong>');
   });
   it('renders each quota window and saved account once, using the freshest profile quota', () => {
     const state = fixture();
@@ -35,17 +37,20 @@ describe('Account status hover', () => {
     state.managedAccounts![1]!.status = { status: 'error', account: identity, quotaCached: true, updatedAt: 1, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 100 }] } };
     state.managedAccounts!.push({ ...state.managedAccounts![1]!, id: 'two-current', label: 'Work updated', status: { status: 'ready', account: identity, updatedAt: 2, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 20 }] } } });
     const menu = quotaAccountHover('Codex', state);
-    expect(menu.value.match(/<strong>\$\(agent-tandem-quota-window-5h\)<\/strong>/g)).toHaveLength(1); expect(menu.value).toContain('<strong>54%</strong>'); expect(menu.value).not.toContain('<strong>10%</strong>');
+    expect(menu.value.match(/&nbsp;5h&nbsp;/g)).toHaveLength(2); expect(menu.value).toContain('<strong>54%</strong>'); expect(menu.value).not.toContain('<strong>10%</strong>');
     expect(menu.value.match(/Work updated/g)).toHaveLength(1);
-    expect(menu.value).toContain('Work updated'); expect(menu.value).toContain('$(agent-tandem-quota-window-5h) 80%'); expect(menu.value).not.toContain('$(agent-tandem-quota-window-5h) 0%');
+    expect(menu.value).toContain('Work updated'); expect(menu.value).toContain('<strong>80%</strong> left'); expect(menu.value).not.toContain('<strong>0%</strong> left');
   });
-  it('shows account and earned-reset information without actions', () => {
+  it('shows direct account switching, earned-reset redemption and the provider picker', () => {
     const menu = quotaAccountHover('Codex', fixture());
     expect(menu.value).toContain('<strong>10%</strong>'); expect(menu.value).toContain('pass-filled) Active');
-    expect(menu.value).toContain('SAVED ACCOUNTS'); expect(menu.value).toContain('Work');
+    expect(menu.value).toContain('SWITCH ACCOUNT'); expect(menu.value).toContain('Work');
     expect(menu.value).toContain('2 earned resets available');
-    expect(menu.value).not.toMatch(/<a\b|command:|Open Dashboard|Switch account|Reset usage/);
-    expect(menu.isTrusted).toBe(false);
+    expect(menu.value).toContain('command:agentTandem.quickSwitchAccount?%5B%22two%22%5D');
+    expect(menu.value).toContain('command:agentTandem.resetCodexUsage?');
+    expect(menu.value).toContain('Use 1 reset');
+    expect(menu.value).toContain('command:agentTandem.quickAccounts?%5B%22Codex%22%5D');
+    expect(menu.isTrusted).toEqual({ enabledCommands: quotaHoverCommands });
     expect(menu.supportHtml).toBe(true);
     expect(menu.value).toContain('color:var(--vscode-editorWarning-foreground)');
   });
@@ -53,10 +58,38 @@ describe('Account status hover', () => {
     const state = fixture(); state.managedAccounts![1]!.label = '[bad](command:evil) $(zap)';
     const menu = quotaAccountHover('Codex', state);
     expect(menu.value).not.toContain('[bad](command:evil)');
-    expect(menu.isTrusted).toBe(false);
+    expect(menu.isTrusted).toEqual({ enabledCommands: quotaHoverCommands });
     expect(menu.value).toContain('&#91;bad&#93;&#40;command:evil&#41; &#36;&#40;zap&#41;'); expect(menu.value).not.toContain('$(zap)');
     state.managedAccounts![1]!.label = '<span style="color:red">bad</span>';
     expect(quotaAccountHover('Codex', state).value).toContain('&#60;span');
+  });
+  it('keeps the Preferences preview free of executable command links', () => {
+    const preview = quotaAccountHoverHtml('Codex', fixture(), 'webview');
+    expect(preview).toContain('Use 1 reset'); expect(preview).toContain('Quick Accounts');
+    expect(preview).not.toMatch(/<a\b|command:/);
+  });
+  it('hides mutation links during an account operation or active agent turn', () => {
+    for (const flags of [{ accountsBusy: true }, { accountSwitchBlocked: 'Finish the active turn.' }]) {
+      const menu = quotaAccountHover('Codex', { ...fixture(), ...flags }).value;
+      expect(menu).not.toMatch(/command:agentTandem\.(quickSwitchAccount|resetCodexUsage)/);
+      expect(menu).toContain('command:agentTandem.quickAccounts?');
+    }
+  });
+  it('offers the provider-specific picker for additional saved accounts', () => {
+    const state = fixture();
+    for (let i = 0; i < 4; i++) state.managedAccounts!.push({ id: `extra-${i}`, provider: 'Codex', label: `Extra ${i}`, createdAt: 1 });
+    const menu = quotaAccountHover('Codex', state).value;
+    expect(menu.match(/command:agentTandem.quickSwitchAccount/g)).toHaveLength(3);
+    expect(menu).toContain('Show 2 more accounts…');
+  });
+  it('offers Claude switching without exposing the Codex reset or other provider profiles', () => {
+    const state = fixture();
+    state.managedAccounts!.push({ id: 'claude-work', provider: 'Claude', label: 'Claude Work', createdAt: 1 });
+    const menu = quotaAccountHover('Claude', state).value;
+    expect(menu).toContain('command:agentTandem.quickSwitchAccount?%5B%22claude-work%22%5D');
+    expect(menu).toContain('command:agentTandem.quickAccounts?%5B%22Claude%22%5D');
+    expect(menu).not.toContain('command:agentTandem.resetCodexUsage');
+    expect(menu).not.toContain('%5B%22two%22%5D');
   });
   it('does not repeat an email used as the saved profile name and labels cached quota', () => {
     const state = fixture(), profile = state.managedAccounts![1]!;
@@ -64,7 +97,7 @@ describe('Account status hover', () => {
     profile.status = { status: 'error', account: profile.identity, quotaCached: true, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 40 }] } };
     const menu = quotaAccountHover('Codex', state);
     expect(menu.value.match(/two@example.test/g)).toHaveLength(1);
-    expect(menu.value).toContain('$(agent-tandem-quota-window-5h) 60% left'); expect(menu.value).toContain('$(history) cached');
+    expect(menu.value).toContain('<strong>60%</strong> left'); expect(menu.value).toContain('$(history) cached');
   });
   it('shows relative quota resets for active and saved accounts and when quota is refreshing', () => {
     const now = Date.UTC(2026, 10, 19, 12);
@@ -74,7 +107,7 @@ describe('Account status hover', () => {
     state.managedAccounts![1]!.status = { status: 'ready', account: state.managedAccounts![1]!.identity, quota: { status: 'available', windows: [{ id: '5h', label: '5h', usedPercent: 40, resetsAt }, { id: '7d', label: '7d', usedPercent: 10, resetsAt: now - 60000 }] } };
     const menu = quotaAccountHover('Codex', state).value;
     expect(menu).toContain('$(clock) resets in &#60;1m</span>');
-    expect(menu).toContain('$(agent-tandem-quota-window-5h) 60% left');
+    expect(menu).toContain('<strong>60%</strong> left');
     expect(menu).toContain('$(clock) resets in 2h10m</span>');
     expect(menu).toContain('$(clock) reset</span>');
     expect(menu).not.toContain('Refreshing…');
@@ -111,9 +144,11 @@ describe('Account status hover', () => {
     for (const [count, label] of [[0, 'No earned resets available'], [undefined, 'Earned resets unavailable']] as const) {
       const state = fixture(); state.accounts!.Codex!.quota!.bankedResets = count === undefined ? undefined : { availableCount: count };
       expect(quotaAccountHover('Codex', state).value).toContain(label);
+      expect(quotaAccountHover('Codex', state).value).not.toContain('command:agentTandem.resetCodexUsage');
     }
     const state = fixture(); state.accounts!.Codex!.quotaCached = true;
     expect(quotaAccountHover('Codex', state).value).toContain('2 earned resets available');
+    expect(quotaAccountHover('Codex', state).value).not.toContain('command:agentTandem.resetCodexUsage');
     expect(quotaAccountHover('Claude', fixture()).value).not.toMatch(/earned resets/i);
   });
 });

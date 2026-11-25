@@ -806,6 +806,8 @@ tbody tr:hover { background: var(--vscode-list-hoverBackground); }
 .quota-account-hover .codicon,.quota-hover-provider-icon{font-size:12px;vertical-align:-1px}
 .quota-hover-provider-icon{font-family:'AgentTandem Providers'}
 .quota-hover-plan{color:var(--vscode-descriptionForeground);background:var(--vscode-editor-inactiveSelectionBackground);border-radius:4px}
+.quota-hover-link{color:var(--vscode-textLink-foreground)}
+.quota-hover-action{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border-radius:4px;white-space:nowrap}
 .quota-account-hover [data-tone=blue]{color:var(--vscode-charts-blue)}
 .quota-account-hover [data-tone=orange]{color:var(--vscode-charts-orange)}
 .quota-account-hover [data-tone=green]{color:var(--vscode-charts-green)}

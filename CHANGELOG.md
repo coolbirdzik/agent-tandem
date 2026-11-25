@@ -38,6 +38,7 @@ Historical release dates and boundaries are reconstructed from package version c
 
 ### Fixed
 
+- Codex and Claude Code quota hovers restore direct account switching and Quick Accounts, with a compact layout and a **Use 1 reset** action for available Codex banked resets.
 - Conversation cleanup reaches confirmation sooner and deletes batches of Codex chats faster. The Dashboard stays responsive during deletion and keeps token counts for deleted conversations.
 - Large storage cleanups keep deleting other files while temporarily locked files wait for retry. Progress updates leave the rest of the Dashboard responsive, and the time remaining reflects recent progress.
 - Large storage cleanups no longer make Settings slow or unresponsive. A full review cleanup can list over 160,000 files, and that list (30 MB) was sent and redrawn on every progress update; the preview now lists the largest 200 with the total count. Files are also removed several at a time, which is several times faster for large cleanups.
@@ -570,7 +571,7 @@ Historical release dates and boundaries are reconstructed from package version c
 - Fixed Enter/send failing in projects over 20,000 files: removed workspace file-count/total-size limits, bounded capture concurrency and reuse of unchanged/identical blobs.
 - Resolve unavailable ChatGPT Codex models from the app-server catalog without changing CLI configuration.
 
-[Unreleased]: https://github.com/coolbirdzik/agent-tandem/compare/v0.1.52...HEAD
+[Unreleased]: https://github.com/coolbirdzik/agent-tandem/compare/v0.1.54...HEAD
 [0.1.50]: https://github.com/nh-kng/agent-tandem/compare/9aa7bba7a77259fe1280cd7e6e6469053216ab67...30c2c28e53ddb2479b0b41bf4ded121908230f03
 [0.1.49]: https://github.com/nh-kng/agent-tandem/compare/638a3a648243f46c0eab9fe835ec7698e97157ad...9aa7bba7a77259fe1280cd7e6e6469053216ab67
 [0.1.48]: https://github.com/nh-kng/agent-tandem/compare/731b062092e8a8a8bfc647c37f1711a777e1fbe9...638a3a648243f46c0eab9fe835ec7698e97157ad

@@ -2,7 +2,7 @@ import type { UsageDashboardState } from './usage-dashboard';
 import type { ConversationProvider } from '../providers/conversations';
 import { profileIdentityKey } from './account-identity';
 import { bankedResetCountdown } from './banked-resets';
-import { quotaWindowIconLabel, resetSummary, quotaUsageTone } from './quota-status';
+import { resetSummary, quotaUsageTone } from './quota-status';
 import { uniqueQuotaWindows } from './quota-windows';
 import { uniqueAccountProfiles, accountProfileStatus } from './account-display';
 
@@ -16,6 +16,8 @@ const row = (...cells: string[]) => `<tr height="24">${cells.join('')}</tr>`;
 // The first table pins a stable content width; later tables stretch to match it.
 const table = (...rows: string[]) => block(`<table width="100%">${rows.join('')}</table>`);
 const headerTable = (...rows: string[]) => block(`<table width="380">${rows.join('')}</table>`);
+const section = (title: string) => `<hr>\n\n<h5>${title}</h5>\n\n`;
+export const quotaHoverCommands = ['agentTandem.quickAccounts', 'agentTandem.quickSwitchAccount', 'agentTandem.resetCodexUsage', 'agentTandem.manageAccounts'] as const;
 /** Sanitized spans cannot be sized, so the meter is a theme-neutral SVG; the colored percentage beside it carries the value. */
 const meterFill = { green: '#2ea043', yellow: '#d29922', red: '#e5534b' } as const;
 const meter = (remaining: number, tone: keyof typeof meterFill, webview: boolean) => {
@@ -26,7 +28,17 @@ const meter = (remaining: number, tone: keyof typeof meterFill, webview: boolean
   return `<img src="data:image/svg+xml;base64,${btoa(svg)}" width="${width}" height="6" align="middle" alt="">`;
 };
 
-export type QuotaAccountHoverState = Pick<UsageDashboardState, 'accounts' | 'managedAccounts' | 'accountsRefreshing' | 'accountsError' | 'accountsNotice' | 'accountSwitch'>;
+export type QuotaAccountHoverState = Pick<UsageDashboardState, 'accounts' | 'managedAccounts' | 'accountsRefreshing' | 'accountsError' | 'accountsNotice' | 'accountSwitch' | 'accountsBusy' | 'accountSwitchBlocked'>;
+
+export function quotaAccountActionsBlocked(state: QuotaAccountHoverState) {
+  return !!(state.accountsBusy || state.accountSwitchBlocked || state.accountSwitch?.status === 'running');
+}
+
+export function canUseBankedReset(state: QuotaAccountHoverState) {
+  const status = state.accounts?.Codex;
+  return !quotaAccountActionsBlocked(state) && status?.account?.signedIn === true && status.account.method === 'ChatGPT'
+    && status.status === 'ready' && !status.quotaCached && (status.quota?.bankedResets?.availableCount ?? 0) > 0;
+}
 
 export function quotaAccountHoverHtml(provider: ConversationProvider, state: QuotaAccountHoverState, surface: 'native' | 'webview') {
   const status = state.accounts?.[provider], account = status?.account, now = Date.now();
@@ -39,6 +51,16 @@ export function quotaAccountHoverHtml(provider: ConversationProvider, state: Quo
     const attributes = webview ? 'class="quota-hover-plan"' : 'style="color:var(--vscode-descriptionForeground);background-color:var(--vscode-editor-inactiveSelectionBackground);border-radius:4px;"';
     return `<span ${attributes}>&nbsp;${text}&nbsp;</span>`;
   };
+  // Extension-contributed quota codicons are not reliably rendered inside
+  // native Markdown hovers. Text badges keep both period names visible.
+  const windowLabel = (label: string) => label.split(/\b(5h|7d)\b/).map(part => part === '5h' || part === '7d' ? chip(part) : escape(part)).join('');
+  // The Preferences hover is a non-interactive preview. Only the native tooltip
+  // receives command URIs, generated from this fixed allowlist and encoded args.
+  const action = (label: string, command: typeof quotaHoverCommands[number], args: unknown[] = [], button = false, title = '') => {
+    const text = button ? `<span ${webview ? 'class="quota-hover-action"' : 'style="color:var(--vscode-button-foreground);background-color:var(--vscode-button-background);border-radius:4px;"'}>&nbsp;&nbsp;${label}&nbsp;&nbsp;</span>` : label;
+    return webview ? `<span class="quota-hover-link">${text}</span>` : `<a href="command:${command}?${encodeURIComponent(JSON.stringify(args))}"${title ? ` title="${title}"` : ''}>${text}</a>`;
+  };
+  const busy = quotaAccountActionsBlocked(state);
   const blocks: string[] = [];
   const providerIcon = color(`$(${provider === 'Codex' ? 'agent-tandem-codex' : 'agent-tandem-claude'})`, provider === 'Codex' ? 'blue' : 'orange');
   const signedIn = account ? account.signedIn ? color('$(pass-filled) Active', 'green') : color('$(circle-slash) Signed out', 'muted') : '';
@@ -48,7 +70,7 @@ export function quotaAccountHoverHtml(provider: ConversationProvider, state: Quo
   const windows = uniqueQuotaWindows(status?.quota?.windows);
   if (windows.length) blocks.push(table(...windows.map(window => {
     const remaining = remainingOf(window.usedPercent), tone = quotaTone(window.usedPercent);
-    return row(`<td width="28"><strong>${quotaWindowIconLabel(window.label, escape)}</strong></td>`, `<td>${meter(remaining, tone, webview)}</td>`,
+    return row(`<td width="28"><strong>${windowLabel(window.label)}</strong></td>`, `<td>${meter(remaining, tone, webview)}</td>`,
       `<td align="right">${color(`<strong>${remaining}%</strong>`, tone)} ${color('left', 'muted')}</td>`,
       `<td align="right">${window.resetsAt ? color(`$(clock) ${escape(resetSummary(window.resetsAt, now))}`, 'muted') : color('—', 'muted')}</td>`);
   })));
@@ -57,38 +79,39 @@ export function quotaAccountHoverHtml(provider: ConversationProvider, state: Quo
   if (provider === 'Codex' && account?.signedIn && account.method === 'ChatGPT') {
     const count = status?.quota?.bankedResets?.availableCount;
     const credits = (status?.quota?.bankedResets?.credits ?? []).slice().sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity));
-    const expires = credits[0]?.expiresAt;
     const reset = color(`$(gift) ${count === undefined ? 'Earned resets unavailable' : count === 0 ? 'No earned resets available' : `${count} earned reset${count === 1 ? '' : 's'} available`}`, 'muted');
-    blocks.push(table(row(`<td>${reset}</td>`, `<td align="right">${count && expires ? color(escape(bankedResetCountdown(expires, now)), 'muted') : ''}</td>`)));
-    // One line per earned reset, soonest expiry first, so each expiry stays readable.
-    if (count && credits.length) {
-      blocks.push(table(...credits.slice(0, 5).map(credit => row(`<td>${color(`${escape(credit.title || 'Banked reset')} · ${credit.expiresAt ? escape(bankedResetCountdown(credit.expiresAt, now)) : 'Expiry unavailable'}`, 'muted')}</td>`))));
-      if (credits.length > 5 || credits.length < count) blocks.push(block(`<div>${color(credits.length > 5 ? `+${credits.length - 5} more earned resets` : 'Expiry details shown for some resets', 'muted')}</div>`));
-    }
+    const resetAction = canUseBankedReset(state) ? action('Use 1 reset', 'agentTandem.resetCodexUsage', [profileIdentityKey(provider, account)], true, 'Reset usage · uses one earned banked reset') : '';
+    // Keep the balance and each credit's expiry together, without repeating the soonest expiry.
+    const details = count ? credits.slice(0, 5).map(credit => row(`<td colspan="2">${color(`&nbsp;&nbsp;${escape(credit.title || 'Banked reset')} · ${credit.expiresAt ? escape(bankedResetCountdown(credit.expiresAt, now)) : 'Expiry unavailable'}`, 'muted')}</td>`)) : [];
+    if (count && (credits.length > 5 || credits.length < count)) details.push(row(`<td colspan="2">${color(credits.length > 5 ? `+${credits.length - 5} more earned resets` : credits.length ? 'Expiry details shown for some resets' : 'Expiry details unavailable', 'muted')}</td>`));
+    blocks.push(section(color('BANKED RESETS', 'muted')), table(row(`<td>${reset}</td>`, `<td align="right">${resetAction}</td>`), ...details));
   }
   const currentId = profileIdentityKey(provider, account);
   const profiles = uniqueAccountProfiles((state.managedAccounts ?? []).filter(row => row.provider === provider)
     .filter(row => !row.active && (!currentId || currentId !== profileIdentityKey(provider, row.identity || row.status?.account))))
     .sort((a, b) => a.label.localeCompare(b.label));
   if (profiles.length) {
-    // h5 + muted caps mirrors VS Code's own view section headers.
-    blocks.push(`<hr>\n\n<h5>${color('SAVED ACCOUNTS', 'muted')}</h5>\n\n`);
+    blocks.push(section(color('SWITCH ACCOUNT', 'muted')));
     blocks.push(table(...profiles.slice(0, 3).map(profile => {
       const saved = accountProfileStatus(profile), identity = saved?.account || profile.identity, quota = uniqueQuotaWindows(saved?.quota?.windows);
       const email = identity?.email && profile.label.trim().toLowerCase() !== identity.email.trim().toLowerCase() ? escape(identity.email) : '';
       // One line per window keeps each countdown readable.
-      const quotaLines = quota.slice(0, 2).map(window => `${color(`${quotaWindowIconLabel(window.label, escape)} ${remainingOf(window.usedPercent)}% left`, quotaTone(window.usedPercent))}${window.resetsAt ? color(` · $(clock) ${escape(resetSummary(window.resetsAt, now))}`, 'muted') : ''}`);
+      const quotaLines = quota.slice(0, 2).map(window => `${windowLabel(window.label)} ${color(`<strong>${remainingOf(window.usedPercent)}%</strong> left`, quotaTone(window.usedPercent))}${window.resetsAt ? color(` · $(clock) ${escape(resetSummary(window.resetsAt, now))}`, 'muted') : ''}`);
       const detail = [email, saved?.quotaCached ? '$(history) cached' : '', saved?.error ? escape(saved.error) : ''].filter(Boolean).join(color(' · ', 'muted'));
       const lines = [...(quotaLines.length ? quotaLines : [color('Quota unavailable', 'muted')]), ...(detail ? [color(detail, 'muted')] : [])].join('<br>');
-      return row(`<td>$(account) <strong>${escape(profile.label)}</strong>${identity?.plan ? ` &nbsp;${chip(escape(identity.plan))}` : ''}<br>${lines}</td>`);
+      const switchAction = busy ? color('$(lock) Unavailable', 'muted') : action('Switch', 'agentTandem.quickSwitchAccount', [profile.id], true);
+      return row(`<td>$(account) <strong>${escape(profile.label)}</strong>${identity?.plan ? ` &nbsp;${chip(escape(identity.plan))}` : ''}<br>${lines}</td>`, `<td align="right">${switchAction}</td>`);
     })));
-    if (profiles.length > 3) blocks.push(block(`<div>${color(`+${profiles.length - 3} more`, 'muted')}</div>`));
+    if (profiles.length > 3) blocks.push(block(`<div>${action(`Show ${profiles.length - 3} more accounts…`, 'agentTandem.quickAccounts', [provider])}</div>`));
   }
   const notes = [
     state.accountSwitch?.status === 'running' ? `$(loading~spin) ${escape(state.accountSwitch.logs.at(-1)?.message || 'Switching account…')}` : '',
     state.accountsError ? color(`$(error) ${escape(state.accountsError)}`, 'red') : state.accountsNotice ? color(`$(check) ${escape(state.accountsNotice)}`, 'green') : '',
     state.accountsRefreshing ? color('$(loading~spin) Refreshing…', 'muted') : '',
+    state.accountSwitchBlocked ? color(`$(lock) ${escape(state.accountSwitchBlocked)}`, 'muted') : '',
+    state.accountsBusy && state.accountSwitch?.status !== 'running' ? color('$(loading~spin) Account operation in progress…', 'muted') : '',
   ].filter(Boolean);
   if (notes.length) blocks.push(block(`<div>${notes.join('<br>')}</div>`));
+  blocks.push(`<hr>\n\n`, table(row(`<td>${action('$(search) Quick Accounts', 'agentTandem.quickAccounts', [provider])}</td>`, `<td align="right">${action('$(settings-gear) Manage accounts', 'agentTandem.manageAccounts')}</td>`)));
   return blocks.join('');
 }

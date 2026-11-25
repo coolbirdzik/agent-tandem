@@ -63,6 +63,7 @@ import { quotaMeters, quotaObservations, type QuotaObservation } from './core/qu
 import { quotaTicks, type QuotaTick } from './core/quota-pace';
 import { QuotaPaceStore } from './core/quota-pace-store';
 import { AccountProfiles, nativeHome, profileIdentityKey } from './core/account-profiles';
+import { canUseBankedReset, quotaAccountActionsBlocked } from './core/quota-account-hover';
 import { codexSessionMetadata } from './providers/conversations';
 import { AccountManager } from './host/account-manager';
 import { QuickAccounts } from './host/quick-accounts';
@@ -1248,11 +1249,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<Extens
   register('agentTandem.openSettings', async () => { settings.open(); await refreshAccounts(); return dashboardState(); });
   register('agentTandem.quickAccounts', async provider => { await quickAccounts.show(isAccountProvider(provider) ? provider : undefined); });
   register('agentTandem.quickSwitchAccount', async id => {
-    const profile = dashboardState().managedAccounts?.find(row => row.id === id);
-    if (!profile || profile.active) return;
+    const dashboard = dashboardState(), profile = dashboard.managedAccounts?.find(row => row.id === id);
+    if (!profile || profile.active || quotaAccountActionsBlocked(dashboard)) return;
+    const currentId = isChatAccount(profile.provider) ? profileIdentityKey(profile.provider, dashboard.accounts?.[profile.provider]?.account) : undefined;
+    if (currentId && currentId === profileIdentityKey(profile.provider, profile.identity || profile.status?.account)) return;
     await accountManager.action({ action: 'switch', id: profile.id });
   });
-  register('agentTandem.resetCodexUsage', async () => { await accountManager.action({ action: 'resetUsage', provider: 'Codex' }); });
+  register('agentTandem.resetCodexUsage', async expectedAccount => {
+    const dashboard = dashboardState();
+    if (!canUseBankedReset(dashboard) || (expectedAccount != null && expectedAccount !== profileIdentityKey('Codex', dashboard.accounts?.Codex?.account))) return;
+    await accountManager.action({ action: 'resetUsage', provider: 'Codex' });
+  });
   // Saved accounts must not wait behind storage measurement or the usage-history scan.
   register('agentTandem.refreshQuotaAccounts', async () => {
     await Promise.all([refreshStorageUsage(true), refreshUsageDashboard(), (async () => {
