@@ -38,6 +38,7 @@ Historical release dates and boundaries are reconstructed from package version c
 
 ### Fixed
 
+- Saved accounts survive a power loss or system crash. Before, a crash shortly after an account refresh could leave the account list and saved sign-ins unreadable, so every account action failed with "Invalid native account JSON". If the account list itself is damaged, the error now names `accounts.json` and its location.
 - Codex and Claude Code quota hovers restore direct account switching and Quick Accounts, with a compact layout and a **Use 1 reset** action for available Codex banked resets.
 - Conversation cleanup reaches confirmation sooner and deletes batches of Codex chats faster. The Dashboard stays responsive during deletion and keeps token counts for deleted conversations.
 - Large storage cleanups keep deleting other files while temporarily locked files wait for retry. Progress updates leave the rest of the Dashboard responsive, and the time remaining reflects recent progress.

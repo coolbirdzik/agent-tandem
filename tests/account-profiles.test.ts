@@ -149,6 +149,11 @@ describe('Native account profiles', () => {
     expect(() => store.home('../../native')).toThrow('Invalid account profile');
     await expect(store.import('Codex', '"credential-private-text')).rejects.toThrow('Invalid native account JSON');
   });
+  it('names the registry file when a crash left it filled with NUL bytes', async () => {
+    const { store } = await setup(); await store.create('Codex');
+    await writeFile(path.join(store.root, 'accounts.json'), Buffer.alloc(512));
+    await expect(store.read()).rejects.toThrow(`Account registry is unreadable: ${path.join(store.root, 'accounts.json')}`);
+  });
   it('removes profile credentials without deleting native sign-in or saved profile history', async () => {
     const { home, store } = await setup(); await writeFile(path.join(home, 'auth.json'), codex('native'));
     const a = await store.import('Codex', codex('profile'));

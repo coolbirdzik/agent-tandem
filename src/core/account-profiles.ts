@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, rename, unlink, stat } from 'node:fs/promises';
+import { mkdir, readFile, open, rename, unlink, stat } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
@@ -22,13 +22,18 @@ async function optional(file: string) { try { return await readFile(file, 'utf8'
 async function atomic(file: string, content: string) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${randomUUID()}.tmp`;
-  try { await writeFile(temporary, content, { flag: 'wx', mode: 0o600 }); await rename(temporary, file); }
-  finally { await unlink(temporary).catch(() => undefined); }
+  try {
+    // Flush before rename: after a power loss or hard crash, an unflushed rename leaves
+    // a file of the right size filled with NUL bytes, which locks out every account.
+    const handle = await open(temporary, 'wx', 0o600);
+    try { await handle.writeFile(content); await handle.sync(); } finally { await handle.close(); }
+    await rename(temporary, file);
+  } finally { await unlink(temporary).catch(() => undefined); }
 }
-function json(content: string) {
+function json(content: string, invalid = 'Invalid native account JSON.') {
   if (Buffer.byteLength(content) > 2 * 1024 * 1024) throw new Error('Account file is too large.');
   let value: unknown;
-  try { value = JSON.parse(content); } catch { throw new Error('Invalid native account JSON.'); }
+  try { value = JSON.parse(content); } catch { throw new Error(invalid); }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid account file.');
   return value as Record<string, unknown>;
 }
@@ -69,7 +74,7 @@ export class AccountProfiles {
   async read(): Promise<ProfileRegistry> {
     const content = await optional(path.join(this.root, 'accounts.json'));
     if (!content) return { version: 1, profiles: [] };
-    const value = json(content);
+    const value = json(content, `Account registry is unreadable: ${path.join(this.root, 'accounts.json')}`);
     if (value.version !== 1 || !Array.isArray(value.profiles)) throw new Error('Account registry is unreadable.');
     const profiles: AccountProfile[] = value.profiles.map((row: any) => {
       if (!row || !validId(row.id) || !isAccountProvider(row.provider) || typeof row.label !== 'string' || !Number.isFinite(row.createdAt)) throw new Error('Invalid account registry.');
